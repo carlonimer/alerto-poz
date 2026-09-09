@@ -1,0 +1,184 @@
+:root {
+    --primary: #dc2626;
+    --primary-dark: #b91c1c;
+    --secondary: #1e293b;
+    --bg-color: #f8fafc;
+    --card-bg: #ffffff;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --border-color: #e2e8f0;
+    --success: #10b981;
+    --warning: #f59e0b;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+.screen {
+    display: none;
+    height: 100vh;
+    width: 100vw;
+    flex-direction: column;
+}
+
+.screen.active {
+    display: flex;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* --- Buttons & Inputs --- */
+.btn {
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-warning { background: var(--warning); color: #fff; }
+.btn-success { background: var(--success); color: #fff; }
+.btn-block { width: 100%; }
+
+.input-group { margin-bottom: 15px; }
+.input-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 0.9rem; color: var(--text-secondary); }
+.input-group input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 1rem; }
+
+/* --- Login Screen --- */
+.login-container {
+    margin: auto;
+    width: 90%;
+    max-width: 400px;
+    background: var(--card-bg);
+    padding: 30px;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+}
+
+.brand-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+.brand-icon {
+    font-size: 3rem;
+    color: var(--primary);
+    margin-bottom: 10px;
+}
+.error-msg {
+    color: var(--primary);
+    margin-top: 10px;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+/* --- Dashboard Screen --- */
+.app-header {
+    background: var(--secondary);
+    color: #fff;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    z-index: 1000;
+}
+
+.header-info h2 { font-size: 1.2rem; margin-bottom: 5px; }
+.status-toggle-wrapper { display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 12px; height: 12px; border-radius: 50%; }
+.status-dot.available { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+.status-dot.busy { background-color: var(--warning); box-shadow: 0 0 8px var(--warning); }
+.status-select { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 5px; border-radius: 4px; outline: none; }
+.status-select option { color: #000; }
+
+.btn-icon { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; }
+
+.app-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+/* --- Assignment Card --- */
+.assignment-card {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    z-index: 1000;
+    overflow: hidden;
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.card-header {
+    background: var(--primary);
+    color: white;
+    padding: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.card-header.pulse-bg { animation: pulseBg 2s infinite; }
+@keyframes pulseBg { 0% { background: var(--primary); } 50% { background: var(--primary-dark); } 100% { background: var(--primary); } }
+
+.badge { background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+.card-body { padding: 15px; }
+.card-body p { margin-bottom: 8px; font-size: 0.95rem; }
+.card-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; padding: 15px; background: #f1f5f9; }
+.card-actions .btn { font-size: 0.85rem; padding: 10px; }
+
+/* --- Idle State --- */
+.idle-state {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.9);
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.radar-animation {
+    font-size: 4rem;
+    color: var(--success);
+    margin-bottom: 20px;
+    animation: radarPulse 2s infinite ease-out;
+}
+@keyframes radarPulse {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
+.gps-status { margin-top: 20px; color: var(--success); font-weight: 600; font-size: 0.9rem; }
+
+/* --- Map --- */
+.map-container { flex: 1; width: 100%; height: 100%; }
+#responder-map { width: 100%; height: 100%; z-index: 1; }

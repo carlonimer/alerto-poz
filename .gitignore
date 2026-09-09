@@ -1,0 +1,20 @@
+node_modules/
+.env
+server/db.json
+server/public/uploads/
+original_lines.txt
+recovered.txt
+recovered2.txt
+*.log
+.vscode/
+
+# Mobile app ignores
+mobile_app/.dart_tool/
+mobile_app/.flutter-plugins
+mobile_app/.flutter-plugins-dependencies
+mobile_app/.pub-cache/
+mobile_app/.pub/
+mobile_app/build/
+mobile_app/android/local.properties
+mobile_app/ios/.symlinks/
+mobile_app/ios/Pods/

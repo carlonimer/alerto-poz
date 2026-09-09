@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ALERTO-POZ | Responder Unit</title>
+
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Leaflet Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- 1. Login Screen -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="brand-header">
+                <i class="fa-solid fa-truck-fast brand-icon"></i>
+                <h1>ALERTO-POZ</h1>
+                <p>First Responder Terminal</p>
+            </div>
+
+            <form id="login-form">
+                <div class="input-group">
+                    <label>Responder ID</label>
+                    <input type="text" id="login-id" placeholder="e.g. ems1" required>
+                </div>
+                <div class="input-group">
+                    <label>PIN Code / Password</label>
+                    <input type="password" id="login-password" placeholder="Enter password" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">
+                    <i class="fa-solid fa-right-to-bracket"></i> Login Unit
+                </button>
+                <div id="login-error" class="error-msg hidden">Invalid credentials.</div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. Dashboard Screen -->
+    <div id="dashboard-screen" class="screen hidden">
+
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-info">
+                <h2 id="unit-name">Unit Name</h2>
+                <div class="status-toggle-wrapper">
+                    <span id="status-indicator" class="status-dot available"></span>
+                    <select id="unit-status-dropdown" class="status-select">
+                        <option value="available">Available</option>
+                        <option value="busy">Busy</option>
+                    </select>
+                </div>
+            </div>
+            <button id="btn-logout" class="btn-icon"><i class="fa-solid fa-right-from-bracket"></i></button>
+        </header>
+
+        <!-- Main Content -->
+        <main class="app-content">
+
+            <!-- Active Assignment Card -->
+            <div id="active-assignment-card" class="assignment-card hidden">
+                <div class="card-header pulse-bg">
+                    <h3><i class="fa-solid fa-bell"></i> ACTIVE EMERGENCY</h3>
+                    <span id="incident-id-badge" class="badge">INC-XXX</span>
+                </div>
+                <div class="card-body">
+                    <p><strong>Type:</strong> <span id="incident-category">N/A</span></p>
+                    <p><strong>Location:</strong> <span id="incident-location">N/A</span></p>
+                    <p><strong>Reporter:</strong> <span id="incident-reporter">N/A</span> (<span
+                            id="incident-phone">N/A</span>)</p>
+                    <p><strong>Details:</strong> <span id="incident-details">N/A</span></p>
+                </div>
+                <div class="card-actions">
+                    <button id="btn-status-enroute" class="btn btn-primary"><i class="fa-solid fa-truck-fast"></i> En
+                        Route</button>
+                    <button id="btn-status-onscene" class="btn btn-warning"><i class="fa-solid fa-location-dot"></i> On
+                        Scene</button>
+                    <button id="btn-status-resolved" class="btn btn-success"><i class="fa-solid fa-check-double"></i>
+                        Mark Resolved</button>
+                </div>
+            </div>
+
+            <!-- Idle State -->
+            <div id="idle-state" class="idle-state">
+                <div class="radar-animation">
+                    <i class="fa-solid fa-satellite-dish"></i>
+                </div>
+                <h3>Standing By</h3>
+                <p>Awaiting dispatch from Command Center.</p>
+                <p class="gps-status" id="gps-status"><i class="fa-solid fa-location-crosshairs"></i> GPS Broadcasting
+                    Active</p>
+            </div>
+
+            <!-- Map View -->
+            <div class="map-container">
+                <div id="responder-map"></div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

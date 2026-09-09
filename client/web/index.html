@@ -1,0 +1,2056 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta
+      name="description"
+      content="Alerto-poz: Pozorrubio Emergency Notification and Response Citizen Application."
+    />
+    <title>Alerto-poz - Pozorrubio Citizen Portal</title>
+
+    <!-- Stylesheets & Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css"
+      rel="stylesheet"
+    />
+
+    <!-- Custom Mobile Layout CSS -->
+    <link rel="stylesheet" href="styles.css?v=8" />
+  </head>
+
+  <body class="light-theme">
+    <div class="app-container">
+      <!-- Status Notification Overlay -->
+      <div class="phone-push-notification hidden" id="ios-notification-toast">
+        <div class="toast-header">
+          <i class="fa-solid fa-circle-exclamation text-danger"></i>
+          <span class="toast-title">POZORRUBIO ALERT</span>
+          <span class="toast-time">now</span>
+        </div>
+        <div class="toast-body">
+          <h4 id="push-toast-header">Evacuation Advisory</h4>
+          <p id="push-toast-body">
+            Storm surge warnings. Proceed to municipal shelter.
+          </p>
+        </div>
+        <button class="toast-dismiss-btn" id="push-toast-close">
+          Dismiss Advisory
+        </button>
+      </div>
+
+      <!-- 0. LOADING / AUTH CHECK VIEW -->
+      <div
+        class="view active"
+        id="view-loading"
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background-color: #f8fafc;
+          flex-direction: column;
+        "
+      >
+        <div
+          class="logo-box"
+          style="margin-bottom: 24px; animation: pulse 1.5s infinite"
+        >
+          <i
+            class="fa-solid fa-podcast"
+            style="font-size: 32px; color: #fff"
+          ></i>
+        </div>
+        <h2 style="font-size: 20px; font-weight: 700; color: #1e293b">
+          Initializing ALERTO-POZ...
+        </h2>
+        <p style="font-size: 14px; color: #64748b; margin-top: 8px">
+          Verifying session secure connection
+        </p>
+      </div>
+
+      <!-- 1. MOBILE SECURE AUTH VIEW -->
+      <div class="view modal-overlay" id="view-auth">
+        <button class="btn-close-auth-modal" id="btn-close-auth-modal">
+          &times;
+        </button>
+        <!-- Developer Sandbox OTP Display Toast -->
+        <div
+          id="dev-otp-toast"
+          class="dev-otp-toast hidden"
+          style="display: none !important"
+        >
+          <div class="dev-toast-header">
+            <span class="badge"
+              ><i class="fa-solid fa-code"></i> DEVELOPER SANDBOX</span
+            >
+            <button id="dev-toast-close" type="button">&times;</button>
+          </div>
+          <div class="dev-toast-body">
+            <p>Verification Code: <strong id="dev-otp-code">------</strong></p>
+            <button
+              class="btn-xs btn-outline-dev"
+              id="btn-autofill-otp"
+              type="button"
+            >
+              Autofill Code
+            </button>
+          </div>
+        </div>
+
+        <!-- LOGIN CARD -->
+        <div class="auth-wrapper" id="auth-login-card">
+          <div class="auth-card">
+            <div style="text-align: center; margin-bottom: 24px">
+              <div class="logo-box" style="margin: 0 auto 16px auto">
+                <i class="fa-solid fa-podcast"></i>
+              </div>
+              <h2
+                style="
+                  font-size: 24px;
+                  font-weight: 800;
+                  letter-spacing: 1px;
+                  color: #1e293b;
+                "
+              >
+                ALERTO-POZ
+              </h2>
+              <p style="font-size: 13px; color: #64748b">
+                Pozorrubio Emergency App
+              </p>
+            </div>
+
+            <h3 class="card-title" style="text-align: left">Welcome back!</h3>
+            <p class="card-subtitle" style="text-align: left">
+              Sign in to your account
+            </p>
+
+            <div class="auth-error-banner hidden" id="login-error-banner">
+              <i class="fa-solid fa-circle-exclamation"></i>
+              <span>Login failed</span>
+            </div>
+
+            <form id="login-form" class="auth-form">
+              <div class="form-group">
+                <label for="login-id">Email or Mobile Number</label>
+                <i class="fa-solid fa-user input-icon"></i>
+                <input
+                  type="text"
+                  id="login-id"
+                  placeholder="Phone or Email"
+                  required
+                  autocomplete="username"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="login-password">Password</label>
+                <div class="password-input-wrapper">
+                  <i
+                    class="fa-solid fa-lock input-icon"
+                    style="z-index: 10"
+                  ></i>
+                  <input
+                    type="password"
+                    id="login-password"
+                    placeholder="Password"
+                    required
+                    autocomplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-eye-slash"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                class="form-row"
+                style="justify-content: space-between; margin-bottom: 24px"
+              >
+                <div
+                  class="checkbox-wrapper"
+                  style="display: flex; align-items: center; gap: 8px"
+                >
+                  <input type="checkbox" id="remember-me" checked />
+                  <label
+                    for="remember-me"
+                    style="
+                      font-size: 14px;
+                      color: #64748b;
+                      cursor: pointer;
+                      user-select: none;
+                    "
+                    >Remember me</label
+                  >
+                </div>
+                <a
+                  href="#"
+                  class="forgot-link"
+                  id="btn-goto-forgot"
+                  style="
+                    color: #ff5722;
+                    font-size: 14px;
+                    text-decoration: none;
+                    font-weight: 600;
+                  "
+                  >Forgot password?</a
+                >
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-login-submit"
+              >
+                Sign In
+              </button>
+            </form>
+
+            <div class="auth-actions" style="margin-top: 24px">
+              Don't have an account?
+              <a href="#" id="signup-toggle-action">Register</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- REGISTRATION CARD -->
+        <div class="auth-wrapper hidden" id="auth-register-card">
+          <div class="auth-card">
+            <div style="text-align: center; margin-bottom: 24px">
+              <div class="logo-box" style="margin: 0 auto 16px auto">
+                <i class="fa-solid fa-podcast"></i>
+              </div>
+              <h2 style="font-size: 20px; font-weight: 700; color: #1e293b">
+                Create Account
+              </h2>
+              <p style="font-size: 13px; color: #64748b">
+                Join Pozorrubio Emergency Network
+              </p>
+            </div>
+            <div class="auth-error-banner hidden" id="register-error-banner">
+              <i class="fa-solid fa-circle-exclamation"></i>
+              <span>Registration failed</span>
+            </div>
+
+            <form id="register-form" class="auth-form" style="margin-top: 0">
+              <!-- Registration Method Toggle -->
+              <div class="registration-method-container">
+                <label class="method-label">Choose Registration Method</label>
+                <div class="registration-method-toggle" id="reg-method-toggle">
+                  <button type="button" class="method-btn" data-method="phone">
+                    <i class="fa-solid fa-mobile-screen-button"></i> Phone
+                  </button>
+                  <button type="button" class="method-btn" data-method="email">
+                    <i class="fa-solid fa-envelope"></i> Email
+                  </button>
+                </div>
+                <div
+                  class="method-error text-danger hidden"
+                  id="reg-method-error"
+                >
+                  <i class="fa-solid fa-circle-exclamation"></i> Please choose a
+                  registration method.
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="register-name">Full Name</label>
+                <i class="fa-solid fa-id-card input-icon"></i>
+                <input
+                  type="text"
+                  id="register-name"
+                  placeholder="Full Name"
+                  required
+                  autocomplete="name"
+                />
+              </div>
+
+              <div
+                class="form-group contact-field hidden"
+                id="group-register-phone"
+              >
+                <label for="register-phone">Mobile Phone Number</label>
+                <i class="fa-solid fa-phone input-icon"></i>
+                <input
+                  type="tel"
+                  id="register-phone"
+                  placeholder="Phone (e.g. 09XXXXXXXXX)"
+                />
+              </div>
+
+              <div
+                class="form-group contact-field hidden"
+                id="group-register-email"
+              >
+                <label for="register-email">Email Address</label>
+                <i class="fa-solid fa-envelope input-icon"></i>
+                <input
+                  type="email"
+                  id="register-email"
+                  placeholder="Email Address"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="register-password">Password</label>
+                <div class="password-input-wrapper">
+                  <i
+                    class="fa-solid fa-lock input-icon"
+                    style="z-index: 10"
+                  ></i>
+                  <input
+                    type="password"
+                    id="register-password"
+                    placeholder="Password"
+                    required
+                    autocomplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-eye-slash"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Password Checklist dynamic validator -->
+              <div class="password-checklist" id="reg-password-checklist">
+                <span class="checklist-item text-danger" id="chk-length"
+                  ><i class="fa-solid fa-circle-xmark"></i> 8+ Characters</span
+                >
+                <span class="checklist-item text-danger" id="chk-upper"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Uppercase</span
+                >
+                <span class="checklist-item text-danger" id="chk-lower"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Lowercase</span
+                >
+                <span class="checklist-item text-danger" id="chk-number"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Number</span
+                >
+                <span class="checklist-item text-danger" id="chk-special"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Special Char</span
+                >
+              </div>
+
+              <div class="form-group">
+                <label for="register-confirm">Confirm Password</label>
+                <div class="password-input-wrapper">
+                  <i
+                    class="fa-solid fa-clock-rotate-left input-icon"
+                    style="z-index: 10"
+                  ></i>
+                  <input
+                    type="password"
+                    id="register-confirm"
+                    placeholder="Confirm Password"
+                    required
+                    autocomplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-eye-slash"></i>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-register-submit"
+              >
+                Create Account
+              </button>
+            </form>
+
+            <div class="auth-actions" style="margin-top: 24px">
+              Already have an account?
+              <a href="#" id="login-toggle-action-text">Sign In</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- OTP VERIFICATION CARD -->
+        <div class="auth-wrapper hidden" id="auth-otp-card">
+          <div class="auth-card">
+            <div class="auth-header">
+              <i class="fa-solid fa-key logo-icon"></i>
+              <h2>Verification Code</h2>
+              <span class="location-badge" id="otp-target-label"
+                >SMS sent to 09123456789</span
+              >
+            </div>
+
+            <form id="otp-form" class="auth-form">
+              <div class="otp-inputs-grid">
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+              </div>
+
+              <div class="otp-timer-row">
+                <span class="otp-expire-hint" id="otp-timer-text"
+                  >Code expires in 5:00</span
+                >
+                <button
+                  type="button"
+                  class="btn-resend-otp disabled"
+                  id="btn-resend-otp"
+                  disabled
+                >
+                  Resend Code (60s)
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-otp-submit"
+              >
+                <i class="fa-solid fa-square-check"></i> Verify & Confirm
+              </button>
+            </form>
+
+            <div class="auth-actions">
+              <a href="#" class="btn-back-auth"
+                ><i class="fa-solid fa-arrow-left"></i> Back to Login</a
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- FORGOT PASSWORD CARD -->
+        <div class="auth-wrapper hidden" id="auth-forgot-card">
+          <div class="auth-card">
+            <div class="auth-header">
+              <i class="fa-solid fa-unlock-keyhole logo-icon"></i>
+              <h2>Reset Password</h2>
+              <span class="location-badge">Account Recovery</span>
+            </div>
+
+            <form id="forgot-form" class="auth-form">
+              <div class="form-group">
+                <label for="forgot-target"
+                  ><i class="fa-solid fa-id-card"></i> Registered Email or
+                  Phone</label
+                >
+                <input
+                  type="text"
+                  id="forgot-target"
+                  placeholder="name@gmail.com or 09xxxxxxxxx"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-forgot-submit"
+              >
+                <i class="fa-solid fa-paper-plane"></i> Send Verification Code
+              </button>
+            </form>
+
+            <div class="auth-actions">
+              <a href="#" class="btn-back-auth"
+                ><i class="fa-solid fa-arrow-left"></i> Back to Login</a
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- FORGOT PASSWORD OTP VERIFICATION CARD -->
+        <div class="auth-wrapper hidden" id="auth-reset-otp-card">
+          <div class="auth-card">
+            <div class="auth-header">
+              <i class="fa-solid fa-key logo-icon"></i>
+              <h2>Verification Code</h2>
+              <span class="location-badge" id="forgot-otp-target-label"
+                >Code sent to your contact</span
+              >
+            </div>
+
+            <form id="forgot-otp-form" class="auth-form">
+              <div class="otp-inputs-grid">
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+                <input
+                  type="text"
+                  class="otp-box forgot-otp-box"
+                  maxlength="1"
+                  pattern="[0-9]"
+                  inputmode="numeric"
+                  required
+                />
+              </div>
+
+              <div class="otp-timer-row">
+                <span class="otp-expire-hint" id="forgot-otp-timer-text"
+                  >Code expires in 5:00</span
+                >
+                <button
+                  type="button"
+                  class="btn-resend-otp disabled"
+                  id="btn-forgot-resend-otp"
+                  disabled
+                >
+                  Resend Code (60s)
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-forgot-otp-submit"
+              >
+                <i class="fa-solid fa-square-check"></i> Verify Code
+              </button>
+            </form>
+
+            <div class="auth-actions">
+              <a href="#" class="btn-back-auth"
+                ><i class="fa-solid fa-arrow-left"></i> Back to Login</a
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- NEW PASSWORD RESET CARD -->
+        <div class="auth-wrapper hidden" id="auth-reset-card">
+          <div class="auth-card">
+            <div class="auth-header">
+              <i class="fa-solid fa-shield-halved logo-icon"></i>
+              <h2>Create New Password</h2>
+              <span class="location-badge"
+                >Choose a strong, unique password</span
+              >
+            </div>
+
+            <form id="reset-form" class="auth-form">
+              <div class="form-group">
+                <label for="reset-password-input">New Password</label>
+                <div class="password-input-wrapper">
+                  <i class="fa-solid fa-key input-icon" style="z-index: 10"></i>
+                  <input
+                    type="password"
+                    id="reset-password-input"
+                    placeholder="Enter new password"
+                    autocomplete="new-password"
+                    style="padding-left: 45px"
+                    required
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-eye-slash"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Password Checklist dynamic validator -->
+              <div class="password-checklist" id="reset-password-checklist">
+                <span class="checklist-item text-danger" id="chk-reset-length"
+                  ><i class="fa-solid fa-circle-xmark"></i> 8+ Characters</span
+                >
+                <span class="checklist-item text-danger" id="chk-reset-upper"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Uppercase</span
+                >
+                <span class="checklist-item text-danger" id="chk-reset-lower"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Lowercase</span
+                >
+                <span class="checklist-item text-danger" id="chk-reset-number"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Number</span
+                >
+                <span class="checklist-item text-danger" id="chk-reset-special"
+                  ><i class="fa-solid fa-circle-xmark"></i> 1 Special Char</span
+                >
+              </div>
+
+              <div class="form-group">
+                <label for="reset-confirm-input">Confirm New Password</label>
+                <div class="password-input-wrapper">
+                  <i class="fa-solid fa-key input-icon" style="z-index: 10"></i>
+                  <input
+                    type="password"
+                    id="reset-confirm-input"
+                    placeholder="Re-enter new password"
+                    autocomplete="new-password"
+                    style="padding-left: 45px"
+                    required
+                  />
+                  <button
+                    type="button"
+                    class="password-toggle-btn"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-eye-slash"></i>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-danger btn-block btn-lg"
+                id="btn-reset-submit"
+              >
+                <i class="fa-solid fa-lock"></i> Update Password
+              </button>
+            </form>
+
+            <div class="auth-actions">
+              <a href="#" class="btn-back-auth"
+                ><i class="fa-solid fa-arrow-left"></i> Back to Login</a
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. MAIN APPLICATION WORKSPACE -->
+      <div class="view" id="view-app">
+        <!-- VIEW STATE A: HOMEPAGE MAP WITH SEARCH & ALERTS DRAWER -->
+        <div class="app-state active" id="state-homepage">
+          <!-- Top Header Bar -->
+          <header class="app-header-home">
+            <div class="brand-logo-area">
+              <span class="brand-text">ALERTO</span>
+              <span class="brand-text">-POZ</span>
+              <div class="brand-soundwave-icon">
+                <i class="fa-solid fa-tower-broadcast"></i>
+              </div>
+            </div>
+            <div class="header-action-group">
+              <button
+                class="icon-btn-header"
+                id="btn-user-history"
+                title="Emergency History"
+              >
+                <i class="fa-solid fa-clock-rotate-left"></i>
+              </button>
+              <button
+                class="icon-btn-header"
+                id="btn-notifications-bell"
+                title="Notifications"
+              >
+                <i class="fa-solid fa-bell"></i>
+                <span class="bell-badge hidden" id="badge-alerts-home">0</span>
+              </button>
+              <button
+                class="login-status-btn"
+                id="btn-profile"
+                title="Log In / Profile"
+              >
+                LOGIN
+              </button>
+            </div>
+          </header>
+
+          <!-- Floating Search/Location Area -->
+          <div class="floating-search-bar">
+            <div class="search-icon-box">
+              <i class="fa-solid fa-magnifying-glass"></i>
+            </div>
+            <input
+              type="text"
+              id="address-search-input"
+              value="Buneg, Pozorrubio, Pangasinan"
+              readonly
+            />
+            <button
+              class="compass-recenter-btn"
+              id="gps-recenter"
+              title="Locate Me"
+            >
+              <i class="fa-solid fa-location-arrow"></i>
+            </button>
+          </div>
+
+          <!-- Horizontal Filter Pills -->
+          <div class="floating-filter-pills">
+            <button class="filter-pill" id="pill-flood" data-active="false">
+              <i class="fa-solid fa-house-flood-water"></i> Flood Map
+            </button>
+            <button class="filter-pill" id="pill-water" data-active="false">
+              <i class="fa-solid fa-water"></i> Water Levels
+            </button>
+          </div>
+
+          <!-- Full View Leaflet Map -->
+          <div id="homepage-map" class="leaflet-map-home"></div>
+
+          <!-- Floating Map Buttons (Top Right) -->
+          <div class="map-floating-actions-right">
+            <button
+              class="map-action-btn"
+              id="btn-map-settings"
+              title="Map Settings"
+              style="
+                width: 44px;
+                height: 44px;
+                padding: 0;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                border-radius: 50%;
+              "
+            >
+              <i
+                class="fa-solid fa-layer-group"
+                style="font-size: 20px; color: #475569"
+              ></i>
+            </button>
+
+            <!-- Map Settings Panel (Hidden by default) -->
+            <div class="map-settings-panel" id="map-settings-panel">
+              <div class="map-settings-header">
+                <h4>Map Type</h4>
+                <button id="close-map-settings" class="btn-close-settings">
+                  <i class="fa-solid fa-times"></i>
+                </button>
+              </div>
+              <div class="map-type-options">
+                <div class="map-type-option active" data-type="default">
+                  <div class="map-type-preview preview-default"></div>
+                  <span>Default</span>
+                </div>
+                <div class="map-type-option" data-type="satellite">
+                  <div class="map-type-preview preview-satellite"></div>
+                  <span>Satellite</span>
+                </div>
+                <div class="map-type-option" data-type="terrain">
+                  <div class="map-type-preview preview-terrain"></div>
+                  <span>Terrain</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Floating SOS Trigger Action Button (Bottom Right) -->
+          <button
+            class="floating-sos-fab"
+            id="homepage-sos-fab"
+            title="Trigger Emergency SOS"
+          >
+            <div class="pulse-ring ring-1"></div>
+            <div class="pulse-ring ring-2"></div>
+            <div class="sos-icon-circle">
+              <i class="fa-solid fa-headset"></i>
+              <span>SOS</span>
+            </div>
+          </button>
+
+          <!-- Alerts Overlay -->
+          <div class="alerts-overlay hidden" id="alerts-overlay"></div>
+
+          <!-- Pull-up Alerts Drawer Sheet -->
+          <div class="alerts-bottom-sheet collapsed" id="alerts-sheet">
+            <div class="sheet-drag-handle-wrapper" id="sheet-drag-handle">
+              <div class="drag-handle-bar"></div>
+            </div>
+            <div class="sheet-content-area">
+              <div
+                class="sheet-header"
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                "
+              >
+                <h3>Alerts</h3>
+                <button
+                  id="btn-close-alerts-sheet"
+                  style="
+                    background: none;
+                    border: none;
+                    font-size: 18px;
+                    color: #64748b;
+                    cursor: pointer;
+                  "
+                >
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+              <div class="alerts-scroll-container" id="broadcasts-history-list">
+                <!-- Populated dynamically -->
+                <div class="empty-placeholder-sheet">
+                  <i class="fa-solid fa-bell-slash"></i>
+                  <p>
+                    No active broadcast alerts received in this session yet.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW STATE B: CONVERSATIONAL SOS CHAT DIALOGUE -->
+        <div class="app-state" id="state-sos-chat">
+          <!-- Chat App Header -->
+          <header class="app-header-chat">
+            <div
+              class="chat-header-left"
+              style="
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                justify-content: center;
+              "
+            >
+              <div class="header-logo-title">
+                <i class="fa-solid fa-tower-broadcast brand-red-color"></i>
+                <span class="chat-brand-name">Alerto-poz</span>
+                <span class="badge badge-emergency" id="report-status-badge"
+                  >EMERGENCY</span
+                >
+              </div>
+              <div class="responder-status-label">
+                <span class="status-dot-grey" id="responder-status-dot"></span>
+                <span id="responder-status-text">No active responder</span>
+              </div>
+            </div>
+            <div class="chat-header-center"></div>
+            <div class="chat-header-right" style="position: relative">
+              <button
+                class="call-btn-header"
+                id="btn-audio-call"
+                title="Voice Call"
+              >
+                <i class="fa-solid fa-phone"></i>
+              </button>
+              <button
+                class="call-btn-header"
+                id="btn-video-call"
+                title="Video Call"
+              >
+                <i class="fa-solid fa-video"></i>
+              </button>
+              <button
+                class="call-btn-header"
+                id="btn-incident-options"
+                title="Options"
+              >
+                <i class="fa-solid fa-ellipsis-vertical"></i>
+              </button>
+              <!-- Options Dropdown -->
+              <div class="chat-options-dropdown hidden" id="chat-options-menu">
+                <button id="btn-chat-opt-close">Close Incident</button>
+              </div>
+            </div>
+          </header>
+
+          <!-- Orange geofence location strip -->
+          <div class="orange-geofence-location-strip" style="display: flex; align-items: center; justify-content: space-between; position: relative;">
+            <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
+              <i class="fa-solid fa-location-dot" style="color: #ef4444;"></i>
+              <span id="chat-geofence-address" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #000;">Buneg, Pozorrubio, Pangasinan</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
+              <div style="position: relative;">
+                <button id="btn-map-style-toggle" type="button" style="background: none; border: none; padding: 4px 6px; font-size: 15px; color: #000; cursor: pointer;" title="Map Style">
+                  <i class="fa-solid fa-layer-group"></i>
+                </button>
+                <!-- Map Style Dropdown (hidden by default) -->
+                <div id="console-map-style-dropdown" class="hidden" style="position: absolute; right: 0; top: 110%; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); z-index: 100; min-width: 140px; overflow: hidden;">
+                  <button class="console-map-type-opt" data-type="default" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border: none; background: none; color: var(--text-primary); font-size: 13px; cursor: pointer; text-align: left;">
+                    <i class="fa-solid fa-road" style="width: 16px; text-align: center;"></i> Standard
+                  </button>
+                  <button class="console-map-type-opt" data-type="satellite" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border: none; background: none; color: var(--text-primary); font-size: 13px; cursor: pointer; text-align: left;">
+                    <i class="fa-solid fa-satellite" style="width: 16px; text-align: center;"></i> Satellite
+                  </button>
+                  <button class="console-map-type-opt" data-type="terrain" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border: none; background: none; color: var(--text-primary); font-size: 13px; cursor: pointer; text-align: left;">
+                    <i class="fa-solid fa-mountain" style="width: 16px; text-align: center;"></i> Terrain
+                  </button>
+                </div>
+              </div>
+              <button id="btn-toggle-console-map" type="button" style="background: none; border: none; padding: 4px 6px; font-size: 15px; color: #000; cursor: pointer;" title="Hide/Show Map">
+                <i class="fa-solid fa-chevron-up"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Mini Leaflet Map viewport (Emergency Center) -->
+          <div id="console-map" class="leaflet-map-console"></div>
+
+          <!-- Timeline and Incident ID row -->
+          <div class="timeline-incident-id-strip">
+            <span class="timeline-time" id="chat-incident-time"
+              >JULY 13, 2026 6:36 PM</span
+            >
+            <div class="incident-id-box">
+              <span id="chat-incident-id">0000000000IN26070006</span>
+              <button
+                class="copy-incident-id-btn"
+                id="btn-copy-incident"
+                title="Copy ID"
+              >
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Conversational message history -->
+          <div class="chat-conversation-area" id="chat-messages-container">
+            <!-- Dialogue Bubble A: Assistant Query -->
+            <div class="chat-message-bubble incoming-bubble animate-bubble">
+              <div class="bubble-content">
+                <p>Ano ang maipaglilingkod namin?</p>
+              </div>
+            </div>
+
+            <!-- Dynamic Category Button Selector Grid -->
+            <div
+              class="chat-message-bubble incoming-bubble grid-bubble animate-bubble"
+              id="category-selection-message"
+            >
+              <div class="bubble-content no-padding">
+                <div class="emergency-categories-grid">
+                  <button class="chat-category-btn" data-cat="medical">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-truck-medical"></i>
+                    </div>
+                    <span>MEDICAL</span>
+                  </button>
+                  <button class="chat-category-btn" data-cat="fire">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-fire"></i>
+                    </div>
+                    <span>FIRE</span>
+                  </button>
+                  <button class="chat-category-btn" data-cat="crime">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-shield-halved"></i>
+                    </div>
+                    <span>POLICE</span>
+                  </button>
+                  <button class="chat-category-btn" data-cat="barangay">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-house-chimney-window"></i>
+                    </div>
+                    <span>BARANGAY</span>
+                  </button>
+                  <button class="chat-category-btn" data-cat="accident">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-road-spikes"></i>
+                    </div>
+                    <span>ROADSIDE</span>
+                  </button>
+                  <button class="chat-category-btn" data-cat="report">
+                    <div class="icon-circle">
+                      <i class="fa-solid fa-circle-exclamation"></i>
+                    </div>
+                    <span>REPORT</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dynamic Chat Messages Append -->
+            <div id="dynamic-chat-feed"></div>
+
+            <!-- Countdown Progress Overlay (Embedded in conversational feed) -->
+            <div
+              class="chat-countdown-overlay hidden"
+              id="chat-sos-countdown-card"
+            >
+              <div class="countdown-card-inner">
+                <h4>Broadcasting SOS to Responders...</h4>
+                <div class="countdown-progress-wrapper">
+                  <svg class="chat-progress-svg" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="42" class="ring-bg"></circle>
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      class="ring-progress"
+                      id="progress-bar-indicator-chat"
+                    ></circle>
+                  </svg>
+                  <div id="countdown-label-chat" class="countdown-timer-value">
+                    5s
+                  </div>
+                </div>
+                <button id="cancel-sos-btn-chat" class="chat-cancel-sos-btn">
+                  <i class="fa-solid fa-xmark"></i> Cancel Alert
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chat Footer input controls -->
+          <footer class="chat-footer-controls">
+            <!-- Hidden media inputs -->
+            <input
+              type="file"
+              id="media-attachment-input"
+              accept="image/*,video/*"
+              multiple
+              class="hidden"
+            />
+
+            <div class="chat-input-wrapper">
+              <button
+                class="chat-plus-add-btn"
+                id="btn-chat-plus"
+                type="button"
+                title="Add Attachment"
+              >
+                <i class="fa-solid fa-image"></i>
+              </button>
+              <button
+                class="chat-plus-add-btn"
+                id="btn-chat-camera"
+                type="button"
+                title="Open Camera"
+                style="margin-left: 5px"
+              >
+                <i class="fa-solid fa-camera"></i>
+              </button>
+              <form id="chat-notes-form" class="chat-input-form">
+                <input
+                  type="text"
+                  id="chat-details-input"
+                  placeholder="Type here..."
+                  autocomplete="off"
+                />
+                <button
+                  type="submit"
+                  class="chat-send-btn"
+                  id="btn-chat-send"
+                  title="Send Report"
+                >
+                  <i class="fa-solid fa-paper-plane"></i>
+                </button>
+              </form>
+            </div>
+          </footer>
+        </div>
+
+        <!-- VIEW STATE C: GEOLOCATION LOADER DIALOGUE -->
+        <div class="location-spinner-overlay hidden" id="location-loader">
+          <div class="loader-modal-card">
+            <div class="spinner-circle-gap"></div>
+            <p class="loader-message">Getting your location...</p>
+          </div>
+        </div>
+
+        <!-- VIEW STATE D: SIMULATED VOICE / VIDEO CALL OVERLAY -->
+        <div class="call-simulation-overlay hidden" id="call-overlay">
+          <div class="call-glass-panel">
+            <!-- Video Streams Container (Visible in video calls) -->
+            <div class="video-grid-canvas hidden" id="call-video-grid">
+              <div class="remote-video-feed" id="video-operator-feed">
+                <!-- Operator avatar placeholder -->
+                <div class="video-avatar-box">
+                  <i class="fa-solid fa-user-tie"></i>
+                </div>
+                <span class="video-feed-label"
+                  >Operator: Pozorrubio Command Center</span
+                >
+              </div>
+              <div class="local-pip-video-feed" id="video-citizen-feed">
+                <!-- Citizen avatar placeholder -->
+                <div class="video-avatar-box-small">
+                  <i class="fa-solid fa-user"></i>
+                </div>
+                <span class="video-feed-label">You (Live)</span>
+              </div>
+            </div>
+
+            <!-- Voice Call Profile (Visible in voice calls) -->
+            <div class="voice-profile-box" id="call-voice-profile">
+              <div class="pulse-call-avatar">
+                <i class="fa-solid fa-phone-volume"></i>
+              </div>
+            </div>
+
+            <!-- Call Information -->
+            <div class="call-details-wrapper">
+              <h2 id="call-type-title">Emergency Audio Call</h2>
+              <p id="call-connection-status">
+                Connecting to Pozorrubio Dispatch...
+              </p>
+              <div class="call-duration-timer" id="call-timer-label">00:00</div>
+            </div>
+
+            <!-- Pulsing Sound Visualizer waves -->
+            <div class="sound-visualizer-container" id="voice-waves">
+              <span class="visualizer-bar bar-1"></span>
+              <span class="visualizer-bar bar-2"></span>
+              <span class="visualizer-bar bar-3"></span>
+              <span class="visualizer-bar bar-4"></span>
+              <span class="visualizer-bar bar-5"></span>
+            </div>
+
+            <!-- Hang up button controls -->
+            <button
+              class="hangup-circle-btn"
+              id="btn-hangup-call"
+              title="Hang Up"
+            >
+              <i class="fa-solid fa-phone-slash"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- VIEW STATE E: USER PROFILE -->
+        <div class="app-state" id="state-profile">
+          <header class="app-header-profile">
+            <button
+              class="back-to-home-btn"
+              id="btn-profile-back"
+              title="Go Back"
+            >
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <div class="profile-header-center">
+              <span class="profile-title">Profile</span>
+            </div>
+            <div class="profile-header-right"></div>
+          </header>
+
+          <div class="profile-scroll-container">
+            <div class="profile-info-card">
+              <div class="profile-avatar-container">
+                <img
+                  src=""
+                  alt="Avatar"
+                  id="profile-avatar-img"
+                  class="profile-avatar-img hidden"
+                />
+                <div
+                  id="profile-avatar-placeholder"
+                  class="profile-avatar-placeholder"
+                >
+                  <i class="fa-solid fa-user"></i>
+                </div>
+                <button class="btn-edit-avatar" id="btn-edit-avatar">
+                  <i class="fa-solid fa-camera"></i>
+                </button>
+                <input
+                  type="file"
+                  id="profile-image-upload"
+                  accept="image/jpeg, image/png, image/webp"
+                  class="hidden"
+                />
+              </div>
+              <h2 class="profile-name" id="profile-display-name">Loading...</h2>
+              <p class="profile-email" id="profile-display-email"></p>
+
+              <button
+                class="btn-edit-profile-outline"
+                id="btn-open-edit-profile"
+              >
+                <i class="fa-solid fa-pen"></i> Edit Profile
+              </button>
+            </div>
+
+            <div class="profile-menu-list">
+              <button class="profile-menu-item" id="btn-menu-history">
+                <div class="menu-item-left">
+                  <i class="fa-solid fa-clock-rotate-left menu-icon"></i
+                  ><span class="menu-label">Emergency History</span>
+                </div>
+                <i class="fa-solid fa-chevron-right chevron-icon"></i>
+              </button>
+              <button class="profile-menu-item" id="btn-menu-feedback">
+                <div class="menu-item-left">
+                  <i class="fa-regular fa-comment-dots menu-icon"></i
+                  ><span class="menu-label">Send Feedback</span>
+                </div>
+                <i class="fa-solid fa-chevron-right chevron-icon"></i>
+              </button>
+              <button class="profile-menu-item" id="btn-menu-passcode">
+                <div class="menu-item-left">
+                  <i class="fa-solid fa-lock menu-icon"></i
+                  ><span class="menu-label">Passcode Settings</span>
+                </div>
+                <i class="fa-solid fa-chevron-right chevron-icon"></i>
+              </button>
+              <button class="profile-menu-item" id="btn-menu-mapsettings">
+                <div class="menu-item-left">
+                  <i class="fa-regular fa-map menu-icon"></i
+                  ><span class="menu-label">Map Settings</span>
+                </div>
+                <i class="fa-solid fa-chevron-right chevron-icon"></i>
+              </button>
+            </div>
+
+            <button class="btn-profile-logout" id="btn-profile-logout">
+              Logout
+            </button>
+          </div>
+        </div>
+
+        <!-- Profile Sub-Modals -->
+        <div class="profile-sub-modal hidden" id="modal-edit-profile">
+          <div class="modal-card">
+            <h3>Edit Profile</h3>
+            <input
+              type="text"
+              id="edit-profile-firstname"
+              placeholder="First Name"
+            />
+            <input
+              type="text"
+              id="edit-profile-middlename"
+              placeholder="Middle Name"
+            />
+            <input
+              type="text"
+              id="edit-profile-lastname"
+              placeholder="Last Name"
+            />
+            <input
+              type="text"
+              id="edit-profile-suffix"
+              placeholder="Suffix (e.g. Jr, Sr)"
+            />
+            <input
+              type="date"
+              id="edit-profile-birthdate"
+              placeholder="Birthdate"
+            />
+            <select id="edit-profile-gender">
+              <option value="" disabled selected>Select Gender</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+            <input
+              type="text"
+              id="edit-profile-address"
+              placeholder="Complete Address"
+            />
+            <input
+              type="email"
+              id="edit-profile-email"
+              placeholder="Email Address"
+            />
+            <input
+              type="tel"
+              id="edit-profile-phone"
+              placeholder="Phone Number"
+            />
+            <div class="modal-actions">
+              <button class="btn-modal-cancel" id="btn-cancel-edit-profile">
+                Cancel
+              </button>
+              <button class="btn-modal-save" id="btn-save-edit-profile">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-sub-modal hidden" id="modal-passcode">
+          <div class="modal-card">
+            <h3>Passcode Settings</h3>
+            <p
+              id="passcode-msg"
+              style="
+                font-size: 13px;
+                color: var(--text-secondary);
+                margin-bottom: 10px;
+              "
+            ></p>
+            <div id="current-passcode-container">
+              <input
+                type="password"
+                id="input-current-passcode"
+                placeholder="Current Passcode (if changing)"
+              />
+            </div>
+            <input
+              type="password"
+              id="input-new-passcode"
+              placeholder="New Passcode"
+            />
+            <input
+              type="password"
+              id="input-confirm-passcode"
+              placeholder="Confirm New Passcode"
+            />
+            <div class="modal-actions">
+              <button class="btn-modal-cancel" id="btn-cancel-passcode">
+                Cancel
+              </button>
+              <button class="btn-modal-save" id="btn-save-passcode">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Verification Modals -->
+        <div class="profile-sub-modal hidden" id="modal-verify-sos">
+          <div class="modal-card">
+            <h3>Confirm SOS Alert</h3>
+            <p>Enter your passcode to continue.</p>
+            <input
+              type="password"
+              id="input-verify-sos"
+              placeholder="Passcode"
+            />
+            <p class="error-text hidden" id="verify-sos-error">
+              Incorrect passcode.
+            </p>
+            <div class="modal-actions">
+              <button class="btn-modal-cancel" id="btn-cancel-sos">
+                Cancel
+              </button>
+              <button class="btn-modal-save" id="btn-confirm-sos">
+                Send SOS
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-sub-modal hidden" id="modal-verify-close">
+          <div class="modal-card">
+            <h3>Close Incident</h3>
+            <p>
+              Are you sure you want to cancel this incident?<br />This will
+              notify the Command Center that you have cancelled the emergency.
+            </p>
+            <label
+              style="
+                font-size: 13px;
+                color: var(--text-secondary);
+                margin-bottom: 4px;
+                display: block;
+              "
+              >Enter Passcode:</label
+            >
+            <input
+              type="password"
+              id="input-verify-close"
+              placeholder="••••••"
+              autocomplete="off"
+            />
+            <p class="error-text hidden" id="verify-close-error">
+              Incorrect passcode. Please try again.
+            </p>
+            <div class="modal-actions">
+              <button class="btn-modal-cancel" id="btn-cancel-close">
+                Cancel
+              </button>
+              <button
+                class="btn-modal-save"
+                id="btn-confirm-close"
+                style="background: #ef4444"
+              >
+                Confirm Close Incident
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-sub-modal hidden" id="modal-feedback">
+          <div class="modal-card">
+            <h3>Send Feedback</h3>
+            <input type="text" id="feedback-subject" placeholder="Subject" />
+            <select id="feedback-category">
+              <option value="Suggestion">Suggestion</option>
+              <option value="Bug Report">Bug Report</option>
+              <option value="Complaint">Complaint</option>
+              <option value="Feature Request">Feature Request</option>
+              <option value="Other">Other</option>
+            </select>
+            <textarea
+              id="feedback-message"
+              placeholder="Message (Max 1000 chars)"
+              maxlength="1000"
+            ></textarea>
+
+            <div style="margin-bottom: 15px">
+              <button
+                type="button"
+                id="btn-feedback-screenshot"
+                style="
+                  padding: 10px;
+                  background: transparent;
+                  border: 1px dashed var(--border-color);
+                  border-radius: 8px;
+                  width: 100%;
+                  color: var(--text-color);
+                  cursor: pointer;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  gap: 8px;
+                "
+              >
+                <i class="fa-solid fa-image"></i> Attach Screenshot (Optional)
+              </button>
+              <input
+                type="file"
+                id="feedback-media-upload"
+                accept="image/*"
+                class="hidden"
+              />
+              <img
+                id="feedback-media-preview"
+                src=""
+                style="
+                  display: none;
+                  width: 100%;
+                  border-radius: 8px;
+                  margin-top: 10px;
+                  border: 1px solid var(--border-color);
+                  max-height: 150px;
+                  object-fit: contain;
+                "
+              />
+            </div>
+
+            <div class="modal-actions">
+              <button class="btn-modal-cancel" id="btn-cancel-feedback">
+                Cancel
+              </button>
+              <button class="btn-modal-save" id="btn-save-feedback">
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-sub-modal hidden" id="modal-map-settings">
+          <div class="modal-card" style="max-height: 80vh; overflow-y: auto">
+            <h3>Map Settings</h3>
+            <label>Map Type</label>
+            <select id="setting-map-type">
+              <option value="standard">Standard</option>
+              <option value="satellite">Satellite</option>
+              <option value="hybrid">Hybrid</option>
+            </select>
+
+            <label>Navigation Preference</label>
+            <select id="setting-nav-pref">
+              <option value="Fastest Route">Fastest Route</option>
+              <option value="Shortest Route">Shortest Route</option>
+              <option value="Avoid Tolls">Avoid Tolls</option>
+            </select>
+
+            <label
+              >Notification Radius (Meters:
+              <span id="val-notif-rad">500</span>)</label
+            >
+            <input
+              type="range"
+              id="setting-notif-rad"
+              min="100"
+              max="5000"
+              step="100"
+              value="500"
+            />
+
+            <label
+              >Emergency Alert Radius (Meters:
+              <span id="val-alert-rad">1000</span>)</label
+            >
+            <input
+              type="range"
+              id="setting-alert-rad"
+              min="500"
+              max="10000"
+              step="500"
+              value="1000"
+            />
+
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-live-location" /> Enable Live
+              Location</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-gps-enabled" /> Allow GPS
+              Access</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-real-time-tracking" /> Enable
+              Real-Time Tracking</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-show-traffic" /> Show
+              Traffic</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-show-disaster" /> Show
+              Disaster Zones</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-show-evacuation" /> Show
+              Evacuation Centers</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-show-boundaries" /> Show
+              Barangay Boundaries</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-auto-refresh" /> Auto-Refresh
+              Map</label
+            >
+            <label class="toggle-label"
+              ><input type="checkbox" id="setting-dark-mode" /> Dark Mode
+              Navigation</label
+            >
+
+            <div class="modal-actions" style="margin-top: 15px">
+              <button class="btn-modal-cancel" id="btn-cancel-map-settings">
+                Cancel
+              </button>
+              <button class="btn-modal-save" id="btn-save-map-settings">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-sub-modal hidden" id="modal-history">
+          <div
+            class="modal-card"
+            style="
+              max-height: 85vh;
+              max-width: 800px;
+              display: flex;
+              flex-direction: column;
+              overflow: hidden;
+              padding: 0;
+            "
+          >
+            <div
+              class="modal-header"
+              style="
+                padding: 15px 20px;
+                border-bottom: 1px solid #e2e8f0;
+                background: #fff;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                display: flex;
+                align-items: center;
+              "
+            >
+              <button
+                class="btn-back"
+                id="btn-history-back"
+                style="
+                  background: none;
+                  border: none;
+                  font-size: 18px;
+                  color: #64748b;
+                  cursor: pointer;
+                  width: 24px;
+                  text-align: left;
+                  padding: 0;
+                "
+              >
+                <i class="fa-solid fa-arrow-left"></i>
+              </button>
+              <h2
+                style="
+                  margin: 0;
+                  font-size: 18px;
+                  font-weight: 600;
+                  flex-grow: 1;
+                  text-align: center;
+                "
+              >
+                Emergency History
+              </h2>
+              <div style="width: 24px"></div>
+            </div>
+
+            <div
+              style="
+                padding: 15px 20px;
+                background: #f8fafc;
+                border-bottom: 1px solid #e2e8f0;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+              "
+            >
+              <div style="position: relative">
+                <i
+                  class="fa-solid fa-search"
+                  style="
+                    position: absolute;
+                    left: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: #94a3b8;
+                  "
+                ></i>
+                <input
+                  type="text"
+                  id="history-search"
+                  placeholder="Search by ID, location, or type..."
+                  style="
+                    width: 100%;
+                    padding: 10px 10px 10px 35px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    box-sizing: border-box;
+                  "
+                />
+              </div>
+              <div style="display: flex; gap: 10px">
+                <select
+                  id="history-filter-type"
+                  style="
+                    flex: 1;
+                    padding: 8px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    background: #fff;
+                  "
+                >
+                  <option value="all">All Types</option>
+                  <option value="fire">Fire</option>
+                  <option value="medical">Medical</option>
+                  <option value="accident">Accident</option>
+                  <option value="crime">Crime</option>
+                  <option value="flood">Flood</option>
+                  <option value="rescue">Rescue</option>
+                  <option value="other">Other</option>
+                </select>
+                <select
+                  id="history-filter-status"
+                  style="
+                    flex: 1;
+                    padding: 8px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    background: #fff;
+                  "
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="pending">Pending</option>
+                  <option value="verified">Verified</option>
+                  <option value="dispatching">Dispatching</option>
+                  <option value="enroute">En Route</option>
+                  <option value="onscene">On Scene</option>
+                  <option value="inprogress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="closed">Closed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+            </div>
+
+            <div
+              class="history-list"
+              id="history-list-container"
+              style="
+                padding: 20px;
+                overflow-y: auto;
+                flex-grow: 1;
+                background: #f1f5f9;
+              "
+            >
+              <!-- Populated dynamically via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Emergency History Details Modal -->
+        <div
+          class="profile-sub-modal hidden"
+          id="modal-history-details"
+          style="z-index: 2010"
+        >
+          <div
+            class="modal-card"
+            style="
+              max-height: 90vh;
+              max-width: 600px;
+              display: flex;
+              flex-direction: column;
+              overflow: hidden;
+              padding: 0;
+            "
+          >
+            <div
+              class="modal-header"
+              style="
+                padding: 15px 20px;
+                border-bottom: 1px solid #e2e8f0;
+                background: #fff;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+              "
+            >
+              <button
+                class="btn-back"
+                id="btn-history-details-back"
+                style="
+                  background: none;
+                  border: none;
+                  font-size: 18px;
+                  color: #64748b;
+                  cursor: pointer;
+                "
+              >
+                <i class="fa-solid fa-arrow-left"></i>
+              </button>
+              <h2
+                style="
+                  margin: 0;
+                  font-size: 18px;
+                  font-weight: 600;
+                  flex-grow: 1;
+                  text-align: center;
+                "
+              >
+                Emergency Details
+              </h2>
+              <div style="width: 24px"></div>
+            </div>
+            <div
+              id="history-details-content"
+              style="
+                padding: 20px;
+                overflow-y: auto;
+                flex-grow: 1;
+                background: #f8fafc;
+              "
+            >
+              <!-- Populated dynamically via JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera Capture Modal -->
+    <div class="profile-sub-modal hidden" id="modal-camera-capture" style="z-index: 9999;">
+      <div class="modal-card" style="width: 90%; max-width: 500px; display: flex; flex-direction: column; align-items: center; background: #1e293b; color: white;">
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 10px; margin-bottom: 15px;">
+          <h3 style="margin: 0; color: white;">Capture Photo</h3>
+          <button id="btn-camera-switch" style="padding: 8px 12px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <i class="fa-solid fa-camera-rotate"></i> Switch
+          </button>
+        </div>
+        <!-- Live camera feed -->
+        <video id="camera-video-feed" autoplay playsinline style="width: 100%; border-radius: 8px; background: #000; max-height: 60vh; object-fit: cover;"></video>
+        <!-- Preview image (hidden by default) -->
+        <img id="camera-preview-img" style="display: none; width: 100%; border-radius: 8px; max-height: 60vh; object-fit: cover;" />
+        <canvas id="camera-canvas" style="display: none;"></canvas>
+        <!-- Phase 1: Capture buttons -->
+        <div id="camera-actions-capture" class="modal-actions" style="margin-top: 20px; width: 100%; justify-content: center; gap: 15px;">
+          <button id="btn-camera-capture" style="background: #3b82f6; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Capture</button>
+          <button id="btn-camera-cancel" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
+        </div>
+        <!-- Phase 2: Preview buttons (hidden by default) -->
+        <div id="camera-actions-preview" class="modal-actions" style="display: none; margin-top: 20px; width: 100%; justify-content: center; gap: 15px;">
+          <button id="btn-camera-retake" style="background: #f59e0b; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Retake</button>
+          <button id="btn-camera-confirm" style="background: #10b981; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Confirm</button>
+          <button id="btn-camera-cancel-preview" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modals for Profile Actions -->
+    <div class="profile-sub-modal hidden" id="modal-logout-confirm">
+      <div class="modal-card">
+        <h3>Logout</h3>
+        <p>Are you sure you want to logout?</p>
+        <div class="modal-actions" style="margin-top: 15px">
+          <button class="btn-modal-cancel" id="btn-cancel-logout">
+            Cancel
+          </button>
+          <button
+            class="btn-modal-save"
+            style="
+              background: var(--danger-color, #ff4444);
+              border-color: var(--danger-color, #ff4444);
+            "
+            id="btn-confirm-logout"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="profile-sub-modal hidden" id="modal-image-crop">
+      <div
+        class="modal-card"
+        style="max-height: 90vh; display: flex; flex-direction: column"
+      >
+        <h3>Crop Profile Picture</h3>
+        <div
+          style="
+            width: 100%;
+            height: 300px;
+            background: #000;
+            margin-bottom: 15px;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+          "
+        >
+          <img
+            id="cropper-image"
+            src=""
+            style="max-width: 100%; max-height: 100%; display: block"
+          />
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            justify-content: center;
+          "
+        >
+          <button
+            type="button"
+            id="btn-crop-zoom-in"
+            style="
+              padding: 8px;
+              border-radius: 4px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              cursor: pointer;
+              color: var(--text-color);
+            "
+          >
+            <i class="fa-solid fa-magnifying-glass-plus"></i>
+          </button>
+          <button
+            type="button"
+            id="btn-crop-zoom-out"
+            style="
+              padding: 8px;
+              border-radius: 4px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              cursor: pointer;
+              color: var(--text-color);
+            "
+          >
+            <i class="fa-solid fa-magnifying-glass-minus"></i>
+          </button>
+          <button
+            type="button"
+            id="btn-crop-rotate-left"
+            style="
+              padding: 8px;
+              border-radius: 4px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              cursor: pointer;
+              color: var(--text-color);
+            "
+          >
+            <i class="fa-solid fa-rotate-left"></i>
+          </button>
+          <button
+            type="button"
+            id="btn-crop-rotate-right"
+            style="
+              padding: 8px;
+              border-radius: 4px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              cursor: pointer;
+              color: var(--text-color);
+            "
+          >
+            <i class="fa-solid fa-rotate-right"></i>
+          </button>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-modal-cancel" id="btn-cancel-crop">Cancel</button>
+          <button class="btn-modal-save" id="btn-save-crop">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modals for Draft Conflict -->
+    <div class="profile-sub-modal hidden" id="modal-draft-conflict">
+      <div class="modal-card">
+        <h3>
+          <i
+            class="fa-solid fa-triangle-exclamation"
+            style="color: #f59e0b; margin-right: 8px"
+          ></i>
+          Existing Emergency Found
+        </h3>
+        <p
+          style="
+            margin-top: 10px;
+            line-height: 1.5;
+            color: #475569;
+            font-size: 14px;
+          "
+        >
+          You already have an unfinished emergency request. Please continue,
+          cancel, or wait for the existing emergency to be resolved before
+          creating a new request.
+        </p>
+        <div
+          class="modal-actions"
+          style="margin-top: 20px; flex-direction: column; gap: 10px"
+        >
+          <button
+            class="btn-modal-save"
+            style="width: 100%"
+            id="btn-continue-draft"
+          >
+            Continue Existing Emergency
+          </button>
+          <button
+            class="btn-modal-cancel"
+            style="
+              width: 100%;
+              background: #fee2e2;
+              color: #ef4444;
+              border-color: #fca5a5;
+            "
+            id="btn-cancel-draft-prompt"
+          >
+            Cancel Draft
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Script assets -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+    <!-- Shared Webcam Component -->
+    <script
+      src="/public/webcam-overlay.js"
+      onerror="
+        this.onerror = null;
+        this.src = '../../server/public/webcam-overlay.js';
+      "
+    ></script>
+    <!-- Main JS Application -->
+    <script src="app.js?v=10"></script>
+    <!-- Media Lightbox Viewer -->
+    <div id="media-lightbox" class="hidden">
+      <span id="lightbox-close">&times;</span>
+      <div id="lightbox-content-container"></div>
+    </div>
+  </body>
+</html>

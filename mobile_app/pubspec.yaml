@@ -1,0 +1,50 @@
+name: alerto_poz
+description: "ALERTO-POZ: An Integrated Emergency Notification and Response Application for Pozorrubio, Pangasinan"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.7.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Icons
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+
+  # Networking
+  http: ^1.2.2
+  socket_io_client: ^2.0.3+1
+
+  # Maps & Location
+  flutter_map: ^6.2.1
+  latlong2: ^0.9.1
+  geolocator: ^12.0.0
+
+  # Media
+  image_picker: ^1.1.2
+
+  # Local Storage
+  shared_preferences: ^2.3.3
+
+  # Utilities
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: "^0.13.1"
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/logo.jpg"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

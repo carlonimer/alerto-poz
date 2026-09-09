@@ -1,0 +1,21 @@
+{
+  "name": "alerto-poz-hybrid",
+  "version": "1.0.0",
+  "description": "Alerto-poz: Integrated Emergency Notification and Response Application (Hybrid Project Workspace)",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "nodemon server/server.js",
+    "cap:sync": "npx cap sync",
+    "cap:open": "npx cap open android"
+  },
+  "devDependencies": {
+    "@capacitor/android": "5.7.8",
+    "@capacitor/cli": "5.7.8",
+    "@capacitor/core": "5.7.8",
+    "nodemon": "^3.1.14"
+  },
+  "dependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
