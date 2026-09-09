@@ -5,7 +5,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
