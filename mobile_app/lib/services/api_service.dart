@@ -33,6 +33,7 @@ class ApiService {
         'phone': phone,
         'email': email,
         'password': password,
+        'registrationMethod': phone.isNotEmpty ? 'phone' : 'email',
       }),
     );
     return jsonDecode(res.body) as Map<String, dynamic>;
