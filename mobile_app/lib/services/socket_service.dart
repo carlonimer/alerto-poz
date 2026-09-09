@@ -8,13 +8,16 @@ class SocketService {
   static io.Socket? _socket;
   static bool _connected = false;
 
+  // Use your computer's IP for local testing on a physical device, or your Render URL
+  static final String serverUrl = 'https://alerto-poz.onrender.com';
+
   static bool get isConnected => _connected;
 
   static void init() {
     if (_socket != null) return;
 
     _socket = io.io(
-      ApiService.baseUrl,
+      serverUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
           .enableAutoConnect()

@@ -3,10 +3,9 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  // Change this to your machine's IP if testing on a physical device
-  // static const String baseUrl = 'http://localhost:3000'; // Web testing
-  // static const String baseUrl = 'http://10.0.2.2:3000'; // Android emulator
-  static const String baseUrl = 'http://192.168.100.134:3000'; // Physical device
+  // Set this to your computer's IP address when testing on physical device
+  // e.g. 'http://192.168.1.X:3000' or Render URL
+  static const String baseUrl = 'https://alerto-poz.onrender.com';
 
   static Future<Map<String, String>> _getHeaders({bool auth = false}) async {
     final headers = {'Content-Type': 'application/json'};
