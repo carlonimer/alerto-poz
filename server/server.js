@@ -104,7 +104,7 @@ const dbConfig = {
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'alerto_poz',
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: true } : undefined
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
 };
 
 // JSON Local Fallback File Database Configuration
