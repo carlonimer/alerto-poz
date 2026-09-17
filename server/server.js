@@ -135,8 +135,10 @@ async function initDatabase() {
         // Connect without db parameter first to ensure db exists
         const initConn = await mysql.createConnection({
             host: dbConfig.host,
+            port: dbConfig.port,
             user: dbConfig.user,
-            password: dbConfig.password
+            password: dbConfig.password,
+            ssl: dbConfig.ssl
         });
         await initConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
         await initConn.end();
