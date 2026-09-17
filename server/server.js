@@ -242,6 +242,17 @@ async function recordIncidentEvent(incidentId, ticketNumber, eventStatus, previo
 
 async function getDBState() {
     if (useMySQL) {
+        // Patch legacy responders that have NULL base_lat
+        await pool.query("UPDATE responders SET base_lat = 16.1086, base_lng = 120.5424 WHERE id = 'poz-amb-1' AND base_lat IS NULL");
+        await pool.query("UPDATE responders SET base_lat = 16.0435, base_lng = 120.4850 WHERE id = 'prc-amb-1' AND base_lat IS NULL");
+        await pool.query("UPDATE responders SET base_lat = 16.1145, base_lng = 120.5466 WHERE id = 'poz-fire-1' AND base_lat IS NULL");
+        await pool.query("UPDATE responders SET base_lat = 16.1115, base_lng = 120.5484 WHERE id = 'poz-police-1' AND base_lat IS NULL");
+        await pool.query("UPDATE responders SET base_lat = 16.0820, base_lng = 120.5180 WHERE id = 'poz-police-2' AND base_lat IS NULL");
+        await pool.query("UPDATE responders SET base_lat = lat, base_lng = lng WHERE base_lat IS NULL");
+        
+        // Force reset any available responders that are stuck at an old incident location
+        await pool.query("UPDATE responders SET lat = base_lat, lng = base_lng WHERE status = 'available' AND base_lat IS NOT NULL AND (lat != base_lat OR lng != base_lng)");
+        
         const [users] = await pool.query("SELECT * FROM users");
         const [incidents] = await pool.query(`
             SELECT i.*, u.profile_image, u.gender 
