@@ -1033,6 +1033,10 @@ class CommandDashboard {
                 payload.responseProgress = 'en_route';
             } else if (status === 'resolved') {
                 payload.responseProgress = null; // Clear on resolve
+                if (this.gpsStreams && this.gpsStreams[this.selectedIncident.id]) {
+                    clearInterval(this.gpsStreams[this.selectedIncident.id]);
+                    delete this.gpsStreams[this.selectedIncident.id];
+                }
             }
             
             await fetch(`/api/incidents/${this.selectedIncident.id}`, {

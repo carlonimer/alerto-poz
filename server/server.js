@@ -323,7 +323,12 @@ async function addIncident(report) {
 async function updateIncidentAndResponder(incidentId, responderId, status, responderStatus) {
     if (useMySQL) {
         await pool.query("UPDATE incidents SET status = ?, assignedUnit = ? WHERE id = ?", [status, responderId, incidentId]);
-        await pool.query("UPDATE responders SET status = ? WHERE id = ?", [responderStatus, responderId]);
+        
+        if (responderStatus === 'available') {
+            await pool.query("UPDATE responders SET status = ?, lat = COALESCE(base_lat, lat), lng = COALESCE(base_lng, lng) WHERE id = ?", [responderStatus, responderId]);
+        } else {
+            await pool.query("UPDATE responders SET status = ? WHERE id = ?", [responderStatus, responderId]);
+        }
         
         const [inc] = await pool.query("SELECT * FROM incidents WHERE id = ?", [incidentId]);
         const [rep] = await pool.query("SELECT * FROM responders WHERE id = ?", [responderId]);
@@ -337,6 +342,12 @@ async function updateIncidentAndResponder(incidentId, responderId, status, respo
             incident.status = status;
             incident.assignedUnit = responderId;
             responder.status = responderStatus;
+            
+            if (responderStatus === 'available') {
+                responder.lat = responder.base_lat !== undefined ? responder.base_lat : responder.lat;
+                responder.lng = responder.base_lng !== undefined ? responder.base_lng : responder.lng;
+            }
+            
             fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
             return { incident, responder };
         }
