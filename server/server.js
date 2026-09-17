@@ -661,10 +661,28 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(400).json({ error: "Invalid email/mobile number or password." });
         }
 
-        // Generate 2FA login OTP
+        if (user.active) {
+            // User is already verified. Skip OTP and generate session token immediately.
+            const sessionToken = `alerto-session-${user.id}-${Date.now()}`;
+            return res.json({
+                success: true,
+                otpRequired: false,
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    phone: user.phone,
+                    type: user.type,
+                    hasPasscode: !!user.passcode
+                },
+                token: sessionToken
+            });
+        }
+
+        // Generate 2FA login OTP for unverified users
         const otpCode = generateOTP();
         const otpExpires = Date.now() + 5 * 60 * 1000; // 5 mins
-        const otpType = user.active ? 'login' : 'register';
+        const otpType = 'register';
 
         if (useMySQL) {
             await pool.query(
@@ -684,7 +702,7 @@ app.post('/api/auth/login', async (req, res) => {
 
         // Send real OTP
         const targetDesc = user.email && loginId.includes('@') ? `Email to ${user.email}` : `SMS to ${user.phone}`;
-        await sendOTP(loginId.includes('@') ? user.email : user.phone, otpCode, `LOGIN 2FA OTP for ${user.name}`, targetDesc);
+        await sendOTP(loginId.includes('@') ? user.email : user.phone, otpCode, `REGISTRATION OTP for ${user.name}`, targetDesc);
 
         res.json({ success: true, otpRequired: true, target: user.email || user.phone, otpDevVal: otpCode, userActive: user.active });
     } catch (e) {

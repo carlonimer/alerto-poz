@@ -1509,6 +1509,28 @@ class CitizenMobileClient {
                 this.devOtpCode.textContent = data.otpDevVal;
                 this.devOtpToast.classList.remove("hidden");
                 this.startOtpTimer();
+            } else if (data.success && !data.otpRequired && data.token) {
+                // Direct login without OTP (for already verified users)
+                if (rememberMe) {
+                    localStorage.setItem("alerto-token", data.token);
+                    localStorage.setItem("alerto-user", JSON.stringify(data.user));
+                } else {
+                    sessionStorage.setItem("alerto-token", data.token);
+                    sessionStorage.setItem("alerto-user", JSON.stringify(data.user));
+                }
+
+                this.activeUser = data.user;
+                this.logoutBtn.textContent = "LOG OUT";
+                this.logoutBtn.style.backgroundColor = "#ff3b30";
+                this.logoutBtn.style.color = "white";
+                if (this.btnProfile) this.btnProfile.textContent = "PROFILE";
+
+                if (this.devOtpToast) this.devOtpToast.classList.add("hidden");
+                this.authView.classList.remove("active");
+                this.appView.classList.add("active");
+
+                this.initHomepageMap();
+                this.refreshGPS(false);
             }
         } catch (e) {
             console.error(e);
