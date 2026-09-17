@@ -482,40 +482,68 @@ app.post('/api/auth/register', async (req, res) => {
         const otpExpires = Date.now() + 5 * 60 * 1000; // 5 mins
 
         if (useMySQL) {
-            // Check duplicates
+            // Check duplicates and unverified accounts
+            let existingUser = null;
             if (email) {
                 const [existsEmail] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
-                if (existsEmail.length > 0) return res.status(400).json({ error: "Email address already registered." });
+                if (existsEmail.length > 0) {
+                    if (existsEmail[0].active) return res.status(400).json({ error: "Email address already registered." });
+                    existingUser = existsEmail[0];
+                }
             }
-            if (phone) {
+            if (!existingUser && phone) {
                 const [existsPhone] = await pool.query("SELECT * FROM users WHERE phone = ?", [phone]);
-                if (existsPhone.length > 0) return res.status(400).json({ error: "Mobile number already registered." });
+                if (existsPhone.length > 0) {
+                    if (existsPhone[0].active) return res.status(400).json({ error: "Mobile number already registered." });
+                    existingUser = existsPhone[0];
+                }
             }
 
-            await pool.query(
-                "INSERT INTO users (name, email, phone, password, active, otp_code, otp_expires, otp_type) VALUES (?, ?, ?, ?, 0, ?, ?, 'register')",
-                [name, email || null, phone || null, hashedPassword, otpCode, otpExpires]
-            );
+            if (existingUser) {
+                // Update unverified user with new details and new OTP
+                await pool.query(
+                    "UPDATE users SET name = ?, email = ?, phone = ?, password = ?, otp_code = ?, otp_expires = ?, otp_type = 'register' WHERE id = ?",
+                    [name, email || null, phone || null, hashedPassword, otpCode, otpExpires, existingUser.id]
+                );
+            } else {
+                await pool.query(
+                    "INSERT INTO users (name, email, phone, password, active, otp_code, otp_expires, otp_type) VALUES (?, ?, ?, ?, 0, ?, ?, 'register')",
+                    [name, email || null, phone || null, hashedPassword, otpCode, otpExpires]
+                );
+            }
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
-            if (email && db.users.some(u => u.email === email)) {
-                return res.status(400).json({ error: "Email address already registered." });
+            let existingUser = null;
+            if (email) {
+                existingUser = db.users.find(u => u.email === email);
+                if (existingUser && existingUser.active) return res.status(400).json({ error: "Email address already registered." });
             }
-            if (phone && db.users.some(u => u.phone === phone)) {
-                return res.status(400).json({ error: "Mobile number already registered." });
+            if (!existingUser && phone) {
+                existingUser = db.users.find(u => u.phone === phone);
+                if (existingUser && existingUser.active) return res.status(400).json({ error: "Mobile number already registered." });
             }
 
-            db.users.push({
-                id: db.users.length + 1,
-                name,
-                email: email || null,
-                phone: phone || null,
-                password: hashedPassword,
-                active: 0,
-                otp_code: otpCode,
-                otp_expires: otpExpires,
-                otp_type: 'register'
-            });
+            if (existingUser) {
+                existingUser.name = name;
+                existingUser.email = email || null;
+                existingUser.phone = phone || null;
+                existingUser.password = hashedPassword;
+                existingUser.otp_code = otpCode;
+                existingUser.otp_expires = otpExpires;
+                existingUser.otp_type = 'register';
+            } else {
+                db.users.push({
+                    id: db.users.length + 1,
+                    name,
+                    email: email || null,
+                    phone: phone || null,
+                    password: hashedPassword,
+                    active: 0,
+                    otp_code: otpCode,
+                    otp_expires: otpExpires,
+                    otp_type: 'register'
+                });
+            }
             fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
         }
 
@@ -604,11 +632,6 @@ app.post('/api/auth/login', async (req, res) => {
         if (!user) {
             return res.status(400).json({ error: "Invalid email/mobile number or password." });
         }
-        
-        if (!user.active) {
-            return res.status(401).json({ error: "Your account is not verified. Please contact support or register again." });
-        }
-
         // Verify password
         const isMatch = bcrypt.compareSync(password, user.password);
         if (!isMatch) {
@@ -618,11 +641,12 @@ app.post('/api/auth/login', async (req, res) => {
         // Generate 2FA login OTP
         const otpCode = generateOTP();
         const otpExpires = Date.now() + 5 * 60 * 1000; // 5 mins
+        const otpType = user.active ? 'login' : 'register';
 
         if (useMySQL) {
             await pool.query(
-                "UPDATE users SET otp_code = ?, otp_expires = ?, otp_type = 'login' WHERE id = ?",
-                [otpCode, otpExpires, user.id]
+                "UPDATE users SET otp_code = ?, otp_expires = ?, otp_type = ? WHERE id = ?",
+                [otpCode, otpExpires, otpType, user.id]
             );
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
@@ -630,7 +654,7 @@ app.post('/api/auth/login', async (req, res) => {
             if (u) {
                 u.otp_code = otpCode;
                 u.otp_expires = otpExpires;
-                u.otp_type = 'login';
+                u.otp_type = otpType;
                 fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
             }
         }
