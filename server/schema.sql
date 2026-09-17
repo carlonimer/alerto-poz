@@ -228,3 +228,65 @@ VALUES (
 ON DUPLICATE KEY UPDATE
     name = VALUES(name),
     unit_id = VALUES(unit_id);
+
+-- 8. Activity Logs
+CREATE TABLE IF NOT EXISTS activity_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    action VARCHAR(255),
+    ip_address VARCHAR(100),
+    user_agent TEXT,
+    created_at BIGINT
+);
+
+-- 9. Feedbacks
+CREATE TABLE IF NOT EXISTS feedbacks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    subject VARCHAR(255),
+    category VARCHAR(100),
+    message TEXT,
+    media_path VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'New',
+    created_at BIGINT,
+    updated_at BIGINT
+);
+
+-- 10. Incident Events
+CREATE TABLE IF NOT EXISTS incident_events (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    incident_id VARCHAR(50),
+    type VARCHAR(100),
+    details TEXT,
+    timestamp BIGINT
+);
+
+-- 11. Map Settings
+CREATE TABLE IF NOT EXISTS map_settings (
+    user_id INT PRIMARY KEY,
+    map_type VARCHAR(50),
+    live_location TINYINT(1),
+    gps_enabled TINYINT(1),
+    show_traffic TINYINT(1),
+    show_disaster_zones TINYINT(1),
+    show_evacuation_centers TINYINT(1),
+    show_barangay_boundaries TINYINT(1),
+    navigation_preference VARCHAR(50),
+    notification_radius INT,
+    emergency_alert_radius INT,
+    auto_refresh TINYINT(1),
+    dark_mode TINYINT(1),
+    created_at BIGINT,
+    updated_at BIGINT
+);
+
+-- 12. Messages (Chat)
+CREATE TABLE IF NOT EXISTS messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    incident_id VARCHAR(50),
+    sender VARCHAR(100),
+    sender_id INT,
+    message TEXT,
+    media_path VARCHAR(255),
+    timestamp BIGINT
+);
