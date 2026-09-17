@@ -972,17 +972,27 @@ class CommandDashboard {
         const otherGroup = document.createElement("optgroup");
         otherGroup.label = "Other Available Responders";
         
-        availableUnits.forEach((r, index) => {
-            const isFireMatch = this.selectedIncident.category === "fire" && r.type === "fire";
-            const isMedicalMatch = this.selectedIncident.category === "medical" && r.type === "medical";
-            const isPoliceMatch = this.selectedIncident.category === "police" && r.type === "police";
-            const isGeneralMatch = this.selectedIncident.category === "roadside" || this.selectedIncident.category === "report" || this.selectedIncident.category === "barangay";
+        let closestRecommendedLabeled = false;
+        
+        availableUnits.forEach((r) => {
+            const cat = (this.selectedIncident.category || "").toLowerCase();
+            let isRecommended = false;
             
-            const isRecommended = isFireMatch || isMedicalMatch || isPoliceMatch || isGeneralMatch;
+            if (cat === "fire" && r.type === "fire") isRecommended = true;
+            else if (cat === "medical" && r.type === "medical") isRecommended = true;
+            else if (cat === "crime" && r.type === "police") isRecommended = true;
+            else if (cat === "accident" && (r.type === "medical" || r.type === "police")) isRecommended = true;
+            else if (cat === "flood" || cat === "rescue" || cat === "hardware emergency" || cat === "other") isRecommended = true;
             
             const opt = document.createElement("option");
             opt.value = r.id;
-            opt.textContent = `${r.name} [${r.type.toUpperCase()}]${index === 0 && isRecommended ? " (Closest)" : ""}`;
+            
+            let label = `${r.name} [${r.type.toUpperCase()}]`;
+            if (isRecommended && !closestRecommendedLabeled) {
+                label += " (Closest)";
+                closestRecommendedLabeled = true;
+            }
+            opt.textContent = label;
             
             if (isRecommended) {
                 recommendedGroup.appendChild(opt);
