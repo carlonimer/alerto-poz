@@ -599,6 +599,7 @@ class CommandDashboard {
 
     plotIncidentMarker(inc) {
         if (this.incidentMarkers[inc.id]) return;
+        if (inc.category === 'Hardware Emergency') return; // Do not plot hardware emergencies on the map
         
         let color = inc.status === 'new' ? '#ef4444' : '#f59e0b';
         
@@ -1166,10 +1167,11 @@ class CommandDashboard {
                     <td style="font-size: 13px;">
                         ${inc.status === 'draft' ? 
                             `<i class="fa-regular fa-clock text-warning"></i> Drafting` : 
+                            (inc.category === 'Hardware Emergency' ? `<span style="color: var(--text-muted); font-size: 11px;"><i class="fa-solid fa-microchip"></i> Hardware Log</span>` : 
                             (inc.status !== 'resolved' && inc.status !== 'cancelled' ? 
                                 `<button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px; background-color: white; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;" onclick="window.dashSelectIncident('${inc.id}')">Manage</button>` : 
                                 (inc.status === 'resolved' ? `<span style="color: var(--success); font-weight: 500;"><i class="fa-solid fa-check"></i> Resolved</span>` : `<span style="color: var(--danger); font-weight: 500;"><i class="fa-solid fa-ban"></i> Cancelled</span>`)
-                            )
+                            ))
                         }
                     </td>
                 </tr>
