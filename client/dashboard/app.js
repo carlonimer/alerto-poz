@@ -1547,7 +1547,7 @@ class CommandDashboard {
                         <td style="font-weight: 500">${f.subject}</td>
                         <td style="max-width: 300px; white-space: normal;">${f.message}</td>
                         <td>
-                            ${f.media_path ? `<a href="#" onclick="const w=window.open('','_blank'); w.document.write('<title>Feedback Attachment</title><body style=\\'margin:0; background:#000; display:flex; justify-content:center; align-items:center; height:100vh;\\'><img src=\\'${f.media_path}\\' style=\\'max-width:100%; max-height:100%; object-fit:contain;\\'></body>'); return false;"><img src="${f.media_path}" style="max-height: 50px; border-radius: 4px; border: 1px solid var(--border-color); object-fit: cover; max-width: 80px; cursor: pointer;"></a>` : '<span style="color: var(--text-muted); font-size: 12px">None</span>'}
+                            ${f.media_path ? `<img src="${f.media_path}" class="feedback-media-img" style="max-height: 50px; border-radius: 4px; border: 1px solid var(--border-color); object-fit: cover; max-width: 80px; cursor: pointer;">` : '<span style="color: var(--text-muted); font-size: 12px">None</span>'}
                         </td>
                         <td style="white-space: nowrap; color: var(--text-muted)">
                             ${new Date(f.created_at).toLocaleString()}
@@ -1990,7 +1990,7 @@ document.addEventListener("click", (e) => {
         return;
     }
 
-    if (e.target.tagName === "IMG" && e.target.closest(".chat-bubble")) {
+    if (e.target.tagName === "IMG" && (e.target.closest(".chat-bubble") || e.target.classList.contains("feedback-media-img"))) {
         const img = document.createElement("img");
         img.src = e.target.src;
         lightboxContainer.innerHTML = "";
