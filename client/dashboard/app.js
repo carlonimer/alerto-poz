@@ -1163,7 +1163,7 @@ class CommandDashboard {
                     <td class="capitalize" style="font-size: 13px;">${inc.type || inc.category || 'Unknown'}</td>
                     <td class="font-mono" style="font-size: 13px; color: var(--text-secondary);">${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}</td>
                     <td style="font-size: 13px;">${latencyHTML}</td>
-                    <td><span class="badge" style="background: ${badgeColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;">${inc.status}</span></td>
+                    <td>${inc.category === 'Hardware Emergency' ? `<span style="color: var(--danger); font-size: 12px; font-weight: bold; text-transform: uppercase;"><i class="fa-solid fa-triangle-exclamation"></i> Alert!</span>` : `<span class="badge" style="background: ${badgeColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;">${inc.status}</span>`}</td>
                     <td style="font-size: 13px;">
                         ${inc.status === 'draft' ? 
                             `<i class="fa-regular fa-clock text-warning"></i> Drafting` : 
