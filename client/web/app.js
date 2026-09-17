@@ -1531,6 +1531,7 @@ class CitizenMobileClient {
 
                 this.initHomepageMap();
                 this.refreshGPS(false);
+                this.syncBroadcastsFeed();
             }
         } catch (e) {
             console.error(e);
