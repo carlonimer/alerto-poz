@@ -28,7 +28,7 @@ const POZORRUBIO_PLAZA = { lat: 16.1114, lng: 120.5482 };
 
 // Server connection path for hybrid native app environments
 const SERVER_URL = (window.location.protocol === 'file:' || window.location.hostname === '' || window.location.port === '5500' || window.location.port === '5501')
-    ? 'http://localhost:3000' // Handle VS Code Live Server & file:// testing; use 10.0.2.2 only if using Android Emulator without Capacitor HTTP server
+    ? 'https://alerto-poz.onrender.com' // Production Hosting
     : window.location.origin;
 
 

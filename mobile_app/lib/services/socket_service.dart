@@ -9,9 +9,9 @@ class SocketService {
   static bool _connected = false;
 
   // Use your computer's IP for local testing on a physical device, or your Render URL
-  // static const String serverUrl = 'https://alerto-poz.onrender.com'; // Production
+  static const String serverUrl = 'https://alerto-poz.onrender.com'; // Production
   // static const String serverUrl = 'http://localhost:3000'; // Web / iOS Emulator
-  static const String serverUrl = 'http://192.168.100.131:3000'; // Local Network IP (Works for Web & Physical Phone)
+  // static const String serverUrl = 'http://192.168.100.131:3000'; // Local Network IP
 
   static bool get isConnected => _connected;
 

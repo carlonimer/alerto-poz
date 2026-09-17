@@ -5,9 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ApiService {
   // Set this to your computer's IP address when testing on physical device
   // e.g. 'http://192.168.1.X:3000' or Render URL
-  // static const String baseUrl = 'https://alerto-poz.onrender.com'; // Production
+  static const String baseUrl = 'https://alerto-poz.onrender.com'; // Production
   // static const String baseUrl = 'http://localhost:3000'; // Web / iOS Emulator
-  static const String baseUrl = 'http://192.168.100.131:3000'; // Local Network IP (Works for Web & Physical Phone)
+  // static const String baseUrl = 'http://192.168.100.131:3000'; // Local Network IP
 
   static Future<Map<String, String>> _getHeaders({bool auth = false}) async {
     final headers = {'Content-Type': 'application/json'};

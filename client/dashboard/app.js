@@ -278,7 +278,7 @@ class CommandDashboard {
     initSocket() {
         // Handle VS Code Live Server testing ports
         const socketUrl = (window.location.port === '5500' || window.location.port === '5501') 
-            ? 'http://localhost:3000' 
+            ? 'https://alerto-poz.onrender.com' 
             : '';
         this.socket = io(socketUrl);
         

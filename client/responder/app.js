@@ -1,5 +1,5 @@
 const SERVER_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:3000' 
+    ? 'https://alerto-poz.onrender.com' 
     : 'https://alerto-poz.onrender.com';
 
 class ResponderApp {

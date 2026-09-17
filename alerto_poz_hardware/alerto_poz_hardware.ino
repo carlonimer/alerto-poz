@@ -10,8 +10,8 @@ const char* ssid = "alerto";
 const char* password = "12345678";
 
 // 2. PALITAN ITO NG IP ADDRESS NG NODE.JS BACKEND MO
-// Halimbawa: "http://192.168.1.10:3000/api/hardware/trigger"
-const String serverName = "http://10.99.236.29:3000/api/hardware/trigger";
+// Halimbawa: "https://alerto-poz.onrender.com/api/hardware/trigger"
+const String serverName = "https://alerto-poz.onrender.com/api/hardware/trigger";
 
 // ==========================================
 

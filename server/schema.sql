@@ -5,6 +5,7 @@
 -- ==========================================================================
 
 CREATE DATABASE IF NOT EXISTS alerto_poz;
+
 USE alerto_poz;
 
 -- 1. Users Table (Authentication & Citizen Profiles)
@@ -50,10 +51,10 @@ CREATE TABLE IF NOT EXISTS incidents (
 CREATE TABLE IF NOT EXISTS responders (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    type VARCHAR(20) NOT NULL,    -- 'medical', 'fire', 'police'
+    type VARCHAR(20) NOT NULL, -- 'medical', 'fire', 'police'
     lat DOUBLE NOT NULL,
     lng DOUBLE NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'available',    -- 'available', 'busy'
+    status VARCHAR(20) NOT NULL DEFAULT 'available', -- 'available', 'busy'
     icon VARCHAR(50) NOT NULL
 );
 
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS responders (
 CREATE TABLE IF NOT EXISTS broadcasts (
     id VARCHAR(20) PRIMARY KEY,
     title VARCHAR(150) NOT NULL,
-    category VARCHAR(20) NOT NULL,    -- 'info', 'warning', 'evacuate'
+    category VARCHAR(20) NOT NULL, -- 'info', 'warning', 'evacuate'
     message TEXT NOT NULL,
     timestamp BIGINT NOT NULL
 );
@@ -104,22 +105,126 @@ CREATE TABLE IF NOT EXISTS water_devices (
 -- ==========================================================================
 
 -- Seed First Responders (Local Pozorrubio Units)
-INSERT INTO responders (id, name, type, lat, lng, status, icon) VALUES
-('poz-ems-1', 'Pozorrubio Ambulance 1', 'medical', 16.1086, 120.5424, 'available', 'fa-truck-medical'),
-('poz-ems-2', 'Pangasinan Red Cross (Manaoag Sub)', 'medical', 16.0435, 120.4850, 'available', 'fa-truck-medical'),
-('poz-fire-1', 'Pozorrubio BFP Fire Truck 1', 'fire', 16.1118, 120.5487, 'available', 'fa-fire-extinguisher'),
-('poz-police-1', 'Pozorrubio PNP Mobile Patrol 1', 'police', 16.1115, 120.5484, 'available', 'fa-shield-halved'),
-('poz-police-2', 'Pozorrubio PNP Mobile Patrol 2', 'police', 16.0820, 120.5180, 'available', 'fa-shield-halved')
-ON DUPLICATE KEY UPDATE name=VALUES(name), lat=VALUES(lat), lng=VALUES(lng), status=VALUES(status);
+INSERT INTO
+    responders (
+        id,
+        name,
+        type,
+        lat,
+        lng,
+        status,
+        icon
+    )
+VALUES (
+        'poz-ems-1',
+        'Pozorrubio Ambulance 1',
+        'medical',
+        16.1086,
+        120.5424,
+        'available',
+        'fa-truck-medical'
+    ),
+    (
+        'poz-ems-2',
+        'Pangasinan Red Cross (Manaoag Sub)',
+        'medical',
+        16.0435,
+        120.4850,
+        'available',
+        'fa-truck-medical'
+    ),
+    (
+        'poz-fire-1',
+        'Pozorrubio BFP Fire Truck 1',
+        'fire',
+        16.1118,
+        120.5487,
+        'available',
+        'fa-fire-extinguisher'
+    ),
+    (
+        'poz-police-1',
+        'Pozorrubio PNP Mobile Patrol 1',
+        'police',
+        16.1115,
+        120.5484,
+        'available',
+        'fa-shield-halved'
+    ),
+    (
+        'poz-police-2',
+        'Pozorrubio PNP Mobile Patrol 2',
+        'police',
+        16.0820,
+        120.5180,
+        'available',
+        'fa-shield-halved'
+    )
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    lat = VALUES(lat),
+    lng = VALUES(lng),
+    status = VALUES(status);
 
 -- Seed Admin Panel Account (password: 1234)
-INSERT INTO users (name, email, phone, password, type, active) VALUES
-('Pozorrubio MDRRMO Admin', 'admin', '09998887777', '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i', 'authority', 1)
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+INSERT INTO
+    users (
+        name,
+        email,
+        phone,
+        password,
+        type,
+        active
+    )
+VALUES (
+        'Pozorrubio MDRRMO Admin',
+        'admin',
+        '09998887777',
+        '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i',
+        'authority',
+        1
+    )
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name);
 
 -- Seed Responder Accounts (password: 1234)
-INSERT INTO users (name, email, phone, password, type, active, unit_id) VALUES
-('Pozorrubio EMS 1', 'ems1', '09111111111', '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i', 'responder', 1, 'poz-ems-1'),
-('Pozorrubio Fire 1', 'fire1', '09222222222', '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i', 'responder', 1, 'poz-fire-1'),
-('Pozorrubio Police 1', 'police1', '09333333333', '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i', 'responder', 1, 'poz-police-1')
-ON DUPLICATE KEY UPDATE name=VALUES(name), unit_id=VALUES(unit_id);
+INSERT INTO
+    users (
+        name,
+        email,
+        phone,
+        password,
+        type,
+        active,
+        unit_id
+    )
+VALUES (
+        'Pozorrubio EMS 1',
+        'ems1',
+        '09111111111',
+        '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i',
+        'responder',
+        1,
+        'poz-ems-1'
+    ),
+    (
+        'Pozorrubio Fire 1',
+        'fire1',
+        '09222222222',
+        '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i',
+        'responder',
+        1,
+        'poz-fire-1'
+    ),
+    (
+        'Pozorrubio Police 1',
+        'police1',
+        '09333333333',
+        '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i',
+        'responder',
+        1,
+        'poz-police-1'
+    )
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    unit_id = VALUES(unit_id);
