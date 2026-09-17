@@ -1152,10 +1152,10 @@ class CommandDashboard {
                     <td style="font-size: 13px;">${time}</td>
                     <td>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            ${this.getAvatarHtml(inc.profile_image, inc.gender, 24)}
+                            ${inc.category === 'Hardware Emergency' ? `<div style="width: 24px; height: 24px; border-radius: 50%; background: var(--danger); display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;"><i class="fa-solid fa-microchip"></i></div>` : this.getAvatarHtml(inc.profile_image, inc.gender, 24)}
                             <div>
                                 <b style="color: var(--text-primary); font-size: 13px;">${inc.reporter || 'Unknown'}</b><br>
-                                <span style="font-size:11px; color:var(--text-muted);">${inc.reporterPhone || 'Unknown'}</span>
+                                <span style="font-size:11px; color:var(--text-muted);">${inc.category === 'Hardware Emergency' ? 'SYSTEM TRIGGER' : (inc.reporterPhone || 'Unknown')}</span>
                             </div>
                         </div>
                     </td>
