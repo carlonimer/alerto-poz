@@ -908,9 +908,16 @@ class CitizenMobileClient {
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                if (res.ok) {
+                if (res.ok && data.success) {
                     alert("Profile updated successfully!");
                     document.getElementById("modal-edit-profile").classList.add("hidden");
+                    this.activeUser = data.user;
+                    if (localStorage.getItem("alerto-token")) {
+                        localStorage.setItem("alerto-user", JSON.stringify(data.user));
+                    } else if (sessionStorage.getItem("alerto-token")) {
+                        sessionStorage.setItem("alerto-user", JSON.stringify(data.user));
+                    }
+                    this.syncProfileUI();
                 } else {
                     alert(data.error || "Update failed.");
                 }
@@ -1031,13 +1038,22 @@ class CitizenMobileClient {
                         method: 'POST',
                         body: formData
                     });
-                    if (res.ok) {
+                    const data = await res.json();
+                    if (res.ok && data.success) {
                         alert("Profile picture updated!");
                         document.getElementById("modal-image-crop").classList.add("hidden");
                         cropper.destroy();
                         cropper = null;
+                        
+                        this.activeUser.profile_image = data.url;
+                        if (localStorage.getItem("alerto-token")) {
+                            localStorage.setItem("alerto-user", JSON.stringify(this.activeUser));
+                        } else if (sessionStorage.getItem("alerto-token")) {
+                            sessionStorage.setItem("alerto-user", JSON.stringify(this.activeUser));
+                        }
+                        this.syncProfileUI();
                     } else {
-                        alert("Failed to upload picture.");
+                        alert(data.error || "Failed to upload picture.");
                     }
                 } catch (e) { alert("Network error."); }
             }, "image/jpeg", 0.9);

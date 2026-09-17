@@ -253,6 +253,19 @@ async function getDBState() {
         // Force reset any available responders that are stuck at an old incident location
         await pool.query("UPDATE responders SET lat = base_lat, lng = base_lng WHERE status = 'available' AND base_lat IS NOT NULL AND (lat != base_lat OR lng != base_lng)");
         
+        // Ensure user profile columns exist
+        const [userCols] = await pool.query("SHOW COLUMNS FROM users");
+        const userColNames = userCols.map(c => c.Field);
+        if (!userColNames.includes('profile_image')) await pool.query("ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL");
+        if (!userColNames.includes('first_name')) await pool.query("ALTER TABLE users ADD COLUMN first_name VARCHAR(100) NULL");
+        if (!userColNames.includes('middle_name')) await pool.query("ALTER TABLE users ADD COLUMN middle_name VARCHAR(100) NULL");
+        if (!userColNames.includes('last_name')) await pool.query("ALTER TABLE users ADD COLUMN last_name VARCHAR(100) NULL");
+        if (!userColNames.includes('suffix')) await pool.query("ALTER TABLE users ADD COLUMN suffix VARCHAR(20) NULL");
+        if (!userColNames.includes('birthdate')) await pool.query("ALTER TABLE users ADD COLUMN birthdate VARCHAR(50) NULL");
+        if (!userColNames.includes('gender')) await pool.query("ALTER TABLE users ADD COLUMN gender VARCHAR(20) NULL");
+        if (!userColNames.includes('address')) await pool.query("ALTER TABLE users ADD COLUMN address TEXT NULL");
+        if (!userColNames.includes('updated_at')) await pool.query("ALTER TABLE users ADD COLUMN updated_at BIGINT NULL");
+        
         const [users] = await pool.query("SELECT * FROM users");
         const [incidents] = await pool.query(`
             SELECT i.*, u.profile_image, u.gender 
@@ -620,7 +633,17 @@ app.post('/api/auth/responder-login', async (req, res) => {
                 phone: user.phone,
                 type: user.type,
                 unit_id: user.unit_id,
-                unit_details: unitDetails
+                unit_details: unitDetails,
+                profile_image: user.profile_image,
+                first_name: user.first_name,
+                middle_name: user.middle_name,
+                last_name: user.last_name,
+                suffix: user.suffix,
+                birthdate: user.birthdate,
+                gender: user.gender,
+                address: user.address,
+                barangay: user.barangay,
+                active: user.active
             }
         });
     } catch (e) {
@@ -673,7 +696,17 @@ app.post('/api/auth/login', async (req, res) => {
                     email: user.email,
                     phone: user.phone,
                     type: user.type,
-                    hasPasscode: !!user.passcode
+                    hasPasscode: !!user.passcode,
+                    profile_image: user.profile_image,
+                    first_name: user.first_name,
+                    middle_name: user.middle_name,
+                    last_name: user.last_name,
+                    suffix: user.suffix,
+                    birthdate: user.birthdate,
+                    gender: user.gender,
+                    address: user.address,
+                    barangay: user.barangay,
+                    active: user.active
                 },
                 token: sessionToken
             });
@@ -779,7 +812,17 @@ app.post('/api/auth/verify-otp', async (req, res) => {
                 email: user.email,
                 phone: user.phone,
                 type: user.type,
-                hasPasscode: !!user.passcode
+                hasPasscode: !!user.passcode,
+                profile_image: user.profile_image,
+                first_name: user.first_name,
+                middle_name: user.middle_name,
+                last_name: user.last_name,
+                suffix: user.suffix,
+                birthdate: user.birthdate,
+                gender: user.gender,
+                address: user.address,
+                barangay: user.barangay,
+                active: user.active
             },
             token: `alerto-session-${user.id}-${Date.now()}`,
             reset_token: resetToken
@@ -827,7 +870,16 @@ app.post('/api/auth/validate', async (req, res) => {
                 phone: user.phone,
                 type: user.type,
                 hasPasscode: !!user.passcode,
-                profile_image: user.profile_image
+                profile_image: user.profile_image,
+                first_name: user.first_name,
+                middle_name: user.middle_name,
+                last_name: user.last_name,
+                suffix: user.suffix,
+                birthdate: user.birthdate,
+                gender: user.gender,
+                address: user.address,
+                barangay: user.barangay,
+                active: user.active
             }
         });
     } catch (e) {
