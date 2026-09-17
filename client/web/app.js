@@ -768,7 +768,9 @@ class CitizenMobileClient {
             if (this.hardwareAlarmInterval) {
                 clearInterval(this.hardwareAlarmInterval);
                 this.hardwareAlarmInterval = null;
-                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            }
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
             }
         });
         this.initProfileEvents();
@@ -3376,7 +3378,37 @@ Maagang paghahanda para sa mga residente ng Pozorrubio. Pinapayuhang maghanda at
         this.pushToastBody.textContent = broadcast.message;
         this.pushToast.classList.remove("hidden");
 
-        this.playEmergencySiren();
+        if (this.hardwareAlarmInterval) {
+            clearInterval(this.hardwareAlarmInterval);
+        }
+
+        const triggerAlarms = () => {
+            if (navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500]);
+            
+            if ('speechSynthesis' in window) {
+                // Read the actual broadcast message out loud
+                const textToSpeak = `${broadcast.title}. ${broadcast.message}`;
+                const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                // Optional: set a local voice if preferred, e.g. Tagalog/Filipino if available
+                utterance.lang = 'tl-PH'; 
+                utterance.rate = 0.95;
+                utterance.pitch = 1.1;
+                utterance.volume = 1.0;
+                
+                // Only speak if not already speaking to prevent queuing up hundreds of overlapping voices
+                if (!window.speechSynthesis.speaking) {
+                    window.speechSynthesis.speak(utterance);
+                }
+            }
+            
+            if (typeof this.playEmergencySiren === 'function') {
+                this.playEmergencySiren();
+            }
+        };
+
+        triggerAlarms();
+        // The siren lasts ~1.2s, speech could take longer. Interval at 4.5s is fine since speech has a lock above.
+        this.hardwareAlarmInterval = setInterval(triggerAlarms, 4500); 
 
         const alerts = JSON.parse(localStorage.getItem("poz_broadcasts_history")) || [];
         alerts.unshift(broadcast);
