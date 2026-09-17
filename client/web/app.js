@@ -3231,12 +3231,12 @@ Stay calm and provide clear updates.`;
 
     async savePasscode() {
         if (!this.activeUser) return;
-        const hasExistingPasscode = this.activeUser.hasPasscode || this.activeUser.passcode === "SET";
+        const isCurPasscodeVisible = document.getElementById("current-passcode-container").style.display === "block";
         const cur = document.getElementById("input-current-passcode").value;
         const newPass = document.getElementById("input-new-passcode").value;
         const confirmPass = document.getElementById("input-confirm-passcode").value;
 
-        if (hasExistingPasscode && !cur) {
+        if (isCurPasscodeVisible && !cur) {
             alert("Current passcode is required.");
             return;
         }
@@ -3276,7 +3276,7 @@ Stay calm and provide clear updates.`;
                 this.activeUser.passcode = "SET"; // Legacy compatibility
                 localStorage.setItem("alerto-user", JSON.stringify(this.activeUser));
                 if (this.modalPasscode) this.modalPasscode.classList.add("hidden");
-                if (hasExistingPasscode) {
+                if (isCurPasscodeVisible) {
                     alert("Passcode updated successfully!");
                 } else {
                     alert("Passcode created successfully.");

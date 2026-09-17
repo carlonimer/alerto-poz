@@ -1004,7 +1004,9 @@ app.post('/api/user/passcode', async (req, res) => {
 
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        if (user.passcode) {
+        const hasValidPasscode = user.passcode && typeof user.passcode === 'string' && user.passcode !== "null" && user.passcode !== "undefined" && user.passcode.trim() !== "";
+        
+        if (hasValidPasscode) {
              if (!currentPasscode) return res.status(400).json({ error: "Current passcode is required." });
              const isMatch = bcrypt.compareSync(currentPasscode, user.passcode);
              if (!isMatch) return res.status(400).json({ error: "Current passcode is incorrect." });
