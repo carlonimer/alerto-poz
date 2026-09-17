@@ -1492,6 +1492,56 @@ app.delete('/api/incidents/draft/:userId', async (req, res) => {
     }
 });
 
+// Hardware Push Button Trigger Endpoint
+app.post('/api/hardware/trigger', async (req, res) => {
+    try {
+        const { device_id, secret_token, type, lat, lng } = req.body;
+        
+        // 1. Hardcoded validation for the capstone demo device
+        if (device_id !== 'ALERTO-DEMO-01' || secret_token !== 'demo_secret_key_123') {
+            return res.status(401).json({ error: "Unauthorized Hardware Device." });
+        }
+
+        const ts = Date.now();
+        const incidentId = `HW-${ts}`;
+        
+        const incidentData = {
+            id: incidentId,
+            category: type || 'Emergency',
+            details: '🚨 EMERGENCY ALERT TRIGGERED BY PHYSICAL PUSH BUTTON',
+            lat: lat || 16.1086, // Default to Pozorrubio center if not provided
+            lng: lng || 120.5424,
+            reporter: 'MDRRMO Hardware System',
+            reporterPhone: '00000000000',
+            media: [],
+            createdAt: ts,
+            networkReceivedAt: ts,
+            status: 'pending',
+            assignedUnit: null,
+            reporterId: 'HARDWARE-01',
+            responseProgress: null,
+            has_sent_messages: false
+        };
+
+        // 2. Add to database
+        await addIncident(incidentData);
+
+        // 3. Broadcast to all clients
+        io.emit('new-incident-alert', incidentData);
+
+        // 4. Force a state refresh for dashboards
+        const dbState = await getDBState();
+        io.emit('init-state', dbState);
+
+        console.log(`[HARDWARE TRIGGER] Emergency alert fired by ${device_id} at ${new Date().toISOString()}`);
+
+        res.status(200).json({ success: true, message: 'Emergency Alert Broadcasted Successfully', incidentId });
+    } catch (e) {
+        console.error("Hardware trigger error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- NEW MESSAGE ENDPOINTS ---
 app.get('/api/incidents/:id/messages', async (req, res) => {
     try {

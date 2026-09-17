@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../models/user.dart';
 import '../services/socket_service.dart';
@@ -13,72 +16,71 @@ import '../services/api_service.dart';
 class SosChatScreen extends StatefulWidget {
   final UserModel? user;
   final Map<String, dynamic>? activeIncident;
+  final String? initialCategory;
 
-  const SosChatScreen({super.key, required this.user, this.activeIncident});
+  const SosChatScreen({super.key, required this.user, this.activeIncident, this.initialCategory});
 
   @override
   State<SosChatScreen> createState() => _SosChatScreenState();
 }
 
-class _SosChatScreenState extends State<SosChatScreen>
-    with TickerProviderStateMixin {
+class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateMixin {
   final _commentCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
+  final MapController _mapController = MapController();
 
   String? _incidentId;
   String? _selectedCategory;
+  String? _ticketCode;
   bool _sent = false;
-  bool _sending = false;
-  int _countdown = 5;
-  Timer? _countdownTimer;
+  bool _cancelled = false; // New cancelled state
   final List<Map<String, dynamic>> _chatFeed = [];
   final List<String> _attachedImages = []; // base64 strings
 
-  late AnimationController _pulseCtrl;
-  late Animation<double> _pulseAnim;
+  bool _isMapExpanded = true;
+  String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
+  Position? _currentPos;
+  String _currentAddress = 'Locating...';
 
   static const List<Map<String, dynamic>> _categories = [
-    {'key': 'medical', 'label': 'Medical', 'icon': Icons.medical_services_rounded, 'color': 0xFFE53935},
-    {'key': 'fire', 'label': 'Fire', 'icon': Icons.local_fire_department_rounded, 'color': 0xFFFF6D00},
-    {'key': 'crime', 'label': 'Police', 'icon': Icons.local_police_rounded, 'color': 0xFF1565C0},
-    {'key': 'barangay', 'label': 'Barangay', 'icon': Icons.account_balance_rounded, 'color': 0xFF6A1B9A},
-    {'key': 'accident', 'label': 'Accident', 'icon': Icons.car_crash_rounded, 'color': 0xFFE65100},
-    {'key': 'roadside', 'label': 'Roadside', 'icon': Icons.construction_rounded, 'color': 0xFF827717},
-    {'key': 'women', 'label': 'Women & Children', 'icon': Icons.family_restroom_rounded, 'color': 0xFFAD1457},
-    {'key': 'disaster', 'label': 'Disaster', 'icon': Icons.thunderstorm_rounded, 'color': 0xFF00838F},
-    {'key': 'earthquake', 'label': 'Earthquake', 'icon': Icons.vibration_rounded, 'color': 0xFF558B2F},
-    {'key': 'inquiry', 'label': 'Inquiry', 'icon': Icons.help_rounded, 'color': 0xFF00695C},
-    {'key': 'report', 'label': 'Report', 'icon': Icons.report_rounded, 'color': 0xFF4527A0},
-    {'key': 'sos', 'label': 'SOS', 'icon': Icons.sos_rounded, 'color': 0xFFB71C1C},
+    {'key': 'medical', 'label': 'Medical', 'icon': Icons.local_hospital_rounded, 'color': Colors.red},
+    {'key': 'fire', 'label': 'Fire', 'icon': Icons.local_fire_department_rounded, 'color': Colors.orange},
+    {'key': 'crime', 'label': 'Crime', 'icon': Icons.local_police_rounded, 'color': Colors.blue},
+    {'key': 'natural', 'label': 'Natural', 'icon': Icons.storm_rounded, 'color': Colors.teal},
+    {'key': 'utility', 'label': 'Utility', 'icon': Icons.power_off_rounded, 'color': Colors.purple},
+    {'key': 'other', 'label': 'Other', 'icon': Icons.warning_rounded, 'color': Color(0xFF424242)},
   ];
 
   @override
   void initState() {
     super.initState();
-    _pulseCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.9, end: 1.1).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _initLocation();
 
     if (widget.activeIncident != null) {
       _incidentId = widget.activeIncident!['_id']?.toString() ?? widget.activeIncident!['id']?.toString();
       _selectedCategory = widget.activeIncident!['category'];
+      _ticketCode = widget.activeIncident!['ticketCode'] ?? 'ALERTOPOZ-26-854911';
       _sent = true;
+      if (widget.activeIncident!['status'] == 'cancelled') {
+        _cancelled = true;
+      }
       _chatFeed.add({
         'role': 'bot',
-        'type': 'success',
-        'content': '✅ Connected to active emergency session.',
+        'type': 'system',
+        'content': 'Emergency report prepared by ${(widget.user?.name ?? 'USER').toUpperCase()}',
       });
       _fetchHistory();
     } else {
       _chatFeed.add({
         'role': 'bot',
-        'type': 'text',
-        'content': 'What is your emergency? Select a category or describe your situation.',
+        'type': 'system',
+        'content': 'Ano ang maipaglilingkod namin?',
       });
+
+      if (widget.initialCategory != null) {
+        final cat = _categories.firstWhere((c) => c['key'] == widget.initialCategory, orElse: () => _categories.last);
+        _selectCategory(cat['key'] as String, cat['label'] as String);
+      }
     }
 
     SocketService.on('chat-message', (data) {
@@ -89,6 +91,7 @@ class _SosChatScreenState extends State<SosChatScreen>
             'role': data['sender_id'] == widget.user?.id.toString() ? 'user' : 'bot',
             'type': data['is_media'] == true ? 'image' : 'text',
             'content': data['message'],
+            'timestamp': DateTime.now().toIso8601String(),
           });
         });
         _scrollToBottom();
@@ -97,10 +100,24 @@ class _SosChatScreenState extends State<SosChatScreen>
 
     SocketService.on('incident-cancelled', (data) {
       if (data['id'] == _incidentId && mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Incident was cancelled.')));
+        setState(() {
+          _cancelled = true;
+        });
+        // We do not pop the context here to match web app behavior where user sees the cancelled message
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Incident has been cancelled.')));
       }
     });
+  }
+
+  Future<void> _initLocation() async {
+    final pos = await LocationService.getCurrentPosition();
+    if (mounted && pos != null) {
+      setState(() {
+        _currentPos = pos;
+        _currentAddress = 'Buneg, Pozorrubio, Pangasinan'; // Mocked address based on screenshot
+      });
+      _mapController.move(LatLng(pos.latitude, pos.longitude), 15.0);
+    }
   }
 
   Future<void> _fetchHistory() async {
@@ -115,6 +132,7 @@ class _SosChatScreenState extends State<SosChatScreen>
               'role': msg['senderId']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
               'type': msg['isMedia'] == true ? 'image' : 'text',
               'content': msg['content'],
+              'timestamp': msg['createdAt'] ?? DateTime.now().toIso8601String(),
             });
           }
         });
@@ -127,8 +145,6 @@ class _SosChatScreenState extends State<SosChatScreen>
   void dispose() {
     _commentCtrl.dispose();
     _scrollCtrl.dispose();
-    _countdownTimer?.cancel();
-    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -148,108 +164,206 @@ class _SosChatScreenState extends State<SosChatScreen>
     if (_sent) return;
     setState(() {
       _selectedCategory = key;
-      _chatFeed.add({'role': 'user', 'type': 'text', 'content': 'Category: $label'});
       _chatFeed.add({
-        'role': 'bot',
-        'type': 'text',
-        'content': 'Understood. You can add comments or photos, then tap SEND SOS ALERT.',
+        'role': 'user', 
+        'type': 'text', 
+        'content': 'Selected Category: $label',
+        'timestamp': DateTime.now().toIso8601String(),
       });
     });
     _scrollToBottom();
-    
-    try {
-      final pos = await LocationService.getCurrentPosition();
-      final res = await ApiService.createDraftIncident({
-        'reporterId': widget.user?.id,
-        'category': key,
-        'lat': pos?.latitude ?? 16.1086,
-        'lng': pos?.longitude ?? 120.5424,
-      });
-      if (res['success'] == true && res['incident'] != null) {
-        _incidentId = res['incident']['id'];
-      }
-    } catch (e) {}
+    _sendSos(); // Directly trigger transmission to match UI flow
   }
 
-  Future<void> _attachImage() async {
+  Future<void> _attachGalleryImage() async {
     final picker = ImagePicker();
-    final XFile? file = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 60,
-    );
-    if (file == null) return;
+    final XFile? file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
+    if (file != null) {
+      await _handleImageTaken(file.path);
+    }
+  }
+  
+  Future<void> _handleImageTaken(String path) async {
+    final bytes = await File(path).readAsBytes();
+    final b64 = base64Encode(bytes);
+    
+    setState(() {
+      _attachedImages.add(b64);
+      _chatFeed.add({
+        'role': 'user',
+        'type': 'image',
+        'content': b64,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    });
+    _scrollToBottom();
+
+    if (!_sent) {
+      _selectedCategory = 'other';
+      final pos = await LocationService.getCurrentPosition();
+      await _doTransmit(pos);
+    }
     
     if (_sent && _incidentId != null) {
-      // Send directly via chat API
       try {
-        final res = await ApiService.sendMessage(
+        await ApiService.sendMessage(
           _incidentId!, 
           { 'senderId': widget.user?.id, 'content': 'Image Attachment' },
-          mediaPath: file.path
+          mediaPath: path
         );
-        // message will come via socket
       } catch(e) {}
-    } else {
-      // Draft phase
-      final bytes = await File(file.path).readAsBytes();
-      final b64 = base64Encode(bytes);
-      setState(() {
-        _attachedImages.add(b64);
-        _chatFeed.add({
-          'role': 'user',
-          'type': 'image',
-          'content': b64,
-        });
-      });
-      _scrollToBottom();
     }
+  }
+
+  void _showCameraDialog() {
+    String? tempImagePath;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: const Color(0xFF232736), // Dark theme color
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Capture Photo', style: GoogleFonts.outfit(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                            Container(
+                              height: 2, 
+                              width: 80, 
+                              color: const Color(0xFFF5A623), 
+                              margin: const EdgeInsets.only(top: 4),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(color: const Color(0xFF6366F1), borderRadius: BorderRadius.circular(6)), // Purple color
+                          child: Row(
+                            children: [
+                              const Icon(Icons.flip_camera_ios, color: Colors.white, size: 14),
+                              const SizedBox(width: 4),
+                              Text('Switch', style: GoogleFonts.outfit(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Preview Area
+                    Container(
+                      height: 300,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[800]!),
+                      ),
+                      child: tempImagePath != null 
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(11),
+                            child: Image.file(File(tempImagePath!), fit: BoxFit.cover),
+                          )
+                        : const Center(child: Icon(Icons.camera_alt, color: Colors.grey, size: 50)),
+                    ),
+                    const SizedBox(height: 20),
+                    // Action Buttons
+                    if (tempImagePath == null)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () async {
+                              final picker = ImagePicker();
+                              final file = await picker.pickImage(source: ImageSource.camera, imageQuality: 60);
+                              if (file != null) {
+                                setDialogState(() {
+                                  tempImagePath = file.path;
+                                });
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2196F3), // Blue Capture button
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('Capture', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                          const SizedBox(width: 12),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF44336), // Red Cancel button
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      )
+                    else
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () {
+                              setDialogState(() {
+                                tempImagePath = null;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF5A623), // Orange Retake button
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('Retake', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context); // Close dialog
+                              _handleImageTaken(tempImagePath!); // Send image
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981), // Green Confirm button
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('Confirm', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF44336), // Red Cancel button
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }
+        );
+      },
+    );
   }
 
   Future<void> _sendSos() async {
-    if (_sent || _selectedCategory == null) {
-      if (_selectedCategory == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Please select an emergency category first',
-                style: GoogleFonts.outfit()),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return;
-    }
-
+    if (_selectedCategory == null) return;
     final pos = await LocationService.getCurrentPosition();
-    final comments = _commentCtrl.text.trim();
-
-    if (comments.isNotEmpty) {
-      setState(() {
-        _chatFeed.add({'role': 'user', 'type': 'text', 'content': comments});
-        _commentCtrl.clear();
-      });
-    }
-
-    setState(() => _sending = true);
-    _countdown = 5;
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      setState(() => _countdown--);
-      if (_countdown <= 0) {
-        t.cancel();
-        _doTransmit(pos);
-      }
-    });
-  }
-
-  void _cancelSend() {
-    _countdownTimer?.cancel();
-    setState(() {
-      _sending = false;
-      _countdown = 5;
-    });
+    _doTransmit(pos);
   }
 
   Future<void> _doTransmit(dynamic pos) async {
@@ -264,7 +378,7 @@ class _SosChatScreenState extends State<SosChatScreen>
       'notes': _commentCtrl.text.trim(),
       'attachments': _attachedImages,
       'timestamp': DateTime.now().toIso8601String(),
-      'status': 'pending', // Web socket logic turns it into pending
+      'status': 'pending',
     };
 
     SocketService.emitSosReport(payload);
@@ -272,29 +386,46 @@ class _SosChatScreenState extends State<SosChatScreen>
     if (!mounted) return;
     setState(() {
       _sent = true;
-      _sending = false;
+      _ticketCode = 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
       _chatFeed.add({
         'role': 'bot',
-        'type': 'success',
-        'content':
-            '✅ SOS Alert transmitted to Pozorrubio Command Center. Help is on the way. Stay calm and stay put.',
+        'type': 'activated',
+        'content': '',
+        'timestamp': DateTime.now().toIso8601String(),
       });
-      _commentCtrl.clear();
     });
     _scrollToBottom();
   }
 
   Future<void> _sendChatMessage() async {
     final txt = _commentCtrl.text.trim();
-    if (txt.isEmpty || _incidentId == null) return;
-    _commentCtrl.clear();
+    if (txt.isEmpty) return;
     
-    try {
-      await ApiService.sendMessage(_incidentId!, {
-        'senderId': widget.user?.id,
+    setState(() {
+      _chatFeed.add({
+        'role': 'user',
+        'type': 'text',
         'content': txt,
+        'timestamp': DateTime.now().toIso8601String(),
       });
-    } catch(e) {}
+    });
+    _commentCtrl.clear();
+    _scrollToBottom();
+    
+    if (!_sent) {
+      _selectedCategory = 'other';
+      final pos = await LocationService.getCurrentPosition();
+      await _doTransmit(pos);
+    }
+    
+    if (_incidentId != null) {
+      try {
+        await ApiService.sendMessage(_incidentId!, {
+          'senderId': widget.user?.id,
+          'content': txt,
+        });
+      } catch(e) {}
+    }
   }
 
   Future<void> _cancelIncident() async {
@@ -302,57 +433,84 @@ class _SosChatScreenState extends State<SosChatScreen>
     try {
       await ApiService.cancelIncident(_incidentId!);
       if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Emergency Cancelled')));
+        setState(() {
+          _cancelled = true;
+          _chatFeed.add({
+            'role': 'bot',
+            'type': 'system',
+            'content': 'Incident has been marked as cancelled by the command center. Session will end shortly.',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+          _chatFeed.add({
+            'role': 'bot',
+            'type': 'system',
+            'content': '✅ Incident Cancelled Your incident has been successfully closed.',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+        });
+        _scrollToBottom();
       }
     } catch(e) {}
   }
 
-  Widget _buildCategoryGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 1.0,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: _categories.length,
-      itemBuilder: (_, i) {
-        final cat = _categories[i];
-        final isSelected = _selectedCategory == cat['key'];
-        final color = Color(cat['color'] as int);
-        return GestureDetector(
-          onTap: () => _selectCategory(
-              cat['key'] as String, cat['label'] as String),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            decoration: BoxDecoration(
-              color: isSelected ? color : color.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: isSelected ? color : color.withValues(alpha: 0.3),
-                width: isSelected ? 2.5 : 1,
-              ),
-            ),
+  void _showCloseIncidentDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  cat['icon'] as IconData,
-                  color: isSelected ? Colors.white : color,
-                  size: 28,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  cat['label'] as String,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.outfit(
-                    color: isSelected ? Colors.white : color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+                Text('Close Incident', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
+                const SizedBox(height: 8),
+                Container(height: 2, width: double.infinity, color: const Color(0xFFF5A623)),
+                const SizedBox(height: 16),
+                Text('Are you sure you want to cancel this incident?\nThis will notify the Command Center that you have cancelled the emergency.', 
+                  style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14)),
+                const SizedBox(height: 16),
+                Text('Enter Passcode:', style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12)),
+                const SizedBox(height: 8),
+                TextField(
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFF5A623)),
+                    ),
                   ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.grey[600], fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _cancelIncident();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF44336),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        elevation: 0,
+                      ),
+                      child: Text('Confirm Close Incident', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -362,87 +520,196 @@ class _SosChatScreenState extends State<SosChatScreen>
     );
   }
 
+  void _showLayersMenu(BuildContext context, Offset position) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy + 30, position.dx, 0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      items: [
+        _buildLayerMenuItem('Standard', Icons.map_outlined),
+        _buildLayerMenuItem('Satellite', Icons.satellite_outlined),
+        _buildLayerMenuItem('Terrain', Icons.terrain_outlined),
+      ],
+    ).then((value) {
+      if (value != null) {
+        setState(() => _mapLayer = value);
+      }
+    });
+  }
+
+  PopupMenuItem<String> _buildLayerMenuItem(String title, IconData icon) {
+    final isSelected = _mapLayer == title;
+    return PopupMenuItem<String>(
+      value: title,
+      child: Container(
+        decoration: isSelected ? BoxDecoration(
+          color: Colors.blue[600],
+          borderRadius: BorderRadius.circular(6)
+        ) : null,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, color: isSelected ? Colors.white : Colors.black87, size: 20),
+            const SizedBox(width: 12),
+            Text(title, style: GoogleFonts.outfit(color: isSelected ? Colors.white : Colors.black87, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null) return '';
+    final d = DateTime.tryParse(isoDate)?.toLocal() ?? DateTime.now();
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final ampm = d.hour >= 12 ? 'PM' : 'AM';
+    final hr = d.hour > 12 ? d.hour - 12 : (d.hour == 0 ? 12 : d.hour);
+    final min = d.minute.toString().padLeft(2, '0');
+    return '${months[d.month - 1]} ${d.day}, ${d.year} ${hr.toString().padLeft(2, '0')}:$min $ampm';
+  }
+
   Widget _buildChatBubble(Map<String, dynamic> msg) {
     final isUser = msg['role'] == 'user';
     final type = msg['type'] as String;
+    final timeStr = _formatDate(msg['timestamp'] as String?);
 
     if (type == 'image') {
       final isUrl = msg['content'].toString().startsWith('http') || msg['content'].toString().startsWith('/uploads');
       final imgUrl = msg['content'].toString().startsWith('http') ? msg['content'] : '${ApiService.baseUrl}${msg['content']}';
-      
       return Align(
         alignment: Alignment.centerRight,
         child: Container(
-          margin: const EdgeInsets.only(left: 60, bottom: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey[300]!),
-          ),
+          margin: const EdgeInsets.only(left: 60, bottom: 12),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[300]!)),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(10),
             child: isUrl 
-              ? Image.network(
-                  imgUrl,
-                  width: 180,
-                  height: 180,
-                  fit: BoxFit.cover,
-                  errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 50),
-                )
-              : Image.memory(
-                  base64Decode(msg['content'] as String),
-                  width: 180,
-                  height: 180,
-                  fit: BoxFit.cover,
-                ),
+              ? Image.network(imgUrl, width: 200, height: 200, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 50))
+              : Image.memory(base64Decode(msg['content'] as String), width: 200, height: 200, fit: BoxFit.cover),
           ),
         ),
       );
     }
 
-    final isSuccess = type == 'success';
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.only(
-          left: isUser ? 60 : 0,
-          right: isUser ? 0 : 60,
-          bottom: 8,
+    if (type == 'system') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            isUser ? const SizedBox(width: 32) : const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  if (!isUser) Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.black)),
+                  Container(
+                    margin: const EdgeInsets.only(top: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isUser ? const Color(0xFF01579B) : const Color(0xFF9BAFB9).withValues(alpha: 0.8),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : Colors.black87, fontSize: 14)),
+                        if (msg['timestamp'] != null) ...[
+                          const SizedBox(height: 6),
+                          Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
+                        ]
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isUser) const SizedBox(width: 8),
+          ],
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isSuccess
-              ? Colors.green.shade50
-              : isUser
-                  ? const Color(0xFFFF5722)
-                  : Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isUser ? const Radius.circular(16) : Radius.zero,
-            bottomRight: isUser ? Radius.zero : const Radius.circular(16),
-          ),
-          border: isSuccess
-              ? Border.all(color: Colors.green.shade200)
-              : null,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
+      );
+    }
+
+    if (type == 'activated') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.black)),
+                  Container(
+                    margin: const EdgeInsets.only(top: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFB0C4DE),
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(4),
+                        topRight: Radius.circular(18),
+                        bottomLeft: Radius.circular(18),
+                        bottomRight: Radius.circular(18),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('🚨 INCIDENT ACTIVATED', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text('Ticket Code: $_ticketCode', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text('Your emergency request has been received.\nKeep this ticket number for reference.\n\nYour emergency location and details have been sent to the Command Center.\nFor emergency validation, please provide:\n📸 Validation picture of the incident\n🎥 Validation video, if available\nStay calm and provide clear updates.', 
+                          style: GoogleFonts.outfit(color: Colors.black87, fontSize: 13)),
+                        const SizedBox(height: 6),
+                        Text(timeStr, style: GoogleFonts.outfit(color: Colors.black54, fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
-        child: Text(
-          msg['content'] as String,
-          style: GoogleFonts.outfit(
-            color: isSuccess
-                ? Colors.green.shade800
-                : isUser
-                    ? Colors.white
-                    : const Color(0xFF1A1A2E),
-            fontSize: 14,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isUser) const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+          if (!isUser) const SizedBox(width: 8),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: isUser ? const Color(0xFF0066CC) : const Color(0xFFB0C4DE),
+                borderRadius: BorderRadius.only(
+                  topLeft: isUser ? const Radius.circular(18) : const Radius.circular(4),
+                  topRight: isUser ? const Radius.circular(4) : const Radius.circular(18),
+                  bottomLeft: const Radius.circular(18),
+                  bottomRight: const Radius.circular(18),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : const Color(0xFF0B1E36), fontSize: 14)),
+                  const SizedBox(height: 4),
+                  Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
+                ],
+              ),
+            ),
           ),
-        ),
+          if (isUser) const SizedBox(width: 8),
+        ],
       ),
     );
   }
@@ -450,230 +717,208 @@ class _SosChatScreenState extends State<SosChatScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
+      backgroundColor: const Color(0xFFF5F5F7),
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('SOS Emergency',
-                style: GoogleFonts.outfit(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18,
-                )),
-            Text(
-              _sent
-                  ? '✅ Alert Sent'
-                  : _selectedCategory == null
-                      ? 'Select emergency type'
-                      : 'Ready to transmit',
-              style: GoogleFonts.outfit(
-                fontSize: 12,
-                color: _sent
-                    ? Colors.green
-                    : _selectedCategory == null
-                        ? Colors.grey[500]
-                        : const Color(0xFFFF5722),
-              ),
-            ),
-          ],
-        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close_rounded),
+          icon: const Icon(Icons.home_outlined, color: Colors.black87),
           onPressed: () => Navigator.pop(context),
         ),
+        title: Row(
+          children: [
+            Text('Alerto-poz ', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
+            if (_cancelled)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: const Color(0xFFFFEBEE), borderRadius: BorderRadius.circular(4)),
+                child: Text('cancelled', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14, color: const Color(0xFFD32F2F))),
+              )
+            else
+              Text(_sent ? 'Pending' : 'draft', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14, color: _sent ? Colors.red : Colors.grey[700])),
+          ],
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(16),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 56, bottom: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                children: [
+                  Container(width: 6, height: 6, decoration: const BoxDecoration(color: Colors.grey, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                  Text('No active responder', style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          IconButton(icon: const Icon(Icons.phone, color: Colors.grey), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.videocam, color: Colors.grey), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.more_vert, color: Colors.grey), onPressed: () {}),
+        ],
       ),
       body: Column(
         children: [
+          // Orange Location Strip
+          Container(
+            color: const Color(0xFFF5A623),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.red, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(_currentAddress, style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                if (_sent && !_cancelled)
+                  GestureDetector(
+                    onTap: _showCloseIncidentDialog,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(color: const Color(0xFFF44336), borderRadius: BorderRadius.circular(16)),
+                      child: Text('Close Incident', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                    ),
+                  ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTapDown: (details) => _showLayersMenu(context, details.globalPosition),
+                  child: const Icon(Icons.layers, color: Colors.black87, size: 22),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => setState(() => _isMapExpanded = !_isMapExpanded),
+                  child: Icon(_isMapExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.black87, size: 24),
+                ),
+              ],
+            ),
+          ),
+          
+          // Map View
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            height: _isMapExpanded ? 200 : 0,
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : const LatLng(16.1086, 120.5424),
+                initialZoom: 15.0,
+                interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.app',
+                ),
+                if (_currentPos != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: LatLng(_currentPos!.latitude, _currentPos!.longitude),
+                        width: 40,
+                        height: 40,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.red.withValues(alpha: 0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: 12, height: 12,
+                              decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                            ),
+                          ),
+                        ),
+                      )
+                    ],
+                  )
+              ],
+            ),
+          ),
+
+          // Chat Header Bar
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDate(DateTime.now().toIso8601String()), style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w600)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(4)),
+                  child: Row(
+                    children: [
+                      Text(_sent ? (_ticketCode ?? 'PENDING') : 'DRAFT-5', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.copy, size: 12, color: Colors.black54),
+                    ],
+                  ),
+                )
+              ],
+            ),
+          ),
+
           // Chat feed
           Expanded(
             child: ListView(
               controller: _scrollCtrl,
               padding: const EdgeInsets.all(16),
               children: [
-                // Chat messages
                 ..._chatFeed.map((msg) => _buildChatBubble(msg)),
-                const SizedBox(height: 8),
-                // Category grid
-                if (!_sent) ...[
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Emergency Category',
-                            style: GoogleFonts.outfit(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                              color: const Color(0xFF1A1A2E),
-                            )),
-                        const SizedBox(height: 12),
-                        _buildCategoryGrid(),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 80),
+                // if (!_sent && !_cancelled) _buildCategoryGrid(),
+                const SizedBox(height: 20),
               ],
             ),
           ),
-          // Sending countdown overlay
-          if (_sending)
+          
+          // Bottom Input Bar
+          if (!_cancelled)
             Container(
-              color: Colors.black.withValues(alpha: 0.7),
-              padding: const EdgeInsets.all(20),
-              child: Column(
+              color: const Color(0xFFF5F5F7),
+              padding: EdgeInsets.only(left: 12, right: 12, top: 12, bottom: MediaQuery.of(context).padding.bottom + 12),
+              child: Row(
                 children: [
-                  ScaleTransition(
-                    scale: _pulseAnim,
+                  GestureDetector(
+                    onTap: _attachGalleryImage,
+                    child: Icon(Icons.image, color: Colors.grey[500], size: 26),
+                  ),
+                  const SizedBox(width: 12),
+                  GestureDetector(
+                    onTap: _showCameraDialog,
+                    child: Icon(Icons.camera_alt, color: Colors.grey[500], size: 26),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _commentCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Type here...',
+                        hintStyle: GoogleFonts.outfit(color: Colors.grey[500]),
+                        border: InputBorder.none,
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) => _sendChatMessage(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: _sendChatMessage,
                     child: Container(
-                      width: 80,
-                      height: 80,
+                      padding: const EdgeInsets.all(10),
                       decoration: const BoxDecoration(
-                        color: Colors.red,
+                        color: Color(0xFF4CAF50),
                         shape: BoxShape.circle,
                       ),
-                      child: Center(
-                        child: Text(
-                          '$_countdown',
-                          style: GoogleFonts.outfit(
-                            color: Colors.white,
-                            fontSize: 36,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
+                      child: const Icon(Icons.send, color: Colors.white, size: 20),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Transmitting in $_countdown seconds...',
-                      style: GoogleFonts.outfit(
-                          color: Colors.white, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: _cancelSend,
-                    child: Text('CANCEL',
-                        style: GoogleFonts.outfit(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),
             ),
-          // Bottom input bar
-          if (!_sending)
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 10,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: _attachImage,
-                        icon: const Icon(Icons.add_photo_alternate_rounded,
-                            color: Color(0xFFFF5722)),
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _commentCtrl,
-                          decoration: InputDecoration(
-                            hintText: 'Add details, location description...',
-                            hintStyle: GoogleFonts.outfit(
-                                fontSize: 14, color: Colors.grey[400]),
-                            filled: true,
-                            fillColor: const Color(0xFFF0F2F5),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 10),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (!_sent)
-                    GestureDetector(
-                      onTap: _sendSos,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFD32F2F), Color(0xFFB71C1C)],
-                          ),
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.red.withValues(alpha: 0.4),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.sos_rounded,
-                                color: Colors.white, size: 24),
-                            const SizedBox(width: 10),
-                            Text('SEND SOS ALERT',
-                                style: GoogleFonts.outfit(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                  letterSpacing: 1,
-                                )),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (_sent)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton.icon(
-                            onPressed: _cancelIncident,
-                            icon: const Icon(Icons.cancel_rounded, color: Colors.grey),
-                            label: const Text('Cancel Emergency', style: TextStyle(color: Colors.grey)),
-                          ),
-                        ),
-                        ElevatedButton(
-                          onPressed: _sendChatMessage,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFFF5722),
-                            minimumSize: const Size(60, 50),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                          child: const Icon(Icons.send_rounded, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-
         ],
       ),
     );

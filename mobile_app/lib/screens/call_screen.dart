@@ -105,15 +105,7 @@ class _CallScreenState extends State<CallScreen>
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: _callStatus == 'connected'
-                ? [const Color(0xFF1B5E20), const Color(0xFF2E7D32)]
-                : _callStatus == 'ended'
-                    ? [Colors.grey.shade900, Colors.grey.shade700]
-                    : [const Color(0xFF1A1A2E), const Color(0xFF0F3460)],
-          ),
+          color: const Color(0xFF0A0F19).withValues(alpha: 0.95),
         ),
         child: SafeArea(
           child: Column(

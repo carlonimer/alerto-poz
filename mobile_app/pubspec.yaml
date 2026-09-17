@@ -31,6 +31,7 @@ dependencies:
 
   # Utilities
   permission_handler: ^11.3.1
+  intl: ^0.20.3
 
 dev_dependencies:
   flutter_test:
@@ -41,8 +42,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon_full.png"
-  adaptive_icon_background: "#FF5722"
+  remove_alpha_ios: true
+  image_path: "assets/logo.png"
+  adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icon_foreground.png"
   min_sdk_android: 21
 

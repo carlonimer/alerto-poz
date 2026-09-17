@@ -8,6 +8,9 @@ class UserModel {
   final String firstName;
   final String lastName;
   final String address;
+  final bool hasPasscode;
+  final String gender;
+  final String passcode; // "SET" flag from web
 
   const UserModel({
     required this.id,
@@ -19,6 +22,9 @@ class UserModel {
     this.firstName = '',
     this.lastName = '',
     this.address = '',
+    this.hasPasscode = false,
+    this.gender = '',
+    this.passcode = '',
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -32,6 +38,9 @@ class UserModel {
       firstName: json['first_name'] as String? ?? '',
       lastName: json['last_name'] as String? ?? '',
       address: json['address'] as String? ?? '',
+      hasPasscode: json['hasPasscode'] == true || json['passcode'] == 'SET',
+      gender: json['gender'] as String? ?? '',
+      passcode: json['passcode'] as String? ?? '',
     );
   }
 
@@ -46,6 +55,40 @@ class UserModel {
       'first_name': firstName,
       'last_name': lastName,
       'address': address,
+      'hasPasscode': hasPasscode,
+      'gender': gender,
+      'passcode': passcode,
     };
+  }
+
+  /// Returns a copy with updated fields (for profile-updated socket event)
+  UserModel copyWith({
+    int? id,
+    String? name,
+    String? phone,
+    String? email,
+    String? type,
+    String? profileImage,
+    String? firstName,
+    String? lastName,
+    String? address,
+    bool? hasPasscode,
+    String? gender,
+    String? passcode,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      type: type ?? this.type,
+      profileImage: profileImage ?? this.profileImage,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      address: address ?? this.address,
+      hasPasscode: hasPasscode ?? this.hasPasscode,
+      gender: gender ?? this.gender,
+      passcode: passcode ?? this.passcode,
+    );
   }
 }

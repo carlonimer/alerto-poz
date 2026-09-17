@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -13,6 +12,7 @@ import 'sos_chat_screen.dart';
 import 'call_screen.dart';
 import 'login_screen.dart';
 import 'history_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,20 +22,28 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   UserModel? _user;
   List<dynamic> _incidents = [];
   List<dynamic> _responders = [];
   List<dynamic> _broadcasts = [];
   LatLng? _myLocation;
-  bool _loadingLocation = false;
   bool _showBroadcastBanner = false;
   Map<String, dynamic>? _latestBroadcast;
-  int _selectedTab = 0; // 0=map, 1=alerts, 2=profile
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+
+  // SOS Flow variables
+  Timer? _sosTimer;
+
+  // Hazard Map Overlays
+  bool _showFloodOverlay = false;
+  bool _showWaterOverlay = false;
+
+  // Map settings
+  String _selectedMapType = 'default';
 
   static const LatLng _pozCenter = LatLng(16.1086, 120.5424);
 
@@ -60,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen>
     SocketService.off('broadcast-alert');
     SocketService.off('incident-ack');
     _pulseController.dispose();
+    _sosTimer?.cancel();
     super.dispose();
   }
 
@@ -127,17 +136,42 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  void _animatedMapMove(LatLng destLocation, double destZoom) {
+    final latTween = Tween<double>(
+        begin: _mapController.camera.center.latitude, end: destLocation.latitude);
+    final lngTween = Tween<double>(
+        begin: _mapController.camera.center.longitude, end: destLocation.longitude);
+    final zoomTween = Tween<double>(
+        begin: _mapController.camera.zoom, end: destZoom);
+
+    final controller = AnimationController(
+        duration: const Duration(milliseconds: 600), vsync: this);
+    
+    final Animation<double> animation =
+        CurvedAnimation(parent: controller, curve: Curves.fastOutSlowIn);
+
+    controller.addListener(() {
+      _mapController.move(
+          LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
+          zoomTween.evaluate(animation));
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+        controller.dispose();
+      }
+    });
+
+    controller.forward();
+  }
+
   Future<void> _getMyLocation() async {
-    setState(() => _loadingLocation = true);
     final pos = await LocationService.getCurrentPosition();
     if (pos != null && mounted) {
       setState(() {
         _myLocation = LatLng(pos.latitude, pos.longitude);
-        _loadingLocation = false;
       });
-      _mapController.move(_myLocation!, 14);
-    } else {
-      setState(() => _loadingLocation = false);
+      _animatedMapMove(_myLocation!, 14);
     }
   }
 
@@ -152,37 +186,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _checkIn() async {
-    final pos = _myLocation ?? (await LocationService.getCurrentPosition().then((p) {
-      if (p != null) return LatLng(p.latitude, p.longitude);
-      return null;
-    }));
-    if (pos == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not get location', style: GoogleFonts.outfit()),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    SocketService.emitCheckin({
-      'name': _user?.name ?? 'Citizen',
-      'phone': _user?.phone ?? '',
-      'lat': pos.latitude,
-      'lng': pos.longitude,
-      'timestamp': DateTime.now().toIso8601String(),
-    });
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✅ Check-in sent to Command Center!',
-            style: GoogleFonts.outfit()),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
 
   Future<void> _pickProfileImage() async {
     final ImagePicker picker = ImagePicker();
@@ -193,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       if (_user?.id != null) {
         final res = await ApiService.updateProfilePicture(_user!.id.toString(), image.path);
+        if (!mounted) return;
         if (res['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Profile picture updated successfully!')),
@@ -200,158 +204,13 @@ class _HomeScreenState extends State<HomeScreen>
         }
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to upload image')),
       );
     }
   }
 
-  void _showEditProfileDialog() {
-    final fnameCtrl = TextEditingController();
-    final lnameCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Edit Profile', style: GoogleFonts.outfit()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: fnameCtrl, decoration: const InputDecoration(labelText: 'First Name')),
-            TextField(controller: lnameCtrl, decoration: const InputDecoration(labelText: 'Last Name')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              final name = '${fnameCtrl.text} ${lnameCtrl.text}'.trim();
-              if (name.isEmpty) return;
-              try {
-                await ApiService.updateProfile({
-                  'id': _user?.id,
-                  'name': name,
-                  'email': _user?.email,
-                  'phone': _user?.phone,
-                });
-                await _loadUser();
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile updated')));
-                }
-              } catch (e) {}
-            },
-            child: const Text('Save'),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _showMapSettingsDialog() {
-    bool dark = false;
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Map Settings', style: GoogleFonts.outfit()),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SwitchListTile(
-                title: const Text('Dark Mode Map'),
-                value: dark,
-                onChanged: (v) async {
-                  setDialogState(() => dark = v);
-                  try {
-                    await ApiService.saveMapSettings(_user!.id.toString(), v ? 'dark' : 'light');
-                  } catch (e) {}
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showPasscodeSetupDialog() {
-    final currentCtrl = TextEditingController();
-    final newCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Passcode Lock', style: GoogleFonts.outfit()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: currentCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Current Passcode')),
-            TextField(controller: newCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'New Passcode')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                final res = await ApiService.setupPasscode(_user!.id.toString(), newCtrl.text);
-                if (res['success'] == true) {
-                  if (mounted) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Passcode saved')));
-                  }
-                } else {
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['error'] ?? 'Failed')));
-                }
-              } catch (e) {}
-            },
-            child: const Text('Save'),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _showFeedbackDialog() {
-    final subjCtrl = TextEditingController();
-    final msgCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Send Feedback', style: GoogleFonts.outfit()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: subjCtrl, decoration: const InputDecoration(labelText: 'Subject')),
-            TextField(controller: msgCtrl, maxLines: 3, decoration: const InputDecoration(labelText: 'Message')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (subjCtrl.text.isEmpty || msgCtrl.text.isEmpty) return;
-              try {
-                await ApiService.submitFeedback({
-                  'user_id': _user?.id,
-                  'subject': subjCtrl.text,
-                  'category': 'Feedback',
-                  'message': msgCtrl.text,
-                });
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Feedback sent!')));
-                }
-              } catch (e) {}
-            },
-            child: const Text('Send'),
-          )
-        ],
-      ),
-    );
-  }
 
   Future<void> _logout() async {
     final bool? confirm = await showDialog<bool>(
@@ -604,11 +463,141 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           children: [
             TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              urlTemplate: _selectedMapType == 'satellite'
+                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                  : _selectedMapType == 'terrain'
+                      ? 'https://tile.opentopomap.org/{z}/{x}/{y}.png'
+                      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               userAgentPackageName: 'com.alertopoz.app',
+            ),
+            PolygonLayer(
+              polygons: [
+                if (_showFloodOverlay)
+                  Polygon(
+                    points: const [
+                      LatLng(16.1450, 120.5350),
+                      LatLng(16.1360, 120.5550),
+                      LatLng(16.1280, 120.5700),
+                      LatLng(16.1320, 120.5750),
+                      LatLng(16.1480, 120.5450),
+                    ],
+                    color: Colors.red.withValues(alpha: 0.25),
+                    borderColor: Colors.red,
+                    borderStrokeWidth: 2,
+                  ),
+                if (_showWaterOverlay)
+                  Polygon(
+                    points: const [
+                      LatLng(16.1150, 120.5400),
+                      LatLng(16.1150, 120.5550),
+                      LatLng(16.1050, 120.5550),
+                      LatLng(16.1050, 120.5400),
+                    ],
+                    color: Colors.blue.withValues(alpha: 0.18),
+                    borderColor: Colors.blue,
+                    borderStrokeWidth: 1.5,
+                  ),
+              ],
             ),
             MarkerLayer(markers: _buildMarkers()),
           ],
+        ),
+        // Search Pill
+        Positioned(
+          top: (_showBroadcastBanner && _latestBroadcast != null) ? 100 : 16,
+          left: 16,
+          right: 16,
+          child: Container(
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                )
+              ],
+            ),
+            child: Row(
+              children: [
+                const SizedBox(width: 16),
+                const Icon(Icons.search, color: Colors.grey),
+                const SizedBox(width: 12),
+                const Icon(Icons.location_on, color: Colors.red, size: 16),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    '16.1160, 120.5615 (Pozorrubio, PG)',
+                    style: GoogleFonts.outfit(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Icon(Icons.near_me, color: Colors.blue),
+                const SizedBox(width: 16),
+              ],
+            ),
+          ),
+        ),
+        // Hazard map pills
+        Positioned(
+          top: (_showBroadcastBanner && _latestBroadcast != null) ? 156 : 72,
+          left: 16,
+          right: 16,
+          child: Row(
+            children: [
+              _buildMapPill(
+                icon: Icons.waves,
+                label: 'Flood Map',
+                isActive: _showFloodOverlay,
+                activeColor: Colors.blue,
+                onTap: () {
+                  setState(() => _showFloodOverlay = !_showFloodOverlay);
+                  if (_showFloodOverlay) {
+                    _animatedMapMove(const LatLng(16.1400, 120.5550), 13.5);
+                  }
+                },
+              ),
+              const SizedBox(width: 8),
+              _buildMapPill(
+                icon: Icons.water,
+                label: 'Water Levels',
+                isActive: _showWaterOverlay,
+                activeColor: Colors.blue,
+                onTap: () {
+                  setState(() => _showWaterOverlay = !_showWaterOverlay);
+                  if (_showWaterOverlay) {
+                    _animatedMapMove(const LatLng(16.1100, 120.5475), 14.0);
+                  }
+                },
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _showMapTypeDialog,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
+                  ),
+                  child: const Icon(Icons.layers, color: Colors.black87, size: 20),
+                ),
+              ),
+            ],
+          ),
         ),
         // Broadcast banner
         if (_showBroadcastBanner && _latestBroadcast != null)
@@ -664,90 +653,312 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
-        // Map controls
-        Positioned(
-          bottom: 100,
-          right: 16,
-          child: Column(
-            children: [
-              FloatingActionButton.small(
-                heroTag: 'myLoc',
-                backgroundColor: Colors.white,
-                onPressed: _loadingLocation ? null : _getMyLocation,
-                child: _loadingLocation
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.my_location_rounded,
-                        color: Color(0xFF1A1A2E)),
-              ),
-              const SizedBox(height: 8),
-              FloatingActionButton.small(
-                heroTag: 'checkin',
-                backgroundColor: Colors.green,
-                onPressed: () => _ensureAuthenticated(() => _checkIn()),
-                child:
-                    const Icon(Icons.check_circle_outline_rounded, color: Colors.white),
-              ),
-            ],
-          ),
-        ),
         // SOS FAB
         Positioned(
-          bottom: 100,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: GestureDetector(
-              onTap: () => _ensureAuthenticated(() {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SosChatScreen(user: _user),
-                  ),
-                ).then((_) => _loadData());
-              }),
-              child: AnimatedBuilder(
-                animation: _pulseAnimation,
-                builder: (context, child) {
-                  return Transform.scale(
-                    scale: _pulseAnimation.value,
-                    child: Container(
-                      width: 90,
-                      height: 90,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD32F2F),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.red.withValues(alpha: 0.5),
-                            blurRadius: 20 * _pulseAnimation.value,
-                            spreadRadius: 4 * _pulseAnimation.value,
-                          ),
-                        ],
+          bottom: 32,
+          right: 20,
+          child: Tooltip(
+          message: 'Trigger Emergency SOS',
+          child: GestureDetector(
+            onTap: () => _ensureAuthenticated(() {
+              _triggerSos();
+            }),
+            child: AnimatedBuilder(
+              animation: _pulseAnimation,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _pulseAnimation.value,
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFF05023), Color(0xFFEF4444)],
                       ),
-                      child: Center(
-                        child: Text(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFEF4444).withValues(alpha: 0.4),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 28),
+                        const SizedBox(height: 2),
+                        Text(
                           'SOS',
                           style: GoogleFonts.outfit(
                             color: Colors.white,
-                            fontSize: 24,
+                            fontSize: 11,
                             fontWeight: FontWeight.w900,
-                            letterSpacing: 2,
+                            letterSpacing: 0.5,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  );
-                }
-              ),
+                  ),
+                );
+              }
             ),
+          ),
           ),
         ),
       ],
     );
+  }
+
+  void _showMapTypeDialog() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent, // Like the web popup
+      builder: (ctx) => Stack(
+        children: [
+          Positioned(
+            top: 140,
+            right: 16,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: 280,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Map Type',
+                          style: GoogleFonts.outfit(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => Navigator.pop(ctx),
+                          child: const Icon(Icons.close, size: 20, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildMapTypeOption(
+                          type: 'default',
+                          label: 'Default',
+                          imageUrl: 'https://tile.openstreetmap.org/13/6826/3673.png',
+                        ),
+                        _buildMapTypeOption(
+                          type: 'satellite',
+                          label: 'Satellite',
+                          imageUrl: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/13/3673/6826',
+                        ),
+                        _buildMapTypeOption(
+                          type: 'terrain',
+                          label: 'Terrain',
+                          imageUrl: 'https://tile.opentopomap.org/13/6826/3673.png',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapTypeOption({
+    required String type,
+    required String label,
+    required String imageUrl,
+  }) {
+    final isSelected = _selectedMapType == type;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _selectedMapType = type);
+        Navigator.pop(context);
+      },
+      child: Column(
+        children: [
+          Container(
+            width: 70,
+            height: 70,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSelected ? Colors.blue : Colors.transparent,
+                width: 2,
+              ),
+              image: DecorationImage(
+                image: NetworkImage(imageUrl),
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: GoogleFonts.outfit(
+              fontSize: 12,
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              color: isSelected ? Colors.blue : Colors.grey[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapPill({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required Color activeColor,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? activeColor.withValues(alpha: 0.15) : Colors.white,
+          border: Border.all(
+            color: isActive ? activeColor : Colors.transparent,
+            width: 1.5,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: isActive ? [] : [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.1),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            )
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: isActive ? activeColor : Colors.grey[800]),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: GoogleFonts.outfit(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isActive ? activeColor : Colors.grey[800],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _triggerSos() {
+    // Check if there is already an active incident for this user
+    if (_user != null) {
+      ApiService.checkActiveIncident(_user!.id.toString()).then((res) {
+        if (!mounted) return;
+        if (res['success'] == true && res['active'] == true) {
+          // Show draft conflict modal
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  const Icon(Icons.warning_rounded, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Text('Active Report', style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Text(
+                'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?',
+                style: GoogleFonts.outfit(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _navigateToChat(null); // Start new
+                  },
+                  child: const Text('Start New'),
+                ),
+                ElevatedButton(
+                  onPressed: _user == null
+                  ? () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const LoginScreen(),
+                        ),
+                      ).then((_) => _loadData());
+                    }
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProfileScreen(
+                            user: _user,
+                            onLogout: () {
+                              _logout();
+                              Navigator.pop(context); // back to home
+                            },
+                            onPickImage: _pickProfileImage,
+                          ),
+                        ),
+                      );
+                    },
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF5722)),
+                  child: const Text('Continue Current', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        } else {
+          _navigateToChat(null);
+        }
+      }).catchError((e) {
+        _navigateToChat(null);
+      });
+    } else {
+      _navigateToChat(null);
+    }
+  }
+
+  void _navigateToChat(String? category) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SosChatScreen(
+          user: _user,
+          initialCategory: category,
+        ),
+      ),
+    ).then((_) => _loadData());
   }
 
   Widget _buildAlertsTab() {
@@ -756,12 +967,18 @@ class _HomeScreenState extends State<HomeScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.notifications_none_rounded,
-                    size: 64, color: Colors.grey[300]),
+                Icon(Icons.notifications_off,
+                    size: 48, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text('No active alerts',
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Text(
+                    'No active broadcast alerts received in this session yet.',
+                    textAlign: TextAlign.center,
                     style: GoogleFonts.outfit(
-                        color: Colors.grey[500], fontSize: 16)),
+                        color: Colors.grey[500], fontSize: 13),
+                  ),
+                ),
               ],
             ),
           )
@@ -812,259 +1029,43 @@ class _HomeScreenState extends State<HomeScreen>
           );
   }
 
-  Widget _buildProfileTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          const SizedBox(height: 20),
-          GestureDetector(
-            onTap: _pickProfileImage,
-            child: Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                CircleAvatar(
-                  radius: 50,
-                  backgroundColor: const Color(0xFFFF5722).withValues(alpha: 0.15),
-                  backgroundImage: _user?.profileImage != null ? MemoryImage(base64Decode(_user!.profileImage.split(',').last)) : null,
-                  child: _user?.profileImage == null
-                      ? Text(
-                          (_user?.name.isNotEmpty == true)
-                              ? _user!.name[0].toUpperCase()
-                              : 'U',
-                          style: GoogleFonts.outfit(
-                            fontSize: 36,
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFFFF5722),
-                          ),
-                        )
-                      : null,
+  void _showAlertsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Color(0xFFF7F8FA),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFF5722),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            _user?.name ?? 'Citizen',
-            style: GoogleFonts.outfit(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF5722).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              _user?.type.toUpperCase() ?? 'CITIZEN',
-              style: GoogleFonts.outfit(
-                color: const Color(0xFFFF5722),
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextButton.icon(
-            onPressed: () => _ensureAuthenticated(() => _showEditProfileDialog()),
-            icon: const Icon(Icons.edit, color: Color(0xFFFF5722)),
-            label: Text('Edit Profile', style: GoogleFonts.outfit(color: const Color(0xFFFF5722))),
-          ),
-          const SizedBox(height: 8),
-          const SizedBox(height: 32),
-          _profileCard(Icons.phone_outlined, 'Phone', _user?.phone ?? '-'),
-          const SizedBox(height: 12),
-          _profileCard(Icons.email_outlined, 'Email', _user?.email ?? '-'),
-          const SizedBox(height: 12),
-          _profileCard(Icons.location_city_outlined, 'Municipality',
-              'Pozorrubio, Pangasinan'),
-          const SizedBox(height: 32),
-          // Emergency Call button
-          ElevatedButton.icon(
-            onPressed: () => _ensureAuthenticated(() {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CallScreen(user: _user, isVideo: false),
-                ),
-              );
-            }),
-            icon: const Icon(Icons.phone_rounded),
-            label: const Text('Emergency Voice Call'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: () => _ensureAuthenticated(() {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CallScreen(user: _user, isVideo: true),
-                ),
-              );
-            }),
-            icon: const Icon(Icons.videocam_rounded),
-            label: const Text('Emergency Video Call'),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0)),
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: () => _ensureAuthenticated(() {
-              if (_user != null) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => HistoryScreen(user: _user!),
-                  ),
-                );
-              }
-            }),
-            icon: const Icon(Icons.history_rounded, color: Colors.white),
-            label: Text('Emergency History',
-                style: GoogleFonts.outfit(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(
-              backgroundColor: const Color(0xFF16213E),
-              side: const BorderSide(color: Color(0xFF16213E)),
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => _ensureAuthenticated(() => _showMapSettingsDialog()),
-            icon: const Icon(Icons.map_rounded, color: Colors.white),
-            label: Text('Map Settings',
-                style: GoogleFonts.outfit(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(
-              backgroundColor: const Color(0xFF16213E),
-              side: const BorderSide(color: Color(0xFF16213E)),
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => _ensureAuthenticated(() => _showPasscodeSetupDialog()),
-            icon: const Icon(Icons.pin_rounded, color: Colors.white),
-            label: Text('Passcode Lock',
-                style: GoogleFonts.outfit(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(
-              backgroundColor: const Color(0xFF16213E),
-              side: const BorderSide(color: Color(0xFF16213E)),
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => _ensureAuthenticated(() => _showFeedbackDialog()),
-            icon: const Icon(Icons.feedback_rounded, color: Colors.white),
-            label: Text('Feedback',
-                style: GoogleFonts.outfit(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-            style: OutlinedButton.styleFrom(
-              backgroundColor: const Color(0xFF16213E),
-              side: const BorderSide(color: Color(0xFF16213E)),
-              minimumSize: const Size(double.infinity, 54),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_user != null)
-            OutlinedButton.icon(
-              onPressed: _logout,
-              icon: const Icon(Icons.logout_rounded, color: Colors.red),
-              label: Text('Sign Out',
-                  style: GoogleFonts.outfit(
-                      color: Colors.red, fontWeight: FontWeight.w600)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.red),
-                minimumSize: const Size(double.infinity, 54),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-            )
-          else
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                ).then((_) => _loadUser());
-              },
-              icon: const Icon(Icons.login_rounded, color: Colors.white),
-              label: Text('Log In',
-                  style: GoogleFonts.outfit(
-                      color: Colors.white, fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
-                minimumSize: const Size(double.infinity, 54),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Alerts', style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _profileCard(IconData icon, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF5722).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: const Color(0xFFFF5722), size: 20),
-          ),
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: GoogleFonts.outfit(
-                      fontSize: 12, color: Colors.grey[500])),
-              Text(value,
-                  style: GoogleFonts.outfit(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  )),
-            ],
-          ),
-        ],
+            Expanded(child: _buildAlertsTab()),
+          ],
+        ),
       ),
     );
   }
@@ -1072,104 +1073,91 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        titleSpacing: 20,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        titleSpacing: 16,
         title: Row(
           children: [
-            const Text('ALERT',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            Text('ALERTO -POZ',
+                style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
             const SizedBox(width: 4),
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF5722),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.wifi_tethering_rounded,
-                  color: Colors.white, size: 20),
-            ),
-            const SizedBox(width: 4),
-            const Text('-POZ',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+            const Icon(Icons.sensors, color: Color(0xFFFF5722), size: 22),
           ],
         ),
         actions: [
-          if (_selectedTab == 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                    ),
+          IconButton(
+            icon: const Icon(Icons.history_rounded, color: Colors.black87),
+            onPressed: () {
+              _ensureAuthenticated(() {
+                showModalBottomSheet(
+                  context: context,
+                  backgroundColor: Colors.transparent,
+                  isScrollControlled: true,
+                  builder: (_) => SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.85,
+                    child: HistoryScreen(user: _user!),
                   ),
-                  const SizedBox(width: 6),
-                  Text('LIVE',
-                      style: GoogleFonts.outfit(
-                        color: Colors.green,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      )),
-                ],
+                );
+              });
+            },
+          ),
+          IconButton(
+            icon: Badge(
+              isLabelVisible: _broadcasts.isNotEmpty,
+              label: Text(_broadcasts.length.toString()),
+              child: const Icon(Icons.notifications_rounded, color: Colors.black87),
+            ),
+            onPressed: _showAlertsSheet,
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _user == null
+                ? () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const LoginScreen(),
+                      ),
+                    ).then((_) => _loadData());
+                  }
+                : () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ProfileScreen(
+                          user: _user,
+                          onLogout: () {
+                            _logout();
+                            Navigator.pop(context); // back to home
+                          },
+                          onPickImage: _pickProfileImage,
+                        ),
+                      ),
+                    );
+                  },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                'PROFILE',
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: const Color(0xFF1E293B),
+                ),
               ),
             ),
-          IconButton(
-            icon: Badge(
-              isLabelVisible: _broadcasts.isNotEmpty,
-              label: Text(_broadcasts.length.toString()),
-              child: const Icon(Icons.notifications_rounded),
-            ),
-            onPressed: () => setState(() => _selectedTab = 1),
           ),
-          IconButton(
-            icon: const Icon(Icons.person_rounded),
-            onPressed: () => setState(() => _selectedTab = 2),
-          ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 16),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedTab,
-        children: [
-          _buildMapTab(),
-          _buildAlertsTab(),
-          _buildProfileTab(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedTab,
-        onDestinationSelected: (i) => setState(() => _selectedTab = i),
-        indicatorColor: const Color(0xFFFF5722).withValues(alpha: 0.15),
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon:
-                Icon(Icons.map_rounded, color: Color(0xFFFF5722)),
-            label: 'Live Map',
-          ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: _broadcasts.isNotEmpty,
-              label: Text(_broadcasts.length.toString()),
-              child: const Icon(Icons.notifications_outlined),
-            ),
-            selectedIcon:
-                const Icon(Icons.notifications_rounded, color: Color(0xFFFF5722)),
-            label: 'Alerts',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded,
-                color: Color(0xFFFF5722)),
-            label: 'Profile',
-          ),
-        ],
-      ),
+      body: _buildMapTab(),
     );
   }
 }

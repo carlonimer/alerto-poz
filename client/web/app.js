@@ -46,10 +46,6 @@ class CitizenMobileClient {
         this.activeIncident = null; // Current emergency report session (draft or sent)
         this.attachments = []; // Store base64 media data objects: { name, type, data }
 
-        // SOS countdown timer properties
-        this.sosTimer = null;
-        this.countdown = 5;
-        this.isCounting = false;
 
         // Call simulation properties
         this.callTimer = null;
@@ -219,11 +215,7 @@ class CitizenMobileClient {
         this.chatDetailsInput = document.getElementById("chat-details-input");
         this.chatSendBtn = document.getElementById("btn-chat-send");
 
-        // Countdown Elements (inside chat view)
-        this.chatSosCountdownCard = document.getElementById("chat-sos-countdown-card");
-        this.progressBar = document.getElementById("progress-bar-indicator-chat");
-        this.countdownText = document.getElementById("countdown-label-chat");
-        this.cancelSosBtn = document.getElementById("cancel-sos-btn-chat");
+
 
         // Voice / Video Call Elements
         this.btnAudioCall = document.getElementById("btn-audio-call");
@@ -768,15 +760,17 @@ class CitizenMobileClient {
                 this.updateSOSCategory(this.selectedCategory);
             });
         });
-
-        this.cancelSosBtn.addEventListener("click", () => {
-            this.cancelSOSCountdown();
-        });
-
         this.pushToastClose.addEventListener("click", () => {
             this.pushToast.classList.add("hidden");
+            this.pushToast.style.animation = "";
+            this.pushToast.style.background = "";
+            this.pushToast.style.color = "";
+            if (this.hardwareAlarmInterval) {
+                clearInterval(this.hardwareAlarmInterval);
+                this.hardwareAlarmInterval = null;
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            }
         });
-
         this.initProfileEvents();
     }
 
@@ -1081,6 +1075,12 @@ class CitizenMobileClient {
 
         this.socket.on('broadcast-advisory', (data) => {
             this.receiveBroadcastAlert(data);
+        });
+
+        this.socket.on('new-incident-alert', (incident) => {
+            if (incident && incident.reporterId === 'HARDWARE-01') {
+                this.triggerHardwareEmergencyWarning(incident);
+            }
         });
 
         this.socket.on('chat-message-receive', (msg) => {
@@ -3329,6 +3329,46 @@ Stay calm and provide clear updates.`;
             this.responderMarker = null;
         }
         this.assignedResponderUnit = null;
+    }
+
+    triggerHardwareEmergencyWarning(incident) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const dateString = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        const dateTimeStr = `(${timeString}, ${dateString})`;
+
+        this.pushToastHeader.textContent = "⚠️ Emergency Alert: Early Warning";
+        this.pushToastBody.innerHTML = `ALERTO-POZ ${dateTimeStr}<br/><br/>
+Maagang paghahanda para sa mga residente ng Pozorrubio. Pinapayuhang maghanda at mag-imbak ng sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, at iba pang mahahalagang gamit. Manatiling alerto at makinig sa mga susunod na abiso mula sa lokal na awtoridad.`;
+        
+        const toast = this.pushToast;
+        if (toast) {
+            toast.style.background = "#ff0000";
+            toast.style.color = "#ffffff";
+            toast.classList.remove("hidden");
+            toast.style.animation = "pulse 0.5s infinite alternate"; // Make it blink rapidly
+        }
+        
+        if (this.hardwareAlarmInterval) clearInterval(this.hardwareAlarmInterval);
+        
+        const triggerAlarms = () => {
+            if (navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500]);
+            
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance("WARNING! EMERGENCY HARDWARE TRIGGER DETECTED!");
+                utterance.rate = 0.9;
+                utterance.pitch = 1.2;
+                utterance.volume = 1.0;
+                window.speechSynthesis.speak(utterance);
+            }
+            
+            if (typeof this.playEmergencySiren === 'function') {
+                this.playEmergencySiren();
+            }
+        };
+
+        triggerAlarms();
+        this.hardwareAlarmInterval = setInterval(triggerAlarms, 4500); // Loop every 4.5 seconds
     }
 
     receiveBroadcastAlert(broadcast) {
