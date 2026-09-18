@@ -1635,9 +1635,9 @@ app.post('/api/hardware/trigger', async (req, res) => {
         
         const broadcastData = {
             id: broadcastId,
-            title: '⚠️ Emergency Alert: Early Warning',
+            title: '⚠️ EXTREME EMERGENCY ALERT: IMMEDIATE PREPAREDNESS',
             category: 'warning',
-            message: 'Maagang paghahanda para sa mga residente ng Pozorrubio. Pinapayuhang maghanda at mag-imbak ng sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, at iba pang mahahalagang gamit. Manatiling alerto at makinig sa mga susunod na abiso mula sa lokal na awtoridad.',
+            message: 'MATAAS NA ANTAS NG BABALA: Pinapayuhan ang lahat ng residente ng Pozorrubio na agad na maghanda at manatiling alerto. Ihanda ang sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, gamot, mahahalagang dokumento, at iba pang emergency supplies. Iwasang pumunta sa mga lugar na maaaring maging delikado at patuloy na subaybayan ang mga opisyal na abiso ng lokal na awtoridad. Maging handa sa posibleng paglikas kung kinakailangan.',
             timestamp: ts
         };
 
@@ -1651,9 +1651,9 @@ app.post('/api/hardware/trigger', async (req, res) => {
         const dbState = await getDBState();
         io.emit('init-state', dbState);
 
-        console.log(`[HARDWARE TRIGGER] Early Warning Broadcast fired by ${device_id} at ${new Date().toISOString()}`);
+        console.log(`[HARDWARE TRIGGER] Extreme Emergency Broadcast fired by ${device_id} at ${new Date().toISOString()}`);
 
-        res.status(200).json({ success: true, message: 'Early Warning Broadcast Triggered Successfully', broadcastId });
+        res.status(200).json({ success: true, message: 'Extreme Emergency Broadcast Triggered Successfully', broadcastId });
     } catch (e) {
         console.error("Hardware trigger error:", e);
         res.status(500).json({ error: e.message });
