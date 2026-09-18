@@ -3378,29 +3378,33 @@ Stay calm and provide clear updates.`;
         const dateString = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         const dateTimeStr = `(${timeString}, ${dateString})`;
 
-        this.pushToastHeader.textContent = "⚠️ Emergency Alert: Early Warning";
-        this.pushToastBody.innerHTML = `ALERTO-POZ ${dateTimeStr}<br/><br/>
-Maagang paghahanda para sa mga residente ng Pozorrubio. Pinapayuhang maghanda at mag-imbak ng sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, at iba pang mahahalagang gamit. Manatiling alerto at makinig sa mga susunod na abiso mula sa lokal na awtoridad.`;
+        this.pushToastHeader.textContent = "⚠️ EXTREME EMERGENCY ALERT: IMMEDIATE PREPAREDNESS";
+        this.pushToastBody.innerHTML = `ALERTO-POZ ${dateTimeStr}<br/><br/>MATAAS NA ANTAS NG BABALA: Pinapayuhan ang lahat ng residente ng Pozorrubio na agad na maghanda at manatiling alerto. Ihanda ang sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, gamot, mahahalagang dokumento, at iba pang emergency supplies. Iwasang pumunta sa mga lugar na maaaring maging delikado at patuloy na subaybayan ang mga opisyal na abiso ng lokal na awtoridad. Maging handa sa posibleng paglikas kung kinakailangan.`;
         
         const toast = this.pushToast;
         if (toast) {
             toast.style.background = "#ff0000";
             toast.style.color = "#ffffff";
             toast.classList.remove("hidden");
-            toast.style.animation = "pulse 0.5s infinite alternate"; // Make it blink rapidly
+            toast.style.animation = "pulse 0.5s infinite alternate";
         }
         
         if (this.hardwareAlarmInterval) clearInterval(this.hardwareAlarmInterval);
         
+        const speechText = `EXTREME EMERGENCY ALERT: IMMEDIATE PREPAREDNESS. ALERTO-POZ ${dateTimeStr}. MATAAS NA ANTAS NG BABALA: Pinapayuhan ang lahat ng residente ng Pozorrubio na agad na maghanda at manatiling alerto. Ihanda ang sapat na pagkain, inuming tubig, first aid kit, flashlight, baterya, gamot, mahahalagang dokumento, at iba pang emergency supplies. Iwasang pumunta sa mga lugar na maaaring maging delikado at patuloy na subaybayan ang mga opisyal na abiso ng lokal na awtoridad. Maging handa sa posibleng paglikas kung kinakailangan.`;
+
         const triggerAlarms = () => {
-            if (navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500]);
+            if (navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500, 1000]);
             
             if ('speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance("WARNING! EMERGENCY HARDWARE TRIGGER DETECTED!");
-                utterance.rate = 0.9;
-                utterance.pitch = 1.2;
-                utterance.volume = 1.0;
-                window.speechSynthesis.speak(utterance);
+                if (!window.speechSynthesis.speaking) {
+                    const utterance = new SpeechSynthesisUtterance(speechText);
+                    utterance.lang = 'tl-PH';
+                    utterance.rate = 0.9;
+                    utterance.pitch = 1.1;
+                    utterance.volume = 1.0;
+                    window.speechSynthesis.speak(utterance);
+                }
             }
             
             if (typeof this.playEmergencySiren === 'function') {
@@ -3409,7 +3413,7 @@ Maagang paghahanda para sa mga residente ng Pozorrubio. Pinapayuhang maghanda at
         };
 
         triggerAlarms();
-        this.hardwareAlarmInterval = setInterval(triggerAlarms, 4500); // Loop every 4.5 seconds
+        this.hardwareAlarmInterval = setInterval(triggerAlarms, 4500);
     }
 
     receiveBroadcastAlert(broadcast) {
