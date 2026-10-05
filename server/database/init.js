@@ -302,15 +302,19 @@ async function initDatabase(pool) {
     if (userCount[0].count === 0) {
         await pool.query(`
             INSERT INTO users (name, email, phone, password, type, active, barangay) VALUES
-            ('MDRRMO Admin', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'mdrrmo_admin', 1, NULL),
-            ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'bfp_admin', 1, NULL),
-            ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'pnp_admin', 1, NULL),
-            ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'barangay_admin', 1, 'Buneg');
+            ('MDRRMO Admin', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'mdrrmo_admin', 1, NULL),
+            ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'bfp_admin', 1, NULL),
+            ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'pnp_admin', 1, NULL),
+            ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'barangay_admin', 1, 'Buneg');
         `);
         console.log("Admin panel accounts seeded.");
     }
     // Backward compatibility: upgrade old 'authority' type to 'mdrrmo_admin'
     await pool.query("UPDATE users SET type = 'mdrrmo_admin' WHERE type = 'authority'");
+    
+    // Force reset all admin passwords to 'admin123' to fix login issues
+    await pool.query("UPDATE users SET password = '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm' WHERE email LIKE '%@pozorrubio.gov.ph'");
+    console.log("Admin passwords forced to admin123.");
 }
 
 module.exports = { initDatabase };
