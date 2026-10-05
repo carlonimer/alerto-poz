@@ -297,18 +297,21 @@ async function initDatabase(pool) {
         `);
     }
 
-    // Preseed admin panel account if users table is empty
-    const [userCount] = await pool.query("SELECT COUNT(*) as count FROM users");
-    if (userCount[0].count === 0) {
+    // Check if the specific admin accounts exist
+    const [adminCount] = await pool.query("SELECT COUNT(*) as count FROM users WHERE email IN ('mdrrmo@pozorrubio.gov.ph', 'bfp@pozorrubio.gov.ph', 'pnp@pozorrubio.gov.ph', 'buneg@pozorrubio.gov.ph')");
+    
+    if (adminCount[0].count < 4) {
+        // Use INSERT IGNORE in case some exist but not others
         await pool.query(`
-            INSERT INTO users (name, email, phone, password, type, active, barangay) VALUES
+            INSERT IGNORE INTO users (name, email, phone, password, type, active, barangay) VALUES
             ('MDRRMO Admin', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'mdrrmo_admin', 1, NULL),
             ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'bfp_admin', 1, NULL),
             ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'pnp_admin', 1, NULL),
             ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'barangay_admin', 1, 'Buneg');
         `);
-        console.log("Admin panel accounts seeded.");
+        console.log("Admin panel accounts seeded/updated.");
     }
+
     // Backward compatibility: upgrade old 'authority' type to 'mdrrmo_admin'
     await pool.query("UPDATE users SET type = 'mdrrmo_admin' WHERE type = 'authority'");
     
