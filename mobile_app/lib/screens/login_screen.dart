@@ -56,8 +56,6 @@ class _LoginScreenState extends State<LoginScreen> {
             builder: (_) => OtpScreen(
               identifier: res['target']?.toString() ?? _identifierCtrl.text.trim(),
               otpType: 'login',
-              rememberMe: _rememberMe,
-              devOtpVal: res['otpDevVal']?.toString(),
             ),
           ),
         );

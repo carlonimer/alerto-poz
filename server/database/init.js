@@ -149,7 +149,8 @@ async function initDatabase(pool) {
         "responseProgress VARCHAR(30) DEFAULT NULL",
         "reporterId INT NULL",
         "media LONGTEXT",
-        "has_sent_messages TINYINT NOT NULL DEFAULT 0"
+        "has_sent_messages TINYINT NOT NULL DEFAULT 0",
+        "assigned_agency VARCHAR(50) NULL"
     ];
     for (const col of incidentColumns) {
         try { await pool.query(`ALTER TABLE incidents ADD COLUMN ${col}`); } catch(e) {}
@@ -204,14 +205,47 @@ async function initDatabase(pool) {
     try { await pool.query("ALTER TABLE responders ADD COLUMN base_lat DOUBLE NULL"); } catch(e) {}
     try { await pool.query("ALTER TABLE responders ADD COLUMN base_lng DOUBLE NULL"); } catch(e) {}
 
-    // 7. Broadcasts Table
+    // 7. Broadcasts / Town-Wide Alerts Table
     await pool.query(`
         CREATE TABLE IF NOT EXISTS broadcasts (
-            id VARCHAR(20) PRIMARY KEY,
+            id VARCHAR(50) PRIMARY KEY,
             title VARCHAR(150) NOT NULL,
             category VARCHAR(20) NOT NULL,
             message TEXT NOT NULL,
+            alert_level VARCHAR(20) NULL,
+            scope VARCHAR(20) DEFAULT 'town',
+            barangay_id VARCHAR(100) NULL,
+            is_active TINYINT DEFAULT 1,
+            expires_at BIGINT NULL,
             timestamp BIGINT NOT NULL
+        );
+    `);
+    
+    const broadcastCols = [
+        "alert_level VARCHAR(20) NULL",
+        "scope VARCHAR(20) DEFAULT 'town'",
+        "barangay_id VARCHAR(100) NULL",
+        "is_active TINYINT DEFAULT 1",
+        "expires_at BIGINT NULL"
+    ];
+    for (const col of broadcastCols) {
+        try { await pool.query(`ALTER TABLE broadcasts ADD COLUMN ${col}`); } catch(e) {}
+    }
+
+    // 7.5 Barangay Assistance Requests Table
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS barangay_assistance_requests (
+            id VARCHAR(50) PRIMARY KEY,
+            barangay VARCHAR(100) NOT NULL,
+            requested_by VARCHAR(100) NULL,
+            incident_id VARCHAR(50) NULL,
+            lat DOUBLE NOT NULL,
+            lng DOUBLE NOT NULL,
+            description TEXT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+            created_at BIGINT NOT NULL,
+            responded_at BIGINT NULL,
+            resolved_at BIGINT NULL
         );
     `);
 
@@ -267,12 +301,16 @@ async function initDatabase(pool) {
     const [userCount] = await pool.query("SELECT COUNT(*) as count FROM users");
     if (userCount[0].count === 0) {
         await pool.query(`
-            INSERT INTO users (name, email, phone, password, type, active) VALUES
-            ('Pozorrubio MDRRMO Admin', 'admin@pozorrubio.gov.ph', '09998887777',
-             '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'authority', 1);
+            INSERT INTO users (name, email, phone, password, type, active, barangay) VALUES
+            ('MDRRMO Admin', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'mdrrmo_admin', 1, NULL),
+            ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'bfp_admin', 1, NULL),
+            ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'pnp_admin', 1, NULL),
+            ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$yVnRLTFfmUw8yuC531u0aeB1HAcB.xL3lrCfOOmEdnelOIsN.7viy', 'barangay_admin', 1, 'Buneg');
         `);
-        console.log("Admin panel account seeded (admin@pozorrubio.gov.ph / 1234).");
+        console.log("Admin panel accounts seeded.");
     }
+    // Backward compatibility: upgrade old 'authority' type to 'mdrrmo_admin'
+    await pool.query("UPDATE users SET type = 'mdrrmo_admin' WHERE type = 'authority'");
 }
 
 module.exports = { initDatabase };

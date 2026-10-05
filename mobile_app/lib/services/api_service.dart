@@ -153,11 +153,11 @@ class ApiService {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  static Future<Map<String, dynamic>> saveMapSettings(String userId, String mapType) async {
+  static Future<Map<String, dynamic>> saveMapSettings(Map<String, dynamic> data) async {
     final res = await http.post(
       Uri.parse('$baseUrl/api/user/map-settings'),
       headers: await _getHeaders(auth: true),
-      body: jsonEncode({'id': userId, 'mapType': mapType}),
+      body: jsonEncode(data),
     );
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -209,7 +209,7 @@ class ApiService {
   static Future<List<dynamic>> getIncidents() async {
     try {
       final res = await http.get(
-        Uri.parse('$baseUrl/api/incidents'),
+        Uri.parse('$baseUrl/api/db-state'),
         headers: await _getHeaders(auth: true),
       );
       final data = jsonDecode(res.body);
@@ -342,7 +342,7 @@ class ApiService {
   static Future<List<dynamic>> getResponders() async {
     try {
       final res = await http.get(
-        Uri.parse('$baseUrl/api/responders'),
+        Uri.parse('$baseUrl/api/db-state'),
         headers: await _getHeaders(auth: true),
       );
       final data = jsonDecode(res.body);
@@ -357,7 +357,7 @@ class ApiService {
   static Future<List<dynamic>> getBroadcasts() async {
     try {
       final res = await http.get(
-        Uri.parse('$baseUrl/api/broadcasts'),
+        Uri.parse('$baseUrl/api/db-state'),
         headers: await _getHeaders(auth: true),
       );
       final data = jsonDecode(res.body);

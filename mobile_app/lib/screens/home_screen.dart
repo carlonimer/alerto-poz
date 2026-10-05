@@ -52,10 +52,10 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
+    _pulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeOut),
     );
     _loadUser();
     _initSocket();
@@ -75,7 +75,13 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadUser() async {
     final data = await ApiService.getUser();
     if (data != null && mounted) {
-      setState(() => _user = UserModel.fromJson(data));
+      final user = UserModel.fromJson(data);
+      setState(() {
+        _user = user;
+        if (user.mapSettings != null && user.mapSettings!['map_type'] != null) {
+          _selectedMapType = user.mapSettings!['map_type'];
+        }
+      });
       _checkActiveIncident();
     }
   }
@@ -98,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _initSocket() {
     SocketService.init();
-    SocketService.onBroadcastAlert((data) {
+    SocketService.onBroadcastAdvisory((data) {
       if (!mounted) return;
       setState(() {
         _latestBroadcast = data as Map<String, dynamic>;
@@ -167,11 +173,16 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _getMyLocation() async {
     final pos = await LocationService.getCurrentPosition();
-    if (pos != null && mounted) {
+    if (!mounted) return;
+    if (pos != null) {
       setState(() {
         _myLocation = LatLng(pos.latitude, pos.longitude);
       });
-      _animatedMapMove(_myLocation!, 14);
+      _animatedMapMove(_myLocation!, 17);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not fetch location. Please enable GPS.')),
+      );
     }
   }
 
@@ -201,6 +212,7 @@ class _HomeScreenState extends State<HomeScreen>
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Profile picture updated successfully!')),
           );
+          _loadUser(); // Refresh user data to show new image
         }
       }
     } catch (e) {
@@ -260,22 +272,57 @@ class _HomeScreenState extends State<HomeScreen>
       markers.add(
         Marker(
           point: _myLocation!,
-          width: 40,
-          height: 40,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.2),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.blue, width: 2),
-            ),
-            child: const Icon(Icons.my_location_rounded,
-                color: Colors.blue, size: 20),
+          width: 100,
+          height: 100,
+          child: AnimatedBuilder(
+            animation: _pulseAnimation,
+            builder: (context, child) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Outer waving radar circle
+                  Container(
+                    width: 40 + (60 * _pulseAnimation.value),
+                    height: 40 + (60 * _pulseAnimation.value),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.blue.withValues(alpha: 1.0 - _pulseAnimation.value),
+                        width: 2,
+                      ),
+                      color: Colors.blue.withValues(alpha: (1.0 - _pulseAnimation.value) * 0.1),
+                    ),
+                  ),
+                  // Inner logo instead of solid dot
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                      image: const DecorationImage(
+                        image: AssetImage('assets/logo.png'),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
           ),
         ),
       );
     }
 
-    // Incident markers
+    // Incident markers hidden as requested
+    /*
     for (final incident in _incidents) {
       final lat = (incident['lat'] as num?)?.toDouble() ?? 0;
       final lng = (incident['lng'] as num?)?.toDouble() ?? 0;
@@ -305,6 +352,7 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
+    */
 
     // Responder markers
     for (final r in _responders) {
@@ -464,11 +512,11 @@ class _HomeScreenState extends State<HomeScreen>
           children: [
             TileLayer(
               urlTemplate: _selectedMapType == 'satellite'
-                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                  ? 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
                   : _selectedMapType == 'terrain'
-                      ? 'https://tile.opentopomap.org/{z}/{x}/{y}.png'
-                      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.alertopoz.app',
+                      ? 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
+                      : 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+              additionalOptions: const {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
             ),
             PolygonLayer(
               polygons: [
@@ -538,7 +586,10 @@ class _HomeScreenState extends State<HomeScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Icon(Icons.near_me, color: Colors.blue),
+                GestureDetector(
+                  onTap: _getMyLocation,
+                  child: const Icon(Icons.near_me, color: Colors.blue),
+                ),
                 const SizedBox(width: 16),
               ],
             ),
@@ -666,42 +717,58 @@ class _HomeScreenState extends State<HomeScreen>
             child: AnimatedBuilder(
               animation: _pulseAnimation,
               builder: (context, child) {
-                return Transform.scale(
-                  scale: _pulseAnimation.value,
-                  child: Container(
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFFF05023), Color(0xFFEF4444)],
-                      ),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFEF4444).withValues(alpha: 0.4),
-                          blurRadius: 24,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 28),
-                        const SizedBox(height: 2),
-                        Text(
-                          'SOS',
-                          style: GoogleFonts.outfit(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
+                return SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Expanding wave 1
+                      Container(
+                        width: 80 + (40 * _pulseAnimation.value),
+                        height: 80 + (40 * _pulseAnimation.value),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFFF44336).withValues(alpha: 1.0 - _pulseAnimation.value),
+                            width: 2,
                           ),
+                          color: const Color(0xFFF44336).withValues(alpha: (1.0 - _pulseAnimation.value) * 0.2),
                         ),
-                      ],
-                    ),
+                      ),
+                      // Inner Solid SOS Button
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF44336),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFF44336).withValues(alpha: 0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Image.asset('assets/logo.png', width: 28, height: 28, color: Colors.white),
+                            const SizedBox(height: 2),
+                            Text(
+                              'SOS',
+                              style: GoogleFonts.outfit(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }
@@ -765,17 +832,17 @@ class _HomeScreenState extends State<HomeScreen>
                         _buildMapTypeOption(
                           type: 'default',
                           label: 'Default',
-                          imageUrl: 'https://tile.openstreetmap.org/13/6826/3673.png',
+                          tileUrl: 'https://mt1.google.com/vt/lyrs=m&x=13495&y=7410&z=14',
                         ),
                         _buildMapTypeOption(
                           type: 'satellite',
                           label: 'Satellite',
-                          imageUrl: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/13/3673/6826',
+                          tileUrl: 'https://mt1.google.com/vt/lyrs=s&x=13495&y=7410&z=14',
                         ),
                         _buildMapTypeOption(
                           type: 'terrain',
                           label: 'Terrain',
-                          imageUrl: 'https://tile.opentopomap.org/13/6826/3673.png',
+                          tileUrl: 'https://mt1.google.com/vt/lyrs=p&x=13495&y=7410&z=14',
                         ),
                       ],
                     ),
@@ -792,27 +859,43 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildMapTypeOption({
     required String type,
     required String label,
-    required String imageUrl,
+    required String tileUrl,
   }) {
     final isSelected = _selectedMapType == type;
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         setState(() => _selectedMapType = type);
         Navigator.pop(context);
+        if (_user != null) {
+          final settings = _user!.mapSettings ?? {};
+          final newSettings = Map<String, dynamic>.from(settings);
+          newSettings['user_id'] = _user!.id;
+          newSettings['map_type'] = type;
+          try {
+            await ApiService.saveMapSettings(newSettings);
+            _user = _user!.copyWith(mapSettings: newSettings);
+          } catch (e) {
+            debugPrint('Failed to sync map type: $e');
+          }
+        }
       },
       child: Column(
         children: [
           Container(
-            width: 70,
-            height: 70,
+            width: 74,
+            height: 74,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: isSelected ? Colors.blue : Colors.transparent,
                 width: 2,
               ),
               image: DecorationImage(
-                image: NetworkImage(imageUrl),
+                image: NetworkImage(
+                  tileUrl,
+                  headers: const {'User-Agent': 'AlertoPoz Mobile App'},
+                ),
                 fit: BoxFit.cover,
               ),
             ),
@@ -821,9 +904,9 @@ class _HomeScreenState extends State<HomeScreen>
           Text(
             label,
             style: GoogleFonts.outfit(
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-              color: isSelected ? Colors.blue : Colors.grey[700],
+              color: isSelected ? Colors.blue : Colors.grey[600],
             ),
           ),
         ],
@@ -886,56 +969,74 @@ class _HomeScreenState extends State<HomeScreen>
           // Show draft conflict modal
           showDialog(
             context: context,
-            builder: (ctx) => AlertDialog(
+            builder: (ctx) => Dialog(
+              backgroundColor: const Color(0xFFF9EAE1),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Row(
-                children: [
-                  const Icon(Icons.warning_rounded, color: Colors.orange),
-                  const SizedBox(width: 8),
-                  Text('Active Report', style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
-                ],
-              ),
-              content: Text(
-                'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?',
-                style: GoogleFonts.outfit(),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _navigateToChat(null); // Start new
-                  },
-                  child: const Text('Start New'),
-                ),
-                ElevatedButton(
-                  onPressed: _user == null
-                  ? () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const LoginScreen(),
-                        ),
-                      ).then((_) => _loadData());
-                    }
-                  : () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ProfileScreen(
-                            user: _user,
-                            onLogout: () {
-                              _logout();
-                              Navigator.pop(context); // back to home
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.warning_rounded, color: Colors.orange),
+                        const SizedBox(width: 8),
+                        Text('Active Report', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?',
+                      style: GoogleFonts.outfit(fontSize: 13, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _navigateToChat(null); // Start new
                             },
-                            onPickImage: _pickProfileImage,
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(50),
+                                side: const BorderSide(color: Color(0xFF8B3A3A), width: 1.5),
+                              ),
+                            ),
+                            child: Text('Start New', style: GoogleFonts.outfit(color: const Color(0xFF8B3A3A), fontWeight: FontWeight.w700, fontSize: 14)),
                           ),
                         ),
-                      );
-                    },
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF5722)),
-                  child: const Text('Continue Current', style: TextStyle(color: Colors.white)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _navigateToChat(null, res['incident'] as Map<String, dynamic>?);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF05023),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
+                              elevation: 2,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 18),
+                                const SizedBox(width: 8),
+                                Text('Continue', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                              ]
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           );
         } else {
@@ -949,13 +1050,14 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  void _navigateToChat(String? category) {
+  void _navigateToChat(String? category, [Map<String, dynamic>? activeIncident]) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => SosChatScreen(
           user: _user,
           initialCategory: category,
+          activeIncident: activeIncident,
         ),
       ),
     ).then((_) => _loadData());
@@ -1129,11 +1231,25 @@ class _HomeScreenState extends State<HomeScreen>
                       MaterialPageRoute(
                         builder: (_) => ProfileScreen(
                           user: _user,
-                          onLogout: () {
-                            _logout();
-                            Navigator.pop(context); // back to home
+                          onLogout: () async {
+                            await ApiService.clearSession();
+                            SocketService.disconnect();
+                            if (!mounted) return;
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(builder: (_) => const LoginScreen()),
+                              (_) => false,
+                            );
                           },
                           onPickImage: _pickProfileImage,
+                          onUserUpdated: (updatedUser) {
+                            setState(() {
+                              _user = updatedUser;
+                              if (updatedUser.mapSettings != null && updatedUser.mapSettings!['map_type'] != null) {
+                                _selectedMapType = updatedUser.mapSettings!['map_type'];
+                              }
+                            });
+                          },
                         ),
                       ),
                     );

@@ -117,6 +117,15 @@ class CommandDashboard {
             this.handleSendBroadcast();
         });
 
+        // Barangay Assistance form
+        const brgyAssistForm = document.getElementById("brgy-assist-form");
+        if (brgyAssistForm) {
+            brgyAssistForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                await this.handleBarangayAssist();
+            });
+        }
+
         // Call overlays Accept/Decline button bindings
         document.getElementById("btn-accept-dash-call").addEventListener("click", () => this.acceptCall());
         document.getElementById("btn-decline-dash-call").addEventListener("click", () => this.declineCall());
@@ -153,6 +162,34 @@ class CommandDashboard {
                 } else {
                     adminChatFile.setAttribute("capture", "environment");
                     adminChatFile.click();
+                }
+            });
+        }
+        
+        const btnBrgyAssist = document.getElementById("btn-brgy-assist");
+        if (btnBrgyAssist) {
+            btnBrgyAssist.addEventListener("click", async () => {
+                const confirmed = confirm("Are you sure you want to request emergency assistance from MDRRMO?");
+                if (!confirmed) return;
+                
+                try {
+                    const res = await fetch("/api/iot/barangay-assist", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            barangay: this.user.barangay,
+                            lat: 16.1114,
+                            lng: 120.5482
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        alert("MDRRMO has been alerted and assistance has been requested.");
+                    } else {
+                        alert("Failed to request assistance: " + data.error);
+                    }
+                } catch(e) {
+                    alert("Network error.");
                 }
             });
         }
@@ -275,6 +312,31 @@ class CommandDashboard {
         setInterval(() => this.updateAnalytics(), 10000);
     }
 
+    filterIncidents(incidentsList) {
+        if (!this.user || !this.user.type) return incidentsList;
+        const role = this.user.type; // bfp_admin, pnp_admin, mdrrmo_admin, barangay_admin
+        const brgy = this.user.barangay;
+
+        return incidentsList.filter(inc => {
+            // Map legacy null assigned_agency based on category
+            let agency = inc.assigned_agency;
+            if (!agency) {
+                const cat = (inc.category || '').toLowerCase();
+                if (cat === 'fire') agency = 'BFP';
+                else if (cat === 'medical' || cat === 'crime' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
+                else if (cat === 'barangay') agency = 'Barangay';
+                else agency = 'MDRRMO';
+            }
+
+            if (role === 'bfp_admin') return agency === 'BFP';
+            if (role === 'pnp_admin') return agency === 'PNP';
+            if (role === 'barangay_admin') return inc.barangay === brgy;
+            if (role === 'mdrrmo_admin') return agency === 'MDRRMO';
+            
+            return true;
+        });
+    }
+
     initSocket() {
         // Handle VS Code Live Server testing ports
         const socketUrl = (window.location.port === '5500' || window.location.port === '5501') 
@@ -291,8 +353,9 @@ class CommandDashboard {
         });
 
         // Load initial state database from backend server
-        this.socket.on('init-state', (db) => {
-            this.incidents = db.incidents;
+        this.socket.on('init-state', async (db) => {
+            // Fetch strictly authorized incidents via API instead of public broadcast
+            await this.fetchAdminIncidents();
 
             this.responders = db.responders;
             this.broadcasts = db.broadcasts;
@@ -304,6 +367,10 @@ class CommandDashboard {
 
         // Live report event
         this.socket.on('new-incident-alert', (report) => {
+            // Check if user is allowed to see this
+            const filtered = this.filterIncidents([report]);
+            if (filtered.length === 0) return;
+
             // Prevent duplicates
             const existingIdx = this.incidents.findIndex(i => i.id === report.id);
             if (existingIdx !== -1) {
@@ -398,6 +465,11 @@ class CommandDashboard {
         });
 
         this.socket.on('incident-updated', (incident) => {
+            const filtered = this.filterIncidents([incident]);
+            if (filtered.length === 0) {
+                // If it was assigned to us before but now isn't, maybe we should remove it? Let's just ignore.
+                return;
+            }
             const idx = this.incidents.findIndex(i => i.id === incident.id);
             if (idx !== -1) {
                 this.incidents[idx] = incident;
@@ -470,6 +542,21 @@ class CommandDashboard {
             }
         });
 
+        this.socket.on('barangay-assistance-request', (req) => {
+            if (this.user.type === 'mdrrmo_admin') {
+                if (!this.assistanceRequests) this.assistanceRequests = [];
+                this.assistanceRequests.unshift(req);
+                this.renderAssistanceRequests();
+                
+                // Show a quick browser notification/alert
+                const navBtn = document.getElementById("nav-btn-assistance-reqs");
+                if (navBtn) {
+                    navBtn.style.animation = "pulse 1s infinite alternate";
+                    setTimeout(() => { navBtn.style.animation = ""; }, 5000);
+                }
+            }
+        });
+
         this.socket.on('responder-updated', (responder) => {
             const idx = this.responders.findIndex(r => r.id === responder.id);
             if (idx !== -1) {
@@ -518,6 +605,74 @@ class CommandDashboard {
             badge.style.borderColor = "rgba(239, 68, 68, 0.15)";
             badge.innerHTML = `<i class="fa-solid fa-cloud-bolt text-danger"></i> Server Offline`;
         }
+    }
+
+    async fetchAdminIncidents() {
+        const token = localStorage.getItem("alerto_admin_token");
+        if (!token) return;
+
+        let endpoint = '';
+        if (this.user.type === 'bfp_admin') endpoint = '/api/bfp/incidents';
+        else if (this.user.type === 'pnp_admin') endpoint = '/api/pnp/incidents';
+        else if (this.user.type === 'mdrrmo_admin') endpoint = '/api/mdrrmo/incidents';
+        else if (this.user.type === 'barangay_admin') endpoint = `/api/barangays/${this.user.barangay}/incidents`;
+
+        if (endpoint) {
+            try {
+                const res = await fetch(endpoint, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.incidents) {
+                    this.incidents = data.incidents;
+                    this.renderAll();
+                }
+            } catch(e) {
+                console.error("Failed to fetch admin incidents", e);
+            }
+        }
+        
+        // MDRRMO only: Fetch assistance requests
+        if (this.user.type === 'mdrrmo_admin') {
+            try {
+                const res = await fetch("/api/mdrrmo/assistance-requests", {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.requests) {
+                    this.assistanceRequests = data.requests;
+                    this.renderAssistanceRequests();
+                }
+            } catch (e) {
+                console.error("Failed to fetch assistance requests", e);
+            }
+        }
+    }
+
+    renderAssistanceRequests() {
+        const tbody = document.getElementById("assistance-tbody");
+        if (!tbody || !this.assistanceRequests) return;
+        
+        if (this.assistanceRequests.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding: 24px">No assistance requests pending.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = this.assistanceRequests.map(req => {
+            const date = new Date(req.created_at || Date.now()).toLocaleString();
+            return `
+                <tr>
+                  <td>${date}</td>
+                  <td><strong>Brgy. ${req.barangay}</strong></td>
+                  <td>${req.requested_by}</td>
+                  <td>${req.description}</td>
+                  <td><span class="status-pill status-${(req.status || 'pending').toLowerCase()}">${req.status || 'Pending'}</span></td>
+                  <td>
+                    <button class="action-btn accept-btn" onclick="alert('Dispatching backup to ${req.barangay}...')">Dispatch Backup</button>
+                  </td>
+                </tr>
+            `;
+        }).join('');
     }
 
     renderAll() {
@@ -1485,6 +1640,48 @@ class CommandDashboard {
         }
     }
 
+    async handleBarangayAssist() {
+        const descInput = document.getElementById("brgy-assist-desc");
+        const description = descInput.value.trim();
+        const token = localStorage.getItem("alerto_admin_token");
+        
+        if (!description || !token) return;
+        
+        try {
+            const btn = document.querySelector("#brgy-assist-form button");
+            const ogText = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...';
+            btn.disabled = true;
+            
+            const res = await fetch("/api/barangay/assistance-request", {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}` 
+                },
+                body: JSON.stringify({
+                    lat: POZORRUBIO_PLAZA.lat, // Can use current map center instead later
+                    lng: POZORRUBIO_PLAZA.lng,
+                    description: description
+                })
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                alert("Emergency Assistance Request sent to MDRRMO.");
+                descInput.value = "";
+            } else {
+                alert("Failed: " + (data.error || "Unknown error"));
+            }
+            
+            btn.innerHTML = ogText;
+            btn.disabled = false;
+        } catch (e) {
+            console.error("Error sending assist request:", e);
+            alert("Network error.");
+        }
+    }
+
     handleSendBroadcast() {
         const title = document.getElementById("broadcast-title").value.trim();
         const category = document.getElementById("broadcast-category").value;
@@ -1601,7 +1798,7 @@ class CommandDashboard {
 
         const counts = { 
             medical: 0, fire: 0, police: 0, barangay: 0,
-            roadside: 0, report: 0
+            roadcrash: 0, report: 0
         };
         this.incidents.forEach(inc => {
             if (counts[inc.category] !== undefined) counts[inc.category]++;
@@ -1931,16 +2128,9 @@ class CommandDashboard {
 
 let commandDashboard;
 document.addEventListener("DOMContentLoaded", () => {
-    // Check if already authenticated
-    if (localStorage.getItem("alerto_admin_auth")) {
-        document.getElementById("auth-gateway").classList.add("hidden");
-        document.getElementById("dash-header").style.display = "flex";
-        document.getElementById("dash-main").style.display = "grid";
-        commandDashboard = new CommandDashboard(JSON.parse(localStorage.getItem("alerto_admin_auth")));
-        window.commandDashboard = commandDashboard;
-    } else {
-        initAuthGateway();
-    }
+    // Always require login (no automatic login via localStorage)
+    localStorage.removeItem("alerto_admin_auth"); // Clear just in case
+    initAuthGateway();
 });
 
 function initAuthGateway() {
@@ -1963,9 +2153,35 @@ function initAuthGateway() {
             });
             const data = await res.json();
             
-            if (data.success && (data.user.type === "authority")) {
+            if (data.success && (["mdrrmo_admin", "bfp_admin", "pnp_admin", "barangay_admin", "authority"].includes(data.user.type))) {
                 localStorage.setItem("alerto_admin_auth", JSON.stringify(data.user));
+                if (data.token) localStorage.setItem("alerto_admin_token", data.token);
                 
+                // Set Header based on role
+                const dashTitle = document.querySelector(".branding-text h1");
+                const dashSub = document.querySelector(".branding-text .subtext");
+                if (data.user.type === 'bfp_admin') dashSub.textContent = "BFP Emergency Panel";
+                if (data.user.type === 'pnp_admin') dashSub.textContent = "PNP Emergency Panel";
+                if (data.user.type === 'barangay_admin') {
+                    dashSub.textContent = `Barangay ${data.user.barangay} Panel`;
+                    // Hide Responders and Broadcasts tab
+                    const respondersTab = document.querySelector(".nav-btn[data-tab='responders']");
+                    const broadcastTab = document.getElementById("nav-btn-broadcast");
+                    if (respondersTab) respondersTab.style.display = 'none';
+                    if (broadcastTab) broadcastTab.style.display = 'none';
+                    
+                    // Show Barangay Assist button
+                    const brgyBtn = document.getElementById("nav-btn-brgy-assist");
+                    if (brgyBtn) brgyBtn.classList.remove("hidden");
+                } else if (data.user.type === 'mdrrmo_admin') {
+                    // Show Barangay Requests button for MDRRMO
+                    const reqsBtn = document.getElementById("nav-btn-assistance-reqs");
+                    if (reqsBtn) reqsBtn.classList.remove("hidden");
+                } else if (data.user.type === 'bfp_admin' || data.user.type === 'pnp_admin') {
+                    const broadcastTab = document.getElementById("nav-btn-broadcast");
+                    if (broadcastTab) broadcastTab.style.display = 'none';
+                }
+
                 // Hide gateway and show dashboard
                 document.getElementById("auth-gateway").classList.add("hidden");
                 document.getElementById("dash-header").style.display = "flex";

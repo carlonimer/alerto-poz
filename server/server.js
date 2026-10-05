@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { initDatabase: initializeTables } = require('./database/init');
+const { generateToken, verifyAdmin } = require('./middleware/auth.js');
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -97,6 +98,7 @@ const io = socketIo(server, {
         methods: ["GET", "POST"]
     }
 });
+app.set('io', io);
 
 // MySQL Database Credentials Configuration
 const dbConfig = {
@@ -335,9 +337,35 @@ async function addIncident(report) {
             if (u.length > 0 && u[0].phone) report.reporterPhone = u[0].phone;
         }
 
+        // Determine assigned agency based on category
+        let assigned_agency = 'MDRRMO'; // default
+        if (report.category) {
+            const cat = report.category.toLowerCase();
+            if (cat === 'fire') {
+                assigned_agency = 'BFP';
+            } else if (cat === 'medical' || cat === 'crime' || cat === 'roadcrash' || cat === 'road_crash') {
+                assigned_agency = 'PNP';
+            } else if (cat === 'barangay' || cat === 'flooding') {
+                // If the user selected BARANGAY flow or Flooding in barangay context
+                assigned_agency = 'Barangay';
+                
+                // If we also have Flooding mapped to MDRRMO globally:
+                // Actually, the spec says "Flooding -> LDRRMC/MDRRMO". But if resident selects BARANGAY -> FLOODING, it goes to Barangay.
+                // The frontend will send the exact category. We'll map 'barangay' category to 'Barangay'.
+                if (cat === 'flooding') {
+                    // Let's keep it MDRRMO if reported from main screen, but if from Barangay flow, the frontend should maybe pass something else.
+                    // If frontend just sends 'barangay' for the barangay flow:
+                    assigned_agency = 'MDRRMO'; 
+                }
+            } else if (cat === 'barangay') {
+                assigned_agency = 'Barangay';
+            }
+        }
+        report.assigned_agency = assigned_agency;
+
         await pool.query(
-            "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress)",
-            [report.id, report.category, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null]
+            "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
+            [report.id, report.category, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null, report.assigned_agency]
         );
     } else {
         const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
@@ -422,6 +450,36 @@ app.get('/api/db-state', async (req, res) => {
     try {
         const state = await getDBState();
         res.json(state);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Register RBAC APIs ---
+require('./routes_rbac.js')(app, getDBState, pool, useMySQL);
+
+app.get('/api/incidents', async (req, res) => {
+    try {
+        const state = await getDBState();
+        res.json({ incidents: state.incidents });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/responders', async (req, res) => {
+    try {
+        const state = await getDBState();
+        res.json({ responders: state.responders });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/broadcasts', async (req, res) => {
+    try {
+        const state = await getDBState();
+        res.json({ broadcasts: state.broadcasts });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -1357,21 +1415,99 @@ app.post('/api/auth/admin-login', async (req, res) => {
         if (!username || !password) return res.status(400).json({ error: "Username and password required." });
 
         if (useMySQL) {
-            const [rows] = await pool.query("SELECT * FROM users WHERE email = ? AND type = 'authority'", [username]);
+            const [rows] = await pool.query("SELECT * FROM users WHERE email = ? AND type IN ('mdrrmo_admin', 'bfp_admin', 'pnp_admin', 'barangay_admin')", [username]);
             if (rows.length === 0) return res.status(401).json({ error: "Invalid credentials." });
             const user = rows[0];
             const isMatch = bcrypt.compareSync(password, user.password);
             if (!isMatch) return res.status(401).json({ error: "Invalid credentials." });
             
             // Bypass OTP for admin panel
-            res.json({ success: true, user: { id: user.id, name: user.name, type: user.type, active: user.active, barangay: user.barangay } });
+            const token = generateToken(user);
+            res.json({ success: true, token, user: { id: user.id, name: user.name, type: user.type, active: user.active, barangay: user.barangay } });
         } else {
-            res.status(500).json({ error: "MySQL required for admin operations." });
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            const user = db.users.find(u => u.email === username && ['mdrrmo_admin', 'bfp_admin', 'pnp_admin', 'barangay_admin', 'authority'].includes(u.type));
+            if (!user) return res.status(401).json({ error: "Invalid credentials." });
+            const isMatch = bcrypt.compareSync(password, user.password);
+            if (!isMatch) return res.status(401).json({ error: "Invalid credentials." });
+            
+            const token = generateToken(user);
+            res.json({ success: true, token, user: { id: user.id, name: user.name, type: user.type, active: user.active, barangay: user.barangay } });
         }
     } catch(e) {
         res.status(500).json({ error: e.message });
     }
 });
+
+// ==========================================
+// IOT PUSH BUTTON SYSTEM API
+// ==========================================
+
+app.post('/api/iot/town-alert', async (req, res) => {
+    try {
+        const { type } = req.body; // 'white', 'blue', 'red'
+        if (!['white', 'blue', 'red'].includes(type)) return res.status(400).json({error: "Invalid alert type"});
+        
+        let message = '';
+        if (type === 'white') message = 'Normal Weather';
+        if (type === 'blue') message = 'Alert: Prepare for weather disturbance.';
+        if (type === 'red') message = 'EXTREME WARNING: Seek higher ground immediately!';
+        
+        // Broadcast town-wide alert
+        const broadcast = {
+            id: 'IOT-ALERT-' + Date.now(),
+            level: type,
+            message: message,
+            timestamp: Date.now()
+        };
+        
+        if (useMySQL) {
+            await pool.query("INSERT INTO broadcasts (title, message, created_at) VALUES (?, ?, ?)", ["TOWN ALERT", message, Date.now()]);
+        }
+        
+        io.emit('push-broadcast', broadcast);
+        res.json({ success: true, alert: broadcast });
+    } catch(e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/iot/barangay-assist', async (req, res) => {
+    try {
+        const { barangay, lat, lng } = req.body;
+        if (!barangay) return res.status(400).json({error: "Barangay identifier required"});
+
+        // Create incident for MDRRMO
+        const incidentId = await generateUniqueTicketNumber();
+        const report = {
+            id: incidentId,
+            category: 'other',
+            details: `Emergency Assistance Requested by Barangay ${barangay}`,
+            lat: lat || 16.1114,
+            lng: lng || 120.5482,
+            reporter: `Barangay ${barangay} Admin`,
+            reporterPhone: 'IOT-BUTTON',
+            createdAt: Date.now(),
+            networkReceivedAt: Date.now(),
+            barangay: barangay,
+            status: 'pending',
+            assigned_agency: 'MDRRMO'
+        };
+
+        await addIncident(report);
+        
+        // Broadcast to Dashboard
+        io.emit('new-incident-alert', report);
+
+        // Also broadcast a localized warning to residents of that barangay
+        io.emit('barangay-local-alert', { barangay: barangay, message: "Emergency assistance requested in your barangay." });
+
+        res.json({ success: true, incidentId: incidentId });
+    } catch(e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 
 app.post('/api/responders', async (req, res) => {
     try {

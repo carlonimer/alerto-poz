@@ -431,7 +431,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Future<void> _cancelIncident() async {
     if (_incidentId == null) return;
     try {
-      await ApiService.cancelIncident(_incidentId!);
+      await ApiService.cancelIncident(
+        _incidentId!,
+        userId: widget.user?.id.toString() ?? '',
+        phone: widget.user?.phone ?? '',
+      );
       if (mounted) {
         setState(() {
           _cancelled = true;
@@ -591,24 +595,66 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       );
     }
 
+  Widget _buildAlertopozAvatar() {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          const Icon(Icons.support_agent, color: Color(0xFF003366), size: 22),
+          Positioned(
+            top: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE5004F),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'SOS',
+                style: GoogleFonts.outfit(
+                  color: Colors.white,
+                  fontSize: 7,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
     if (type == 'system') {
       return Padding(
         padding: const EdgeInsets.only(bottom: 16),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            isUser ? const SizedBox(width: 32) : const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+            isUser ? const SizedBox(width: 32) : _buildAlertopozAvatar(),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                 children: [
-                  if (!isUser) Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.black)),
+                  if (!isUser) Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
                   Container(
                     margin: const EdgeInsets.only(top: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
-                      color: isUser ? const Color(0xFF01579B) : const Color(0xFF9BAFB9).withValues(alpha: 0.8),
+                      color: isUser ? const Color(0xFF01579B) : const Color(0xFFA1B5C3),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Column(
@@ -637,13 +683,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+            _buildAlertopozAvatar(),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 13, color: Colors.black)),
+                  Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
                   Container(
                     margin: const EdgeInsets.only(top: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -684,28 +730,33 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!isUser) const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.support_agent, color: Color(0xFFD32F2F), size: 20)),
+          if (!isUser) _buildAlertopozAvatar(),
           if (!isUser) const SizedBox(width: 8),
           Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isUser ? const Color(0xFF0066CC) : const Color(0xFFB0C4DE),
-                borderRadius: BorderRadius.only(
-                  topLeft: isUser ? const Radius.circular(18) : const Radius.circular(4),
-                  topRight: isUser ? const Radius.circular(4) : const Radius.circular(18),
-                  bottomLeft: const Radius.circular(18),
-                  bottomRight: const Radius.circular(18),
+            child: Column(
+              crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                if (!isUser) 
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4, left: 4),
+                    child: Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
+                  ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isUser ? const Color(0xFF0066CC) : const Color(0xFFA1B5C3),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                    children: [
+                      Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : Colors.black87, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
+                    ],
+                  ),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : const Color(0xFF0B1E36), fontSize: 14)),
-                  const SizedBox(height: 4),
-                  Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
-                ],
-              ),
+              ],
             ),
           ),
           if (isUser) const SizedBox(width: 8),
@@ -810,8 +861,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.app',
+                  urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                  userAgentPackageName: 'com.alertopoz.app',
                 ),
                 if (_currentPos != null)
                   MarkerLayer(

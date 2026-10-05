@@ -104,25 +104,11 @@ class _AuthGateState extends State<AuthGate> {
     final token = prefs.getString('auth_token');
     
     if (token != null && token.isNotEmpty) {
-      try {
-        final res = await ApiService.validateSession();
-        if (res['success'] == true) {
-          setState(() {
-            _isLoggedIn = true;
-            _loading = false;
-          });
-          return;
-        } else {
-          await ApiService.clearSession();
-        }
-      } catch (e) {
-        // Fallback for offline mode
-        setState(() {
-          _isLoggedIn = true;
-          _loading = false;
-        });
-        return;
-      }
+      setState(() {
+        _isLoggedIn = true;
+        _loading = false;
+      });
+      return;
     }
     
     setState(() {

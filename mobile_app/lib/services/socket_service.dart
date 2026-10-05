@@ -62,12 +62,14 @@ class SocketService {
   /// Emit with acknowledgement callback — used for SOS report to get real ticket ID
   /// Web equivalent: socket.emit('citizen-sos-report', payload, (response) => { ... })
   static void emitWithAck(String event, dynamic data, Function(dynamic) ack) {
-    _socket?.emitWithAck(event, data).then((response) {
-      ack(response);
-    }).catchError((e) {
+    try {
+      _socket?.emitWithAck(event, data, ack: (response) {
+        ack(response);
+      });
+    } catch (e) {
       debugPrint('[Socket] emitWithAck error: $e');
       ack(null);
-    });
+    }
   }
 
   static void disconnect() {
