@@ -43,12 +43,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   String _currentAddress = 'Locating...';
 
   static const List<Map<String, dynamic>> _categories = [
-    {'key': 'medical', 'label': 'Medical', 'icon': Icons.local_hospital_rounded, 'color': Colors.red},
-    {'key': 'fire', 'label': 'Fire', 'icon': Icons.local_fire_department_rounded, 'color': Colors.orange},
-    {'key': 'crime', 'label': 'Crime', 'icon': Icons.local_police_rounded, 'color': Colors.blue},
-    {'key': 'natural', 'label': 'Natural', 'icon': Icons.storm_rounded, 'color': Colors.teal},
-    {'key': 'utility', 'label': 'Utility', 'icon': Icons.power_off_rounded, 'color': Colors.purple},
-    {'key': 'other', 'label': 'Other', 'icon': Icons.warning_rounded, 'color': Color(0xFF424242)},
+    {'key': 'medical', 'label': 'MEDICAL', 'icon': Icons.local_hospital_rounded},
+    {'key': 'fire', 'label': 'FIRE', 'icon': Icons.local_fire_department_rounded},
+    {'key': 'police', 'label': 'POLICE', 'icon': Icons.shield_rounded},
+    {'key': 'barangay', 'label': 'BARANGAY', 'icon': Icons.house_rounded},
+    {'key': 'road_crash', 'label': 'ROAD CRASH', 'icon': Icons.car_crash_rounded},
+    {'key': 'report', 'label': 'REPORT', 'icon': Icons.error_rounded},
   ];
 
   @override
@@ -572,6 +572,53 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     return '${months[d.month - 1]} ${d.day}, ${d.year} ${hr.toString().padLeft(2, '0')}:$min $ampm';
   }
 
+  Widget _buildCategoryGrid() {
+    return Container(
+      margin: const EdgeInsets.only(left: 32, right: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Wrap(
+        spacing: 24,
+        runSpacing: 24,
+        children: _categories.map((cat) {
+          return GestureDetector(
+            onTap: () => _selectCategory(cat['key'] as String, cat['label'] as String),
+            child: SizedBox(
+              width: 60,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF0F4F8),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(cat['icon'] as IconData, color: Colors.black87, size: 26),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    cat['label'] as String,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.outfit(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildChatBubble(Map<String, dynamic> msg) {
     final isUser = msg['role'] == 'user';
     final type = msg['type'] as String;
@@ -595,7 +642,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       );
     }
 
-  Widget _buildAlertopozAvatar() {
+  Widget buildAlertopozAvatar() {
     return Container(
       width: 32,
       height: 32,
@@ -643,7 +690,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            isUser ? const SizedBox(width: 32) : _buildAlertopozAvatar(),
+            isUser ? const SizedBox(width: 32) : buildAlertopozAvatar(),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -683,7 +730,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildAlertopozAvatar(),
+            buildAlertopozAvatar(),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -730,7 +777,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!isUser) _buildAlertopozAvatar(),
+          if (!isUser) buildAlertopozAvatar(),
           if (!isUser) const SizedBox(width: 8),
           Flexible(
             child: Column(
@@ -772,10 +819,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.home_outlined, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
         title: Row(
           children: [
             Text('Alerto-poz ', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
@@ -808,7 +852,29 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         actions: [
           IconButton(icon: const Icon(Icons.phone, color: Colors.grey), onPressed: () {}),
           IconButton(icon: const Icon(Icons.videocam, color: Colors.grey), onPressed: () {}),
-          IconButton(icon: const Icon(Icons.more_vert, color: Colors.grey), onPressed: () {}),
+          if (_sent && !_cancelled)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.grey),
+              onSelected: (value) {
+                if (value == 'close') {
+                  _showCloseIncidentDialog();
+                }
+              },
+              itemBuilder: (BuildContext context) => [
+                PopupMenuItem<String>(
+                  value: 'close',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.cancel, color: Colors.red, size: 20),
+                      const SizedBox(width: 8),
+                      Text('Close Incident', style: GoogleFonts.outfit(color: Colors.red, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          else
+            IconButton(icon: const Icon(Icons.more_vert, color: Colors.grey), onPressed: () {}),
         ],
       ),
       body: Column(
@@ -824,15 +890,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 Expanded(
                   child: Text(_currentAddress, style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
-                if (_sent && !_cancelled)
-                  GestureDetector(
-                    onTap: _showCloseIncidentDialog,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      decoration: BoxDecoration(color: const Color(0xFFF44336), borderRadius: BorderRadius.circular(16)),
-                      child: Text('Close Incident', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                    ),
-                  ),
                 const SizedBox(width: 12),
                 GestureDetector(
                   onTapDown: (details) => _showLayersMenu(context, details.globalPosition),
@@ -920,7 +977,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               padding: const EdgeInsets.all(16),
               children: [
                 ..._chatFeed.map((msg) => _buildChatBubble(msg)),
-                // if (!_sent && !_cancelled) _buildCategoryGrid(),
+                if (!_sent && !_cancelled) _buildCategoryGrid(),
                 const SizedBox(height: 20),
               ],
             ),

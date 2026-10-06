@@ -808,6 +808,29 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// Helper function to format user consistently
+function formatUserObject(user) {
+    if (!user) return null;
+    return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        type: user.type,
+        hasPasscode: !!(user.passcode && user.passcode !== "null" && user.passcode !== "undefined" && user.passcode !== ""),
+        profile_image: user.profile_image,
+        first_name: user.first_name,
+        middle_name: user.middle_name,
+        last_name: user.last_name,
+        suffix: user.suffix,
+        birthdate: user.birthdate,
+        gender: user.gender,
+        address: user.address,
+        barangay: user.barangay,
+        active: user.active
+    };
+}
+
 // 3. Verify OTP Code
 app.post('/api/auth/verify-otp', async (req, res) => {
     try {
@@ -871,24 +894,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
         // Return a mock authentication session token
         res.json({
             success: true,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
-                type: user.type,
-                hasPasscode: !!user.passcode,
-                profile_image: user.profile_image,
-                first_name: user.first_name,
-                middle_name: user.middle_name,
-                last_name: user.last_name,
-                suffix: user.suffix,
-                birthdate: user.birthdate,
-                gender: user.gender,
-                address: user.address,
-                barangay: user.barangay,
-                active: user.active
-            },
+            user: formatUserObject(user),
             token: `alerto-session-${user.id}-${Date.now()}`,
             reset_token: resetToken
         });
@@ -928,24 +934,7 @@ app.post('/api/auth/validate', async (req, res) => {
 
         res.json({
             valid: true,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
-                type: user.type,
-                hasPasscode: !!user.passcode,
-                profile_image: user.profile_image,
-                first_name: user.first_name,
-                middle_name: user.middle_name,
-                last_name: user.last_name,
-                suffix: user.suffix,
-                birthdate: user.birthdate,
-                gender: user.gender,
-                address: user.address,
-                barangay: user.barangay,
-                active: user.active
-            }
+            user: formatUserObject(user)
         });
     } catch (e) {
         res.status(500).json({ valid: false, error: e.message });
@@ -1165,9 +1154,10 @@ app.post('/api/user/profile', async (req, res) => {
             }
         }
         
-        io.emit('profile-updated', updatedUser || { id });
+        const formattedUser = formatUserObject(updatedUser) || { id };
+        io.emit('profile-updated', formattedUser);
         
-        res.json({ success: true, user: updatedUser });
+        res.json({ success: true, user: formattedUser });
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/user/passcode', async (req, res) => {
@@ -1313,9 +1303,8 @@ app.post('/api/user/profile-picture', uploadProfile.single('profile_image'), asy
             await logActivity(id, "Updated profile picture", req);
             
             const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
-            const updatedUser = rows[0];
-            if(updatedUser) delete updatedUser.password;
-            io.emit('profile-updated', updatedUser || { id });
+            const formattedUser = formatUserObject(rows[0]);
+            io.emit('profile-updated', formattedUser || { id });
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
             const u = db.users.find(x => x.id == id);
@@ -1325,9 +1314,8 @@ app.post('/api/user/profile-picture', uploadProfile.single('profile_image'), asy
                 u.updated_at = Date.now();
                 fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
                 await logActivity(id, "Updated profile picture", req);
-                const updatedUser = { ...u };
-                delete updatedUser.password;
-                io.emit('profile-updated', updatedUser);
+                const formattedUser = formatUserObject(u);
+                io.emit('profile-updated', formattedUser);
             }
         }
         res.json({ success: true, url: relativePath });
