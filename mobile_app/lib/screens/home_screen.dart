@@ -49,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   // Map settings
   String _selectedMapType = 'default';
+  bool _showMapTypeMenu = false;
 
   static const LatLng _pozCenter = LatLng(16.1086, 120.5424);
 
@@ -750,7 +751,7 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const Spacer(),
               GestureDetector(
-                onTap: _showMapTypeBottomSheet,
+                onTap: () => setState(() => _showMapTypeMenu = !_showMapTypeMenu),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -768,9 +769,15 @@ class _HomeScreenState extends State<HomeScreen>
                   child: const Icon(Icons.layers, color: Colors.black87, size: 20),
                 ),
               ),
-            ],
           ),
         ),
+        // Map Type Popup Menu
+        if (_showMapTypeMenu)
+          Positioned(
+            top: (_showBroadcastBanner && _latestBroadcast != null) ? 204 : 120,
+            right: 16,
+            child: _buildMapTypePopup(),
+          ),
         // Broadcast banner
         if (_showBroadcastBanner && _latestBroadcast != null)
           Positioned(
@@ -901,112 +908,113 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _showMapTypeBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateSheet) {
-            Widget buildType(String type, String title, String tileUrl) {
-              final isSelected = _selectedMapType == type;
-              return GestureDetector(
-                onTap: () async {
-                  setState(() => _selectedMapType = type);
-                  setStateSheet(() {});
-                  // Save to API asynchronously
-                  if (_user != null) {
-                    try {
-                      final settings = Map<String, dynamic>.from(_user!.mapSettings ?? {});
-                      settings['map_type'] = type;
-                      final res = await ApiService.saveMapSettings({
-                        'user_id': _user!.id,
-                        ...settings,
-                      });
-                      if (res['success'] == true) {
-                        _user = _user!.copyWith(mapSettings: settings);
-                      }
-                    } catch (e) {
-                      debugPrint('Failed to save map type: $e');
-                    }
-                  }
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 80,
-                      height: 80,
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        border: isSelected ? Border.all(color: Colors.blue, width: 2) : Border.all(color: Colors.transparent, width: 2),
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          image: DecorationImage(
-                            image: NetworkImage(tileUrl),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      title,
-                      style: GoogleFonts.outfit(
-                        fontSize: 13,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                        color: isSelected ? Colors.blue : Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              );
+  Widget _buildMapTypePopup() {
+    Widget buildType(String type, String title, String tileUrl) {
+      final isSelected = _selectedMapType == type;
+      return GestureDetector(
+        onTap: () async {
+          setState(() {
+            _selectedMapType = type;
+            _showMapTypeMenu = false; // close the menu after selecting
+          });
+          // Save to API asynchronously
+          if (_user != null) {
+            try {
+              final settings = Map<String, dynamic>.from(_user!.mapSettings ?? {});
+              settings['map_type'] = type;
+              final res = await ApiService.saveMapSettings({
+                'user_id': _user!.id,
+                ...settings,
+              });
+              if (res['success'] == true) {
+                _user = _user!.copyWith(mapSettings: settings);
+              }
+            } catch (e) {
+              debugPrint('Failed to save map type: $e');
             }
+          }
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 70, // Slightly smaller for popup
+              height: 70,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: isSelected ? Border.all(color: Colors.blue, width: 2) : Border.all(color: Colors.transparent, width: 2),
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  image: DecorationImage(
+                    image: NetworkImage(tileUrl),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              style: GoogleFonts.outfit(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected ? Colors.blue : Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
-            return Container(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    return Container(
+      width: 280, // A fixed width for the popup
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Map Type',
+                style: GoogleFonts.outfit(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Map Type',
-                        style: GoogleFonts.outfit(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: Icon(Icons.close, color: Colors.grey[400], size: 24),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      buildType('default', 'Default', 'https://mt1.google.com/vt/lyrs=m&x=3421&y=1865&z=12'),
-                      buildType('satellite', 'Satellite', 'https://mt1.google.com/vt/lyrs=s&x=3421&y=1865&z=12'),
-                      buildType('terrain', 'Terrain', 'https://mt1.google.com/vt/lyrs=p&x=3421&y=1865&z=12'),
-                    ],
-                  ),
-                ],
+              GestureDetector(
+                onTap: () => setState(() => _showMapTypeMenu = false),
+                child: Icon(Icons.close, color: Colors.grey[400], size: 20),
               ),
-            );
-          },
-        );
-      },
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              buildType('default', 'Default', 'https://mt1.google.com/vt/lyrs=m&x=3421&y=1865&z=12'),
+              buildType('satellite', 'Satellite', 'https://mt1.google.com/vt/lyrs=s&x=3421&y=1865&z=12'),
+              buildType('terrain', 'Terrain', 'https://mt1.google.com/vt/lyrs=p&x=3421&y=1865&z=12'),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
