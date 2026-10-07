@@ -769,15 +769,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       scrolledUnderElevation: 0,
       toolbarHeight: 64,
       automaticallyImplyLeading: false,
-      leadingWidth: 44,
-      titleSpacing: canPop ? 0 : 16,
-      leading: canPop
-          ? IconButton(
-              tooltip: 'Back',
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: _C.inkSoft),
-              onPressed: () => Navigator.maybePop(context),
-            )
-          : null,
+      titleSpacing: 16,
       title: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
