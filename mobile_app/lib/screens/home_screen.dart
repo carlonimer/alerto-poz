@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -31,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<dynamic> _responders = [];
   List<dynamic> _broadcasts = [];
   LatLng? _myLocation;
+  String _currentAddress = 'Locating...';
   bool _showBroadcastBanner = false;
   Map<String, dynamic>? _latestBroadcast;
 
@@ -188,12 +191,46 @@ class _HomeScreenState extends State<HomeScreen>
     if (pos != null) {
       setState(() {
         _myLocation = LatLng(pos.latitude, pos.longitude);
+        _currentAddress = 'Locating...';
       });
       _animatedMapMove(_myLocation!, 17);
+      _resolveAddress(pos.latitude, pos.longitude);
     } else {
+      setState(() {
+        _currentAddress = 'Location permissions denied';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not fetch location. Please enable GPS.')),
       );
+    }
+  }
+
+  Future<void> _resolveAddress(double lat, double lng) async {
+    try {
+      final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
+      final res = await http.get(uri, headers: {'User-Agent': 'com.alertopoz.app', 'Accept-Language': 'en'}).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) {
+        if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
+        return;
+      }
+      final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
+      var barangay = addr['village'] ?? addr['suburb'] ?? addr['quarter'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['city_district'] ?? '';
+      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? '';
+      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? '';
+      var brgyStr = barangay.toString();
+      if (brgyStr.toLowerCase().startsWith('barangay ')) brgyStr = brgyStr.substring(9).trim();
+      final parts = <String>[];
+      if (brgyStr.isNotEmpty) parts.add(brgyStr);
+      if (town.toString().isNotEmpty) parts.add(town.toString());
+      if (province.toString().isNotEmpty) parts.add(province.toString());
+      
+      if (parts.isNotEmpty && mounted) {
+        setState(() => _currentAddress = parts.join(', '));
+      } else if (mounted) {
+        setState(() => _currentAddress = 'Unknown Location');
+      }
+    } catch (_) {
+      if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
     }
   }
 
@@ -618,7 +655,7 @@ class _HomeScreenState extends State<HomeScreen>
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    '16.1160, 120.5615 (Pozorrubio, PG)',
+                    _currentAddress,
                     style: GoogleFonts.outfit(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
@@ -796,7 +833,7 @@ class _HomeScreenState extends State<HomeScreen>
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Image.asset('assets/logo.png', width: 28, height: 28, color: Colors.white),
+                            const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 30),
                             const SizedBox(height: 2),
                             Text(
                               'SOS',

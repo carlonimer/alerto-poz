@@ -2102,6 +2102,11 @@ class CitizenMobileClient {
                 },
                 (err) => {
                     console.warn("GPS Watch Error: ", err);
+                    if (err.code === err.PERMISSION_DENIED) {
+                        this.addressSearchInput.value = "Location permissions denied";
+                    } else if (this.addressSearchInput.value === "Locating...") {
+                        this.addressSearchInput.value = "Unknown Location";
+                    }
                 },
                 { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
             );
@@ -2113,8 +2118,10 @@ class CitizenMobileClient {
             lng >= GEOFENCE.minLng && lng <= GEOFENCE.maxLng);
     }
 
-    syncGPSUI() {
-        this.addressSearchInput.value = `📍 ${this.gps.lat.toFixed(4)}, ${this.gps.lng.toFixed(4)} (Pozorrubio, PG)`;
+    async syncGPSUI() {
+        if (!this.addressSearchInput.value || this.addressSearchInput.value.includes("📍") || this.addressSearchInput.value.includes("16.1")) {
+            this.addressSearchInput.value = "Locating...";
+        }
 
         if (this.homeMap && this.homeUserMarker) {
             this.homeUserMarker.setLatLng(this.gps);
@@ -2122,6 +2129,43 @@ class CitizenMobileClient {
 
         if (this.consoleMap && this.consoleUserMarker) {
             this.consoleUserMarker.setLatLng(this.gps);
+        }
+
+        const currentLatStr = this.gps.lat.toFixed(4);
+        const currentLngStr = this.gps.lng.toFixed(4);
+        const locKey = `${currentLatStr},${currentLngStr}`;
+        if (this._lastSyncLocKey === locKey) return;
+        this._lastSyncLocKey = locKey;
+
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${this.gps.lat}&lon=${this.gps.lng}&zoom=18&addressdetails=1`, {
+                headers: { 'Accept-Language': 'en' }
+            });
+            if (!res.ok) throw new Error("Reverse geocoding failed");
+            const data = await res.json();
+            const addr = data.address || {};
+            const barangay = addr.village || addr.suburb || addr.quarter || addr.hamlet || addr.neighbourhood || addr.city_district || "";
+            const town = addr.town || addr.municipality || addr.city || addr.county || "";
+            const province = addr.province || addr.state || addr.region || "";
+
+            let brgyStr = barangay.toString().trim();
+            if (brgyStr.toLowerCase().startsWith("barangay ")) {
+                brgyStr = brgyStr.substring(9).trim();
+            }
+
+            const parts = [];
+            if (brgyStr) parts.push(brgyStr);
+            if (town) parts.push(town);
+            if (province) parts.push(province);
+
+            if (parts.length > 0) {
+                this.addressSearchInput.value = parts.join(", ");
+            } else {
+                this.addressSearchInput.value = "Unknown Location";
+            }
+        } catch (err) {
+            console.error("Reverse geocoding error:", err);
+            this.addressSearchInput.value = "Unknown Location";
         }
     }
 

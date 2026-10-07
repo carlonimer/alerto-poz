@@ -193,12 +193,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (pos != null) {
       setState(() {
         _currentPos = pos;
-        _currentAddress = _fallbackAddress;
+        _currentAddress = 'Locating...';
       });
       _moveMap(LatLng(pos.latitude, pos.longitude), 15.0);
       _resolveAddress(pos.latitude, pos.longitude);
     } else if (_incidentPos != null) {
-      setState(() => _currentAddress = _fallbackAddress);
+      setState(() => _currentAddress = 'Locating...');
       _moveMap(_incidentPos!, 15.0);
       _resolveAddress(_incidentPos!.latitude, _incidentPos!.longitude);
     } else {
@@ -206,24 +206,42 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  /// Best-effort reverse geocode to "Barangay, Town, Province". Keeps the
-  /// fallback address if the lookup fails or the device is offline.
+  /// Best-effort reverse geocode to "Barangay, Town, Province".
   Future<void> _resolveAddress(double lat, double lng) async {
     try {
       final uri = Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=16&addressdetails=1');
+          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
       final res = await http
           .get(uri, headers: {'User-Agent': 'com.alertopoz.app', 'Accept-Language': 'en'})
           .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) return;
+      if (res.statusCode != 200) {
+         if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
+         return;
+      }
       final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
-      final parts = <dynamic>[
-        addr['village'] ?? addr['suburb'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['quarter'],
-        addr['town'] ?? addr['municipality'] ?? addr['city'],
-        addr['province'] ?? addr['state'],
-      ].whereType<String>().where((s) => s.isNotEmpty).toList();
-      if (parts.isNotEmpty && mounted) setState(() => _currentAddress = parts.join(', '));
-    } catch (_) {}
+      
+      var barangay = addr['village'] ?? addr['suburb'] ?? addr['quarter'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['city_district'] ?? '';
+      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? '';
+      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? '';
+
+      var brgyStr = barangay.toString();
+      if (brgyStr.toLowerCase().startsWith('barangay ')) {
+        brgyStr = brgyStr.substring(9).trim();
+      }
+
+      final parts = <String>[];
+      if (brgyStr.isNotEmpty) parts.add(brgyStr);
+      if (town.toString().isNotEmpty) parts.add(town.toString());
+      if (province.toString().isNotEmpty) parts.add(province.toString());
+      
+      if (parts.isNotEmpty && mounted) {
+        setState(() => _currentAddress = parts.join(', '));
+      } else if (mounted) {
+        setState(() => _currentAddress = 'Unknown Location');
+      }
+    } catch (_) {
+      if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
+    }
   }
 
   void _moveMap(LatLng target, double zoom) {
@@ -271,7 +289,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         });
         _scrollToBottom();
       }
-    } catch (e) {}
+    } catch (e) {/* best-effort: ignore network errors */}
   }
 
   void _scrollToBottom() {
@@ -358,7 +376,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           {'senderId': widget.user?.id, 'content': 'Image Attachment'},
           mediaPath: path,
         );
-      } catch (e) {}
+      } catch (e) {/* best-effort: ignore network errors */}
     }
   }
 
@@ -451,7 +469,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'senderId': widget.user?.id,
           'content': txt,
         });
-      } catch (e) {}
+      } catch (e) {/* best-effort: ignore network errors */}
     }
   }
 
@@ -481,7 +499,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         });
         _scrollToBottom();
       }
-    } catch (e) {}
+    } catch (e) {/* best-effort: ignore network errors */}
   }
 
   void _openCall({required bool video}) {
