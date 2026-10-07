@@ -894,20 +894,10 @@ class CommandDashboard {
                     });
                     marker.setIcon(locIcon);
                     
-                    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${inc.lat}&lon=${inc.lng}&zoom=18&addressdetails=1`)
+                    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${inc.lat}&lon=${inc.lng}`)
                         .then(res => res.json())
                         .then(data => {
-                            const addr = data.address || {};
-                            let brgy = addr.village || addr.suburb || addr.quarter || addr.hamlet || addr.neighbourhood || addr.city_district || "";
-                            let town = addr.town || addr.municipality || addr.city || addr.county || "";
-                            let prov = addr.province || addr.state || addr.region || "";
-
-                            if (brgy.toLowerCase().startsWith("barangay ")) {
-                                brgy = brgy.substring(9).trim();
-                            }
-
-                            const parts = [brgy, town, prov].filter(p => p !== "");
-                            const address = parts.length > 0 ? parts.join(", ") : "Unknown Location";
+                            const address = data.display_name || "Unknown Location";
                             
                             marker.bindPopup(`
                                 <div style="max-width: 250px; white-space: normal; text-align: center; font-family: 'Inter', sans-serif; padding: 5px;">
