@@ -402,24 +402,48 @@ class _HomeScreenState extends State<HomeScreen>
                       color: Colors.blue.withValues(alpha: (1.0 - _pulseAnimation.value) * 0.1),
                     ),
                   ),
-                  // Inner logo instead of solid dot
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
+                  // Inner map pin with profile picture
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Stack(
+                      alignment: Alignment.topCenter,
+                      children: [
+                        const Icon(
+                          Icons.location_on,
+                          color: Color(0xFFF44336),
+                          size: 48,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black38,
+                              blurRadius: 6,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          top: 6,
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white,
+                              image: DecorationImage(
+                                image: _user != null && _user!.profileImage.isNotEmpty
+                                    ? (_user!.profileImage.startsWith('data:image')
+                                        ? MemoryImage(base64Decode(_user!.profileImage.split(',').last)) as ImageProvider
+                                        : NetworkImage(
+                                            _user!.profileImage.startsWith('http') 
+                                                ? _user!.profileImage 
+                                                : '${ApiService.baseUrl}${_user!.profileImage.startsWith('/') ? '' : '/'}${_user!.profileImage}'))
+                                    : const AssetImage('assets/logo.png'),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
                         ),
                       ],
-                      image: const DecorationImage(
-                        image: AssetImage('assets/logo.png'),
-                        fit: BoxFit.cover,
-                      ),
                     ),
                   ),
                 ],

@@ -2245,10 +2245,22 @@ class CitizenMobileClient {
             else o.classList.remove("active");
         });
 
+        const profileImg = (this.activeUser && this.activeUser.profile_image) 
+            ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`)
+            : '/public/logo.png';
+
+        const pinHtml = `
+            <div style="position: relative; width: 48px; height: 48px; display: flex; justify-content: center; align-items: flex-start;">
+                <i class="fa-solid fa-location-dot" style="color: #ef4444; font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.4));"></i>
+                <img src="${profileImg}" style="position: absolute; top: 6px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+            </div>
+        `;
+
         const citizenDivIcon = L.divIcon({
             className: 'citizen-marker-home',
-            html: '<div style="background-color:#0066cc; width:16px; height:16px; border:2.5px solid #fff; border-radius:50%; box-shadow:0 0 10px rgba(0,102,204,0.6);"></div>',
-            iconSize: [16, 16]
+            html: pinHtml,
+            iconSize: [48, 48],
+            iconAnchor: [24, 48]
         });
 
         this.homeUserMarker = L.marker([this.gps.lat, this.gps.lng], {
@@ -2302,10 +2314,22 @@ class CitizenMobileClient {
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(this.consoleMap);
 
+            const profileImg = (this.activeUser && this.activeUser.profile_image) 
+                ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`)
+                : '/public/logo.png';
+
+            const pinHtml = `
+                <div style="position: relative; width: 48px; height: 48px; display: flex; justify-content: center; align-items: flex-start;">
+                    <i class="fa-solid fa-location-dot" style="color: #ef4444; font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.4));"></i>
+                    <img src="${profileImg}" style="position: absolute; top: 6px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+                </div>
+            `;
+
             const divIcon = L.divIcon({
                 className: 'citizen-marker-console',
-                html: '<div style="background-color:#ef4444; border:2px solid #fff; border-radius:50%; width:14px; height:14px; box-shadow:0 0 10px rgba(239,68,68,0.8);"></div>',
-                iconSize: [14, 14]
+                html: pinHtml,
+                iconSize: [48, 48],
+                iconAnchor: [24, 48]
             });
 
             this.consoleUserMarker = L.marker([this.gps.lat, this.gps.lng], {
