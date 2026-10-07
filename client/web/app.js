@@ -2265,7 +2265,7 @@ class CitizenMobileClient {
         const pinHtml = `
             <div style="position: relative; width: 64px; height: 72px; display: flex; justify-content: center; align-items: flex-start; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
                 <div style="position: absolute; bottom: 4px; width: 12px; height: 12px; background: #F05023; transform: rotate(45deg); border-radius: 2px;"></div>
-                <img src="${profileImg}" style="position: absolute; top: 0; width: 64px; height: 64px; border-radius: 16px; border: 3px solid #F05023; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+                <img src="${profileImg}" style="position: absolute; top: 0; width: 64px; height: 64px; border-radius: 24px; border: 3px solid #F05023; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
             </div>
         `;
 
@@ -2334,7 +2334,7 @@ class CitizenMobileClient {
             const pinHtml = `
                 <div style="position: relative; width: 64px; height: 72px; display: flex; justify-content: center; align-items: flex-start; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
                     <div style="position: absolute; bottom: 4px; width: 12px; height: 12px; background: #F05023; transform: rotate(45deg); border-radius: 2px;"></div>
-                    <img src="${profileImg}" style="position: absolute; top: 0; width: 64px; height: 64px; border-radius: 16px; border: 3px solid #F05023; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+                    <img src="${profileImg}" style="position: absolute; top: 0; width: 64px; height: 64px; border-radius: 24px; border: 3px solid #F05023; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
                 </div>
             `;
 

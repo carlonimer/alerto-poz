@@ -439,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen>
                             height: 64,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(16), // Not perfectly round
+                              borderRadius: BorderRadius.circular(24), // More circular but not a circle
                               border: Border.all(color: const Color(0xFFF05023), width: 3), // Orange-red border
                               boxShadow: const [
                                 BoxShadow(
