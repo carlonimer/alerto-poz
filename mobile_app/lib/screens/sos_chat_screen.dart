@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
@@ -12,6 +15,25 @@ import '../models/user.dart';
 import '../services/socket_service.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
+import 'call_screen.dart';
+
+/// Colour tokens for the ALERTO-POZ emergency chat (orange emergency theme).
+class _C {
+  static const orange = Color(0xFFFF9800);
+  static const red = Color(0xFFE53935);
+  static const redDeep = Color(0xFFD32F2F);
+  static const ink = Color(0xFF1F2937);
+  static const inkSoft = Color(0xFF4B5563);
+  static const muted = Color(0xFF6B7280);
+  static const background = Color(0xFFF3F4F6);
+  static const divider = Color(0xFFE5E7EB);
+  static const chip = Color(0xFFEEF0F4);
+  static const botBubble = Color(0xFFB8C9E0);
+  static const userBubble = Color(0xFF0B63CE);
+  static const send = Color(0xFF22C55E);
+  static const online = Color(0xFF16A34A);
+  static const pending = Color(0xFFF59E0B);
+}
 
 class SosChatScreen extends StatefulWidget {
   final UserModel? user;
@@ -28,40 +50,69 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   final _commentCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final MapController _mapController = MapController();
+  late final AnimationController _pulseCtrl;
+
+  static const LatLng _defaultCenter = LatLng(16.1086, 120.5424); // Pozorrubio
+  static const String _fallbackAddress = 'Buneg, Pozorrubio, Pangasinan';
 
   String? _incidentId;
   String? _selectedCategory;
   String? _ticketCode;
+  String? _assignedUnit;
   bool _sent = false;
+  bool _sending = false;
   bool _cancelled = false; // New cancelled state
+  bool _hasText = false;
+  DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
   final List<String> _attachedImages = []; // base64 strings
 
   bool _isMapExpanded = true;
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
   Position? _currentPos;
+  LatLng? _incidentPos;
   String _currentAddress = 'Locating...';
 
   static const List<Map<String, dynamic>> _categories = [
-    {'key': 'medical', 'label': 'MEDICAL', 'icon': Icons.local_hospital_rounded},
-    {'key': 'fire', 'label': 'FIRE', 'icon': Icons.local_fire_department_rounded},
-    {'key': 'police', 'label': 'POLICE', 'icon': Icons.shield_rounded},
-    {'key': 'barangay', 'label': 'BARANGAY', 'icon': Icons.house_rounded},
-    {'key': 'road_crash', 'label': 'ROAD CRASH', 'icon': Icons.car_crash_rounded},
-    {'key': 'report', 'label': 'REPORT', 'icon': Icons.error_rounded},
+    {'key': 'medical', 'label': 'MEDICAL', 'icon': Icons.medical_services_rounded, 'color': Color(0xFFE53935)},
+    {'key': 'fire', 'label': 'FIRE', 'icon': Icons.local_fire_department_rounded, 'color': Color(0xFFF4511E)},
+    {'key': 'police', 'label': 'POLICE', 'icon': Icons.shield_rounded, 'color': Color(0xFF1D4ED8)},
+    {'key': 'barangay', 'label': 'BARANGAY', 'icon': Icons.house_rounded, 'color': Color(0xFF059669)},
+    {'key': 'road_crash', 'label': 'ROADCRASH', 'icon': Icons.car_crash_rounded, 'color': Color(0xFFD97706)},
+    {'key': 'report', 'label': 'REPORT', 'icon': Icons.error_rounded, 'color': Color(0xFF475569)},
   ];
+
+  static const Map<String, String> _tileUrls = {
+    'Standard': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'Satellite': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    'Terrain': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+  };
+
+  // ───────────────────────── Lifecycle ─────────────────────────
 
   @override
   void initState() {
     super.initState();
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
+    _commentCtrl.addListener(() {
+      final has = _commentCtrl.text.trim().isNotEmpty;
+      if (has != _hasText) setState(() => _hasText = has);
+    });
+
     _initLocation();
 
     if (widget.activeIncident != null) {
-      _incidentId = widget.activeIncident!['_id']?.toString() ?? widget.activeIncident!['id']?.toString();
-      _selectedCategory = widget.activeIncident!['category'];
-      _ticketCode = widget.activeIncident!['ticketCode'] ?? 'ALERTOPOZ-26-854911';
+      final inc = widget.activeIncident!;
+      _incidentId = inc['_id']?.toString() ?? inc['id']?.toString();
+      _selectedCategory = inc['category'];
+      _ticketCode = inc['ticketCode']?.toString() ?? inc['id']?.toString() ?? _incidentId;
+      _assignedUnit = inc['assignedUnit']?.toString();
+      _createdAt = DateTime.tryParse((inc['timestamp'] ?? inc['createdAt'] ?? '').toString())?.toLocal() ?? DateTime.now();
+      final lat = double.tryParse('${inc['lat'] ?? ''}');
+      final lng = double.tryParse('${inc['lng'] ?? ''}');
+      if (lat != null && lng != null) _incidentPos = LatLng(lat, lng);
       _sent = true;
-      if (widget.activeIncident!['status'] == 'cancelled') {
+      if (inc['status'] == 'cancelled') {
         _cancelled = true;
       }
       _chatFeed.add({
@@ -83,48 +134,130 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
     }
 
-    SocketService.on('chat-message', (data) {
-      if (data['incident_id'] == _incidentId) {
-        if (!mounted) return;
-        setState(() {
-          _chatFeed.add({
-            'role': data['sender_id'] == widget.user?.id.toString() ? 'user' : 'bot',
-            'type': data['is_media'] == true ? 'image' : 'text',
-            'content': data['message'],
-            'timestamp': DateTime.now().toIso8601String(),
-          });
-        });
-        _scrollToBottom();
-      }
-    });
+    SocketService.on('chat-message', _onChatMessage);
+    SocketService.on('incident-cancelled', _onIncidentCancelled);
+    SocketService.on('incident-updated', _onIncidentUpdated);
+  }
 
-    SocketService.on('incident-cancelled', (data) {
-      if (data['id'] == _incidentId && mounted) {
-        setState(() {
-          _cancelled = true;
-        });
-        // We do not pop the context here to match web app behavior where user sees the cancelled message
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Incident has been cancelled.')));
-      }
+  @override
+  void dispose() {
+    SocketService.off('chat-message', _onChatMessage);
+    SocketService.off('incident-cancelled', _onIncidentCancelled);
+    SocketService.off('incident-updated', _onIncidentUpdated);
+    _pulseCtrl.dispose();
+    _commentCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  // ───────────────────────── Socket handlers ─────────────────────────
+
+  void _onChatMessage(dynamic data) {
+    if (data is! Map || data['incident_id'] != _incidentId || !mounted) return;
+    setState(() {
+      _chatFeed.add({
+        'role': data['sender_id'] == widget.user?.id.toString() ? 'user' : 'bot',
+        'type': data['is_media'] == true ? 'image' : 'text',
+        'content': data['message'],
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    });
+    _scrollToBottom();
+  }
+
+  void _onIncidentCancelled(dynamic data) {
+    if (data is! Map || data['id'] != _incidentId || !mounted) return;
+    setState(() => _cancelled = true);
+    // We do not pop the context here to match web app behavior where user sees the cancelled message
+    _toast('Incident has been cancelled.');
+  }
+
+  void _onIncidentUpdated(dynamic data) {
+    if (data is! Map || _incidentId == null || data['id']?.toString() != _incidentId || !mounted) return;
+    setState(() {
+      final unit = data['assignedUnit']?.toString();
+      if (unit != null && unit.isNotEmpty) _assignedUnit = unit;
+      if ((data['status'] ?? '').toString().toLowerCase() == 'cancelled') _cancelled = true;
     });
   }
+
+  // ───────────────────────── Location ─────────────────────────
+
+  LatLng? get _markerPos =>
+      _currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : _incidentPos;
 
   Future<void> _initLocation() async {
+    if (mounted && _currentPos == null) setState(() => _currentAddress = 'Locating...');
     final pos = await LocationService.getCurrentPosition();
-    if (mounted && pos != null) {
+    if (!mounted) return;
+    if (pos != null) {
       setState(() {
         _currentPos = pos;
-        _currentAddress = 'Buneg, Pozorrubio, Pangasinan'; // Mocked address based on screenshot
+        _currentAddress = _fallbackAddress;
       });
-      _mapController.move(LatLng(pos.latitude, pos.longitude), 15.0);
+      _moveMap(LatLng(pos.latitude, pos.longitude), 15.0);
+      _resolveAddress(pos.latitude, pos.longitude);
+    } else if (_incidentPos != null) {
+      setState(() => _currentAddress = _fallbackAddress);
+      _moveMap(_incidentPos!, 15.0);
+      _resolveAddress(_incidentPos!.latitude, _incidentPos!.longitude);
+    } else {
+      setState(() => _currentAddress = 'Location unavailable · tap to retry');
     }
   }
+
+  /// Best-effort reverse geocode to "Barangay, Town, Province". Keeps the
+  /// fallback address if the lookup fails or the device is offline.
+  Future<void> _resolveAddress(double lat, double lng) async {
+    try {
+      final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=16&addressdetails=1');
+      final res = await http
+          .get(uri, headers: {'User-Agent': 'com.alertopoz.app', 'Accept-Language': 'en'})
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+      final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
+      final parts = <dynamic>[
+        addr['village'] ?? addr['suburb'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['quarter'],
+        addr['town'] ?? addr['municipality'] ?? addr['city'],
+        addr['province'] ?? addr['state'],
+      ].whereType<String>().where((s) => s.isNotEmpty).toList();
+      if (parts.isNotEmpty && mounted) setState(() => _currentAddress = parts.join(', '));
+    } catch (_) {}
+  }
+
+  void _moveMap(LatLng target, double zoom) {
+    try {
+      _mapController.move(target, zoom);
+    } catch (_) {
+      // Map not attached yet – initialCenter will handle the first frame.
+    }
+  }
+
+  void _recenterMap() {
+    final p = _markerPos;
+    if (p == null) {
+      _initLocation();
+      return;
+    }
+    if (!_isMapExpanded) setState(() => _isMapExpanded = true);
+    _moveMap(p, 16.0);
+  }
+
+  void _zoomBy(double delta) {
+    try {
+      final cam = _mapController.camera;
+      _mapController.move(cam.center, (cam.zoom + delta).clamp(3.0, 19.0));
+    } catch (_) {}
+  }
+
+  // ───────────────────────── Chat logic ─────────────────────────
 
   Future<void> _fetchHistory() async {
     if (_incidentId == null) return;
     try {
       final res = await ApiService.fetchMessages(_incidentId!);
-      if (res['success'] == true) {
+      if (res['success'] == true && mounted) {
         final msgs = res['messages'] as List;
         setState(() {
           for (var msg in msgs) {
@@ -141,13 +274,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     } catch (e) {}
   }
 
-  @override
-  void dispose() {
-    _commentCtrl.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
@@ -160,13 +286,33 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
   }
 
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(msg, style: GoogleFonts.outfit()),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
+      ));
+  }
+
+  void _copyTicket() {
+    final code = _sent ? (_ticketCode ?? _incidentId) : 'DRAFT-5';
+    if (code == null) return;
+    Clipboard.setData(ClipboardData(text: code));
+    _toast('Copied $code');
+  }
+
   void _selectCategory(String key, String label) async {
-    if (_sent) return;
+    if (_sent || _sending) return;
+    HapticFeedback.mediumImpact();
     setState(() {
       _selectedCategory = key;
       _chatFeed.add({
-        'role': 'user', 
-        'type': 'text', 
+        'role': 'user',
+        'type': 'text',
         'content': 'Selected Category: $label',
         'timestamp': DateTime.now().toIso8601String(),
       });
@@ -182,11 +328,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       await _handleImageTaken(file.path);
     }
   }
-  
+
   Future<void> _handleImageTaken(String path) async {
     final bytes = await File(path).readAsBytes();
     final b64 = base64Encode(bytes);
-    
+
+    if (!mounted) return;
     setState(() {
       _attachedImages.add(b64);
       _chatFeed.add({
@@ -203,190 +350,70 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       final pos = await LocationService.getCurrentPosition();
       await _doTransmit(pos);
     }
-    
+
     if (_sent && _incidentId != null) {
       try {
         await ApiService.sendMessage(
-          _incidentId!, 
-          { 'senderId': widget.user?.id, 'content': 'Image Attachment' },
-          mediaPath: path
+          _incidentId!,
+          {'senderId': widget.user?.id, 'content': 'Image Attachment'},
+          mediaPath: path,
         );
-      } catch(e) {}
+      } catch (e) {}
     }
-  }
-
-  void _showCameraDialog() {
-    String? tempImagePath;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Dialog(
-              backgroundColor: const Color(0xFF232736), // Dark theme color
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Header
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Capture Photo', style: GoogleFonts.outfit(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                            Container(
-                              height: 2, 
-                              width: 80, 
-                              color: const Color(0xFFF5A623), 
-                              margin: const EdgeInsets.only(top: 4),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(color: const Color(0xFF6366F1), borderRadius: BorderRadius.circular(6)), // Purple color
-                          child: Row(
-                            children: [
-                              const Icon(Icons.flip_camera_ios, color: Colors.white, size: 14),
-                              const SizedBox(width: 4),
-                              Text('Switch', style: GoogleFonts.outfit(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    // Preview Area
-                    Container(
-                      height: 300,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[800]!),
-                      ),
-                      child: tempImagePath != null 
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(11),
-                            child: Image.file(File(tempImagePath!), fit: BoxFit.cover),
-                          )
-                        : const Center(child: Icon(Icons.camera_alt, color: Colors.grey, size: 50)),
-                    ),
-                    const SizedBox(height: 20),
-                    // Action Buttons
-                    if (tempImagePath == null)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          ElevatedButton(
-                            onPressed: () async {
-                              final picker = ImagePicker();
-                              final file = await picker.pickImage(source: ImageSource.camera, imageQuality: 60);
-                              if (file != null) {
-                                setDialogState(() {
-                                  tempImagePath = file.path;
-                                });
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2196F3), // Blue Capture button
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: Text('Capture', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                          const SizedBox(width: 12),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(context),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFF44336), // Red Cancel button
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
-                      )
-                    else
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          ElevatedButton(
-                            onPressed: () {
-                              setDialogState(() {
-                                tempImagePath = null;
-                              });
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFF5A623), // Orange Retake button
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: Text('Retake', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              Navigator.pop(context); // Close dialog
-                              _handleImageTaken(tempImagePath!); // Send image
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF10B981), // Green Confirm button
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: Text('Confirm', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(context),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFF44336), // Red Cancel button
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-            );
-          }
-        );
-      },
-    );
   }
 
   Future<void> _sendSos() async {
     if (_selectedCategory == null) return;
     final pos = await LocationService.getCurrentPosition();
-    _doTransmit(pos);
+    await _doTransmit(pos);
   }
 
+  /// Emits the SOS report and waits for the server acknowledgement so we get
+  /// the real ticket number (used as the incident id for follow-up messages).
   Future<void> _doTransmit(dynamic pos) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    _scrollToBottom();
+
     final payload = {
       'id': _incidentId,
       'reporterId': widget.user?.id ?? 0,
       'reporterName': widget.user?.name ?? 'Citizen',
       'reporterPhone': widget.user?.phone ?? '',
       'category': _selectedCategory,
-      'lat': pos?.latitude ?? 16.1086,
-      'lng': pos?.longitude ?? 120.5424,
+      'lat': pos?.latitude ?? _markerPos?.latitude ?? _defaultCenter.latitude,
+      'lng': pos?.longitude ?? _markerPos?.longitude ?? _defaultCenter.longitude,
       'notes': _commentCtrl.text.trim(),
       'attachments': _attachedImages,
       'timestamp': DateTime.now().toIso8601String(),
       'status': 'pending',
     };
 
-    SocketService.emitSosReport(payload);
+    final completer = Completer<dynamic>();
+    SocketService.emitSosReportWithAck(payload, (res) {
+      if (!completer.isCompleted) completer.complete(res);
+    });
+
+    dynamic res;
+    try {
+      res = await completer.future.timeout(const Duration(seconds: 8));
+    } catch (_) {
+      res = null;
+    }
+    if (res is List && res.isNotEmpty) res = res.first;
+    final ticket = (res is Map && res['success'] == true) ? res['ticketNumber']?.toString() : null;
 
     if (!mounted) return;
     setState(() {
+      _sending = false;
       _sent = true;
-      _ticketCode = 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
+      _createdAt = DateTime.now();
+      if (ticket != null) {
+        _incidentId = ticket;
+        _ticketCode = ticket;
+      } else {
+        _ticketCode ??= 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
+      }
       _chatFeed.add({
         'role': 'bot',
         'type': 'activated',
@@ -400,7 +427,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Future<void> _sendChatMessage() async {
     final txt = _commentCtrl.text.trim();
     if (txt.isEmpty) return;
-    
+
     setState(() {
       _chatFeed.add({
         'role': 'user',
@@ -411,20 +438,20 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
     _commentCtrl.clear();
     _scrollToBottom();
-    
+
     if (!_sent) {
       _selectedCategory = 'other';
       final pos = await LocationService.getCurrentPosition();
       await _doTransmit(pos);
     }
-    
+
     if (_incidentId != null) {
       try {
         await ApiService.sendMessage(_incidentId!, {
           'senderId': widget.user?.id,
           'content': txt,
         });
-      } catch(e) {}
+      } catch (e) {}
     }
   }
 
@@ -454,7 +481,146 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         });
         _scrollToBottom();
       }
-    } catch(e) {}
+    } catch (e) {}
+  }
+
+  void _openCall({required bool video}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => CallScreen(user: widget.user, isVideo: video)),
+    );
+  }
+
+  // ───────────────────────── Dialogs ─────────────────────────
+
+  void _showCameraDialog() {
+    String? tempImagePath;
+    bool useFrontCamera = false;
+
+    Widget actionBtn(String label, Color color, VoidCallback onTap) => Expanded(
+          child: ElevatedButton(
+            onPressed: onTap,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: color,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text(label, style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        );
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setDialogState) {
+          Future<void> capture() async {
+            final picker = ImagePicker();
+            final file = await picker.pickImage(
+              source: ImageSource.camera,
+              imageQuality: 60,
+              preferredCameraDevice: useFrontCamera ? CameraDevice.front : CameraDevice.rear,
+            );
+            if (file != null) setDialogState(() => tempImagePath = file.path);
+          }
+
+          return Dialog(
+            backgroundColor: const Color(0xFF232736),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Capture Photo',
+                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                            Container(height: 3, width: 48, color: _C.orange, margin: const EdgeInsets.only(top: 6)),
+                          ],
+                        ),
+                      ),
+                      Material(
+                        color: const Color(0xFF6366F1),
+                        borderRadius: BorderRadius.circular(10),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => setDialogState(() => useFrontCamera = !useFrontCamera),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.flip_camera_ios_rounded, color: Colors.white, size: 16),
+                                const SizedBox(width: 6),
+                                Text(useFrontCamera ? 'Front' : 'Rear',
+                                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  GestureDetector(
+                    onTap: tempImagePath == null ? capture : null,
+                    child: AspectRatio(
+                      aspectRatio: 4 / 3,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: tempImagePath != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(13),
+                                child: Image.file(File(tempImagePath!), fit: BoxFit.cover, width: double.infinity),
+                              )
+                            : Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.camera_alt_rounded, color: Colors.white38, size: 48),
+                                  const SizedBox(height: 8),
+                                  Text('Tap to open camera',
+                                      style: GoogleFonts.outfit(color: Colors.white54, fontSize: 13)),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  if (tempImagePath == null)
+                    Row(children: [
+                      actionBtn('Capture', const Color(0xFF2196F3), capture),
+                      const SizedBox(width: 10),
+                      actionBtn('Cancel', const Color(0xFFF44336), () => Navigator.pop(context)),
+                    ])
+                  else
+                    Row(children: [
+                      actionBtn('Retake', _C.orange, () => setDialogState(() => tempImagePath = null)),
+                      const SizedBox(width: 8),
+                      actionBtn('Confirm', const Color(0xFF10B981), () {
+                        Navigator.pop(context); // Close dialog
+                        _handleImageTaken(tempImagePath!); // Send image
+                      }),
+                      const SizedBox(width: 8),
+                      actionBtn('Cancel', const Color(0xFFF44336), () => Navigator.pop(context)),
+                    ]),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
   }
 
   void _showCloseIncidentDialog() {
@@ -462,7 +628,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       context: context,
       builder: (context) {
         return Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           backgroundColor: Colors.white,
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -472,10 +638,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               children: [
                 Text('Close Incident', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                 const SizedBox(height: 8),
-                Container(height: 2, width: double.infinity, color: const Color(0xFFF5A623)),
+                Container(height: 2, width: double.infinity, color: _C.orange),
                 const SizedBox(height: 16),
-                Text('Are you sure you want to cancel this incident?\nThis will notify the Command Center that you have cancelled the emergency.', 
-                  style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14)),
+                Text(
+                    'Are you sure you want to cancel this incident?\nThis will notify the Command Center that you have cancelled the emergency.',
+                    style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14)),
                 const SizedBox(height: 16),
                 Text('Enter Passcode:', style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12)),
                 const SizedBox(height: 8),
@@ -484,24 +651,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   decoration: InputDecoration(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                       borderSide: BorderSide(color: Colors.grey[300]!),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFF5A623)),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: _C.orange),
                     ),
                   ),
                 ),
                 const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.grey[600], fontWeight: FontWeight.w600)),
                     ),
-                    const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: () {
                         Navigator.pop(context);
@@ -509,10 +677,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF44336),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         elevation: 0,
                       ),
-                      child: Text('Confirm Close Incident', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                      child: Text('Confirm Close Incident',
+                          style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ),
@@ -524,21 +693,238 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     );
   }
 
-  void _showLayersMenu(BuildContext context, Offset position) {
-    showMenu(
+  void _openImage(ImageProvider image) {
+    showDialog(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx, position.dy + 30, position.dx, 0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      items: [
-        _buildLayerMenuItem('Standard', Icons.map_outlined),
-        _buildLayerMenuItem('Satellite', Icons.satellite_outlined),
-        _buildLayerMenuItem('Terrain', Icons.terrain_outlined),
+      barrierColor: Colors.black87,
+      builder: (ctx) => GestureDetector(
+        onTap: () => Navigator.pop(ctx),
+        child: Stack(
+          children: [
+            Center(child: InteractiveViewer(child: Image(image: image))),
+            Positioned(
+              top: MediaQuery.of(ctx).padding.top + 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Formatting ─────────────────────────
+
+  String _formatDate(DateTime d) => DateFormat('MMM dd, yyyy, hh:mm a').format(d);
+
+  String _formatStamp(String? isoDate) {
+    if (isoDate == null) return '';
+    final d = DateTime.tryParse(isoDate)?.toLocal() ?? DateTime.now();
+    final now = DateTime.now();
+    final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
+    return DateFormat(sameDay ? 'hh:mm a' : 'MMM dd, hh:mm a').format(d);
+  }
+
+  String get _responderLabel {
+    if (_cancelled) return 'Incident closed';
+    if (_assignedUnit != null && _assignedUnit!.isNotEmpty) return 'Responder: $_assignedUnit';
+    return _sent ? 'Awaiting responder…' : 'No active responder';
+  }
+
+  Color get _responderColor {
+    if (_cancelled) return Colors.grey;
+    if (_assignedUnit != null && _assignedUnit!.isNotEmpty) return _C.online;
+    return _sent ? _C.pending : Colors.grey;
+  }
+
+  // ───────────────────────── Header ─────────────────────────
+
+  PreferredSizeWidget _buildAppBar() {
+    final canPop = Navigator.of(context).canPop();
+    return AppBar(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      toolbarHeight: 64,
+      automaticallyImplyLeading: false,
+      leadingWidth: 44,
+      titleSpacing: canPop ? 0 : 16,
+      leading: canPop
+          ? IconButton(
+              tooltip: 'Back',
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: _C.inkSoft),
+              onPressed: () => Navigator.maybePop(context),
+            )
+          : null,
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cell_tower_rounded, color: _C.red, size: 20),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text('Alerto-poz',
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 20, color: _C.ink)),
+              ),
+              const SizedBox(width: 6),
+              _buildStatusLabel(),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: _responderColor, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(_responderLabel,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        IconButton(
+          tooltip: 'Voice call',
+          icon: const Icon(Icons.phone_rounded, color: _C.inkSoft),
+          onPressed: () => _openCall(video: false),
+        ),
+        IconButton(
+          tooltip: 'Video call',
+          icon: const Icon(Icons.videocam_rounded, color: _C.inkSoft),
+          onPressed: () => _openCall(video: true),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'More',
+          icon: const Icon(Icons.more_vert_rounded, color: _C.inkSoft),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          onSelected: (value) {
+            switch (value) {
+              case 'recenter':
+                _recenterMap();
+                break;
+              case 'copy':
+                _copyTicket();
+                break;
+              case 'close':
+                _showCloseIncidentDialog();
+                break;
+              case 'discard':
+                Navigator.maybePop(context);
+                break;
+            }
+          },
+          itemBuilder: (context) => [
+            _menuItem('recenter', Icons.my_location_rounded, 'Recenter map'),
+            if (_sent) _menuItem('copy', Icons.copy_rounded, 'Copy ticket code'),
+            if (_sent && !_cancelled) _menuItem('close', Icons.cancel_rounded, 'Close Incident', color: Colors.red),
+            if (!_sent) _menuItem('discard', Icons.delete_outline_rounded, 'Discard draft', color: Colors.red),
+          ],
+        ),
+        const SizedBox(width: 4),
       ],
-    ).then((value) {
-      if (value != null) {
-        setState(() => _mapLayer = value);
-      }
-    });
+      bottom: const PreferredSize(
+        preferredSize: Size.fromHeight(1),
+        child: Divider(height: 1, thickness: 1, color: _C.divider),
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label, {Color color = _C.ink}) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Text(label, style: GoogleFonts.outfit(color: color, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusLabel() {
+    if (!_sent && !_cancelled) {
+      return Text('draft', style: GoogleFonts.outfit(fontWeight: FontWeight.w500, fontSize: 17, color: _C.inkSoft));
+    }
+    final label = _cancelled ? 'cancelled' : 'Pending';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(color: const Color(0xFFFFEBEE), borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: GoogleFonts.outfit(fontWeight: FontWeight.w700, fontSize: 12, color: _C.redDeep)),
+    );
+  }
+
+  // ───────────────────────── Location bar & map ─────────────────────────
+
+  Widget _buildLocationBar() {
+    return Material(
+      color: _C.orange,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 12, right: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: _recenterMap,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on_rounded, color: _C.redDeep, size: 20),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(_currentAddress,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.outfit(color: _C.ink, fontWeight: FontWeight.w700, fontSize: 14)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Map layers',
+              icon: const Icon(Icons.layers_rounded, color: _C.ink, size: 22),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              onSelected: (value) => setState(() {
+                _mapLayer = value;
+                _isMapExpanded = true;
+              }),
+              itemBuilder: (_) => [
+                _buildLayerMenuItem('Standard', Icons.map_outlined),
+                _buildLayerMenuItem('Satellite', Icons.satellite_alt_outlined),
+                _buildLayerMenuItem('Terrain', Icons.terrain_outlined),
+              ],
+            ),
+            IconButton(
+              tooltip: _isMapExpanded ? 'Hide map' : 'Show map',
+              onPressed: () => setState(() => _isMapExpanded = !_isMapExpanded),
+              icon: AnimatedRotation(
+                turns: _isMapExpanded ? 0 : 0.5,
+                duration: const Duration(milliseconds: 250),
+                child: const Icon(Icons.keyboard_arrow_up_rounded, color: _C.ink, size: 26),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   PopupMenuItem<String> _buildLayerMenuItem(String title, IconData icon) {
@@ -546,75 +932,282 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     return PopupMenuItem<String>(
       value: title,
       child: Container(
-        decoration: isSelected ? BoxDecoration(
-          color: Colors.blue[600],
-          borderRadius: BorderRadius.circular(6)
-        ) : null,
+        decoration: BoxDecoration(
+          color: isSelected ? _C.orange.withValues(alpha: 0.15) : null,
+          borderRadius: BorderRadius.circular(8),
+        ),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: [
-            Icon(icon, color: isSelected ? Colors.white : Colors.black87, size: 20),
+            Icon(icon, color: isSelected ? const Color(0xFFE65100) : _C.ink, size: 20),
             const SizedBox(width: 12),
-            Text(title, style: GoogleFonts.outfit(color: isSelected ? Colors.white : Colors.black87, fontSize: 14)),
+            Expanded(
+              child: Text(title,
+                  style: GoogleFonts.outfit(
+                      color: isSelected ? const Color(0xFFE65100) : _C.ink,
+                      fontSize: 14,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500)),
+            ),
+            if (isSelected) const Icon(Icons.check_rounded, color: Color(0xFFE65100), size: 18),
           ],
         ),
       ),
     );
   }
 
-  String _formatDate(String? isoDate) {
-    if (isoDate == null) return '';
-    final d = DateTime.tryParse(isoDate)?.toLocal() ?? DateTime.now();
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final ampm = d.hour >= 12 ? 'PM' : 'AM';
-    final hr = d.hour > 12 ? d.hour - 12 : (d.hour == 0 ? 12 : d.hour);
-    final min = d.minute.toString().padLeft(2, '0');
-    return '${months[d.month - 1]} ${d.day}, ${d.year} ${hr.toString().padLeft(2, '0')}:$min $ampm';
-  }
-
-  Widget _buildCategoryGrid() {
-    return Container(
-      margin: const EdgeInsets.only(left: 32, right: 32),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Wrap(
-        spacing: 24,
-        runSpacing: 24,
-        children: _categories.map((cat) {
-          return GestureDetector(
-            onTap: () => _selectCategory(cat['key'] as String, cat['label'] as String),
-            child: SizedBox(
-              width: 60,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+  Widget _buildMap(double height, double fullHeight) {
+    final marker = _markerPos;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      height: height,
+      child: ClipRect(
+        // Keep the map at a constant size while the container animates so the
+        // MapController stays attached and tiles don't re-layout at 0 height.
+        child: OverflowBox(
+          alignment: Alignment.topCenter,
+          minHeight: fullHeight,
+          maxHeight: fullHeight,
+          child: Stack(
+            children: [
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: marker ?? _defaultCenter,
+                  initialZoom: 15.0,
+                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+                ),
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF0F4F8),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(cat['icon'] as IconData, color: Colors.black87, size: 26),
+                  TileLayer(
+                    key: ValueKey(_mapLayer),
+                    urlTemplate: _tileUrls[_mapLayer],
+                    userAgentPackageName: 'com.alertopoz.app',
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    cat['label'] as String,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.outfit(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.grey[600],
+                  if (marker != null)
+                    MarkerLayer(
+                      markers: [
+                        Marker(point: marker, width: 64, height: 64, child: _buildPulseMarker()),
+                      ],
                     ),
-                  ),
                 ],
               ),
+              if (marker == null)
+                Positioned(
+                  left: 12,
+                  top: 12,
+                  child: _mapPill(
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      const SizedBox(
+                          width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: _C.orange)),
+                      const SizedBox(width: 8),
+                      Text('Finding your location…',
+                          style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.w600, color: _C.ink)),
+                    ]),
+                  ),
+                ),
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: Column(
+                  children: [
+                    _mapButton(Icons.add_rounded, 'Zoom in', () => _zoomBy(1)),
+                    const SizedBox(height: 6),
+                    _mapButton(Icons.remove_rounded, 'Zoom out', () => _zoomBy(-1)),
+                    const SizedBox(height: 6),
+                    _mapButton(Icons.my_location_rounded, 'My location', _recenterMap, accent: true),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPulseMarker() {
+    return AnimatedBuilder(
+      animation: _pulseCtrl,
+      builder: (_, __) {
+        final t = _pulseCtrl.value;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 18 + 44 * t,
+              height: 18 + 44 * t,
+              decoration: BoxDecoration(
+                color: _C.red.withValues(alpha: 0.35 * (1 - t)),
+                shape: BoxShape.circle,
+              ),
             ),
-          );
-        }).toList(),
+            Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(
+                color: _C.red,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _mapPill(Widget child) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _mapButton(IconData icon, String tooltip, VoidCallback onTap, {bool accent = false}) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white,
+        elevation: 3,
+        shadowColor: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Icon(icon, size: 20, color: accent ? const Color(0xFFE65100) : _C.ink),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Incident meta bar ─────────────────────────
+
+  Widget _buildIncidentMetaBar() {
+    final code = _sent ? (_ticketCode ?? 'PENDING') : 'DRAFT-5';
+    final dotColor = _cancelled ? _C.redDeep : (_sent ? _C.pending : Colors.grey);
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: _C.divider)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule_rounded, size: 15, color: _C.muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(_formatDate(_createdAt),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.outfit(color: _C.inkSoft, fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: _C.chip,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: _copyTicket,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 6, height: 6, decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle)),
+                    const SizedBox(width: 6),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.42),
+                      child: Text(code,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.robotoMono(
+                              color: _C.ink, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.copy_rounded, size: 13, color: _C.muted),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ───────────────────────── Chat feed widgets ─────────────────────────
+
+  Widget _buildAlertopozAvatar() {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF6B4A), Color(0xFFE53935)],
+        ),
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [BoxShadow(color: _C.red.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 15),
+          Text('SOS',
+              style: GoogleFonts.outfit(
+                  color: Colors.white, fontSize: 7, height: 1.0, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+        ],
+      ),
+    );
+  }
+
+  Widget _botRow({required Widget child}) {
+    final maxW = MediaQuery.of(context).size.width * 0.78;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildAlertopozAvatar(),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 4),
+                  child: Text('alertopoz',
+                      style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 12, color: _C.inkSoft)),
+                ),
+                ConstrainedBox(constraints: BoxConstraints(maxWidth: maxW), child: child),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  BoxDecoration _bubbleDecoration(bool isUser) {
+    return BoxDecoration(
+      color: isUser ? _C.userBubble : _C.botBubble,
+      borderRadius: BorderRadius.only(
+        topLeft: Radius.circular(isUser ? 18 : 4),
+        topRight: Radius.circular(isUser ? 4 : 18),
+        bottomLeft: const Radius.circular(18),
+        bottomRight: const Radius.circular(18),
       ),
     );
   }
@@ -622,411 +1215,392 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Widget _buildChatBubble(Map<String, dynamic> msg) {
     final isUser = msg['role'] == 'user';
     final type = msg['type'] as String;
-    final timeStr = _formatDate(msg['timestamp'] as String?);
+    final timeStr = _formatStamp(msg['timestamp'] as String?);
+    final maxW = MediaQuery.of(context).size.width * 0.75;
 
     if (type == 'image') {
-      final isUrl = msg['content'].toString().startsWith('http') || msg['content'].toString().startsWith('/uploads');
-      final imgUrl = msg['content'].toString().startsWith('http') ? msg['content'] : '${ApiService.baseUrl}${msg['content']}';
-      return Align(
-        alignment: Alignment.centerRight,
+      final raw = msg['content'].toString();
+      final isUrl = raw.startsWith('http') || raw.startsWith('/uploads');
+      final ImageProvider provider = isUrl
+          ? NetworkImage(raw.startsWith('http') ? raw : '${ApiService.baseUrl}$raw')
+          : MemoryImage(base64Decode(raw));
+      final side = (maxW * 0.8).clamp(140.0, 240.0);
+      final image = GestureDetector(
+        onTap: () => _openImage(provider),
         child: Container(
-          margin: const EdgeInsets.only(left: 60, bottom: 12),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[300]!)),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 2))],
+          ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: isUrl 
-              ? Image.network(imgUrl, width: 200, height: 200, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 50))
-              : Image.memory(base64Decode(msg['content'] as String), width: 200, height: 200, fit: BoxFit.cover),
+            borderRadius: BorderRadius.circular(13),
+            child: Image(
+              image: provider,
+              width: side,
+              height: side,
+              fit: BoxFit.cover,
+              errorBuilder: (c, e, s) => Container(
+                width: side,
+                height: side,
+                color: _C.chip,
+                child: const Icon(Icons.broken_image_rounded, size: 40, color: _C.muted),
+              ),
+            ),
           ),
         ),
       );
-    }
-
-  Widget buildAlertopozAvatar() {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          const Icon(Icons.support_agent, color: Color(0xFF003366), size: 22),
-          Positioned(
-            top: 4,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE5004F),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                'SOS',
-                style: GoogleFonts.outfit(
-                  color: Colors.white,
-                  fontSize: 7,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-    if (type == 'system') {
+      if (!isUser) return _botRow(child: image);
       return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            isUser ? const SizedBox(width: 32) : buildAlertopozAvatar(),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  if (!isUser) Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
-                  Container(
-                    margin: const EdgeInsets.only(top: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: isUser ? const Color(0xFF01579B) : const Color(0xFFA1B5C3),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : Colors.black87, fontSize: 14)),
-                        if (msg['timestamp'] != null) ...[
-                          const SizedBox(height: 6),
-                          Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
-                        ]
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isUser) const SizedBox(width: 8),
-          ],
-        ),
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Align(alignment: Alignment.centerRight, child: image),
       );
     }
 
     if (type == 'activated') {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            buildAlertopozAvatar(),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
-                  Container(
-                    margin: const EdgeInsets.only(top: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFB0C4DE),
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(4),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(18),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('🚨 INCIDENT ACTIVATED', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        Text('Ticket Code: $_ticketCode', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 14, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        Text('Your emergency request has been received.\nKeep this ticket number for reference.\n\nYour emergency location and details have been sent to the Command Center.\nFor emergency validation, please provide:\n📸 Validation picture of the incident\n🎥 Validation video, if available\nStay calm and provide clear updates.', 
-                          style: GoogleFonts.outfit(color: Colors.black87, fontSize: 13)),
-                        const SizedBox(height: 6),
-                        Text(timeStr, style: GoogleFonts.outfit(color: Colors.black54, fontSize: 10)),
-                      ],
-                    ),
+      return _botRow(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+          decoration: _bubbleDecoration(false),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('🚨 INCIDENT ACTIVATED',
+                  style: GoogleFonts.outfit(color: _C.redDeep, fontSize: 14, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: _copyTicket,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text('Ticket Code: $_ticketCode',
+                            style: GoogleFonts.outfit(color: _C.ink, fontSize: 13, fontWeight: FontWeight.w800)),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.copy_rounded, size: 14, color: _C.inkSoft),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                  'Your emergency request has been received.\nKeep this ticket number for reference.\n\nYour emergency location and details have been sent to the Command Center.\nFor emergency validation, please provide:\n📸 Validation picture of the incident\n🎥 Validation video, if available\nStay calm and provide clear updates.',
+                  style: GoogleFonts.outfit(color: _C.ink, fontSize: 13, height: 1.35)),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(timeStr, style: GoogleFonts.outfit(color: Colors.black54, fontSize: 10)),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // 'system' and 'text' messages share the same bubble style.
+    final bubble = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      decoration: _bubbleDecoration(isUser),
+      child: Column(
+        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (!isUser) buildAlertopozAvatar(),
-          if (!isUser) const SizedBox(width: 8),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                if (!isUser) 
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4, left: 4),
-                    child: Text('alertopoz', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.black)),
-                  ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: isUser ? const Color(0xFF0066CC) : const Color(0xFFA1B5C3),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                    children: [
-                      Text(msg['content'] as String, style: GoogleFonts.outfit(color: isUser ? Colors.white : Colors.black87, fontSize: 14)),
-                      const SizedBox(height: 4),
-                      Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (isUser) const SizedBox(width: 8),
+          Text(msg['content']?.toString() ?? '',
+              style: GoogleFonts.outfit(color: isUser ? Colors.white : _C.ink, fontSize: 15, height: 1.3)),
+          if (msg['timestamp'] != null) ...[
+            const SizedBox(height: 4),
+            Text(timeStr, style: GoogleFonts.outfit(color: isUser ? Colors.white70 : Colors.black54, fontSize: 10)),
+          ],
         ],
+      ),
+    );
+
+    if (!isUser) return _botRow(child: bubble);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxW), child: bubble),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F7),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        title: Row(
+  Widget _buildSendingIndicator() {
+    return _botRow(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: _bubbleDecoration(false),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Alerto-poz ', style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
-            if (_cancelled)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: const Color(0xFFFFEBEE), borderRadius: BorderRadius.circular(4)),
-                child: Text('cancelled', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14, color: const Color(0xFFD32F2F))),
-              )
-            else
-              Text(_sent ? 'Pending' : 'draft', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14, color: _sent ? Colors.red : Colors.grey[700])),
+            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: _C.redDeep)),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text('Sending your emergency report…',
+                  style: GoogleFonts.outfit(color: _C.ink, fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
           ],
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(16),
-          child: Padding(
-            padding: const EdgeInsets.only(left: 56, bottom: 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Row(
+      ),
+    );
+  }
+
+  Widget _buildCategoryGrid() {
+    return Padding(
+      // Indent to line up with the bot bubbles (avatar 36 + gap 8).
+      padding: const EdgeInsets.only(left: 44, bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _C.divider),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 14, offset: const Offset(0, 4))],
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final cols = w >= 480 ? 6 : (w < 220 ? 2 : 3);
+            const spacing = 4.0;
+            final tileW = (w - spacing * (cols - 1)) / cols;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text('Select emergency type',
+                      style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.w700, color: _C.muted)),
+                ),
+                Wrap(
+                  spacing: spacing,
+                  runSpacing: 4,
+                  children: _categories.map((cat) => _buildCategoryTile(cat, tileW)).toList(),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryTile(Map<String, dynamic> cat, double width) {
+    final color = cat['color'] as Color;
+    final selected = _selectedCategory == cat['key'];
+    final enabled = !_sending && !_sent;
+    return SizedBox(
+      width: width,
+      child: Opacity(
+        opacity: enabled || selected ? 1 : 0.45,
+        child: Material(
+          color: selected ? color.withValues(alpha: 0.08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            key: ValueKey('category_${cat['key']}'),
+            borderRadius: BorderRadius.circular(14),
+            splashColor: color.withValues(alpha: 0.18),
+            onTap: enabled ? () => _selectCategory(cat['key'] as String, cat['label'] as String) : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(width: 6, height: 6, decoration: const BoxDecoration(color: Colors.grey, shape: BoxShape.circle)),
-                  const SizedBox(width: 6),
-                  Text('No active responder', style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w500)),
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: color.withValues(alpha: selected ? 0.8 : 0.22), width: selected ? 2 : 1),
+                    ),
+                    child: Icon(cat['icon'] as IconData, color: color, size: 26),
+                  ),
+                  const SizedBox(height: 8),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      cat['label'] as String,
+                      maxLines: 1,
+                      style: GoogleFonts.outfit(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        color: _C.inkSoft,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
         ),
-        actions: [
-          IconButton(icon: const Icon(Icons.phone, color: Colors.grey), onPressed: () {}),
-          IconButton(icon: const Icon(Icons.videocam, color: Colors.grey), onPressed: () {}),
-          if (!_cancelled)
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, color: Colors.grey),
-              onSelected: (value) {
-                if (value == 'close') {
-                  _showCloseIncidentDialog();
-                }
-              },
-              itemBuilder: (BuildContext context) => [
-                PopupMenuItem<String>(
-                  value: 'close',
-                  child: Row(
-                    children: [
-                      const Icon(Icons.cancel, color: Colors.red, size: 20),
-                      const SizedBox(width: 8),
-                      Text('Close Incident', style: GoogleFonts.outfit(color: Colors.red, fontWeight: FontWeight.w500)),
-                    ],
+      ),
+    );
+  }
+
+  // ───────────────────────── Input bar ─────────────────────────
+
+  Widget _buildInputBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: _C.divider)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Container(
+            padding: const EdgeInsets.only(left: 4, right: 5, top: 4, bottom: 4),
+            decoration: BoxDecoration(color: _C.chip, borderRadius: BorderRadius.circular(28)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  key: const ValueKey('btn_gallery'),
+                  tooltip: 'Upload image',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.image_rounded, color: _C.muted, size: 24),
+                  onPressed: _attachGalleryImage,
+                ),
+                IconButton(
+                  key: const ValueKey('btn_camera'),
+                  tooltip: 'Take photo',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
+                  onPressed: _showCameraDialog,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: TextField(
+                      key: const ValueKey('input_message'),
+                      controller: _commentCtrl,
+                      minLines: 1,
+                      maxLines: 4,
+                      textCapitalization: TextCapitalization.sentences,
+                      textInputAction: TextInputAction.send,
+                      style: GoogleFonts.outfit(fontSize: 15, color: _C.ink),
+                      decoration: InputDecoration(
+                        hintText: 'Type here...',
+                        hintStyle: GoogleFonts.outfit(color: _C.muted, fontSize: 15),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onTap: _scrollToBottom,
+                      onSubmitted: (_) => _sendChatMessage(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'Send',
+                  child: AnimatedScale(
+                    scale: _hasText ? 1.0 : 0.92,
+                    duration: const Duration(milliseconds: 180),
+                    child: Material(
+                      color: _hasText ? _C.send : _C.send.withValues(alpha: 0.75),
+                      shape: const CircleBorder(),
+                      elevation: _hasText ? 2 : 0,
+                      child: InkWell(
+                        key: const ValueKey('btn_send'),
+                        customBorder: const CircleBorder(),
+                        onTap: _sendChatMessage,
+                        child: const SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
-            )
-          else
-            IconButton(icon: const Icon(Icons.more_vert, color: Colors.grey), onPressed: () {}),
-        ],
+            ),
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildClosedBanner() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: _C.divider)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.lock_outline_rounded, size: 16, color: _C.muted),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text('This incident is closed. Chat is no longer available.',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.outfit(color: _C.muted, fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Build ─────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final keyboardOpen = media.viewInsets.bottom > 0;
+    final fullMapHeight = (media.size.height * 0.26).clamp(150.0, 260.0);
+    // Collapse the map while typing so the chat never gets squeezed/cut off.
+    final mapHeight = (_isMapExpanded && !keyboardOpen) ? fullMapHeight : 0.0;
+
+    return Scaffold(
+      backgroundColor: _C.background,
+      appBar: _buildAppBar(),
       body: Column(
         children: [
           // Orange Location Strip
-          Container(
-            color: const Color(0xFFF5A623),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                const Icon(Icons.location_on, color: Colors.red, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(_currentAddress, style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTapDown: (details) => _showLayersMenu(context, details.globalPosition),
-                  child: const Icon(Icons.layers, color: Colors.black87, size: 22),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: () => setState(() => _isMapExpanded = !_isMapExpanded),
-                  child: Icon(_isMapExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.black87, size: 24),
-                ),
-              ],
-            ),
-          ),
-          
-          // Map View
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-            height: _isMapExpanded ? 200 : 0,
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : const LatLng(16.1086, 120.5424),
-                initialZoom: 15.0,
-                interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
-                  userAgentPackageName: 'com.alertopoz.app',
-                ),
-                if (_currentPos != null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: LatLng(_currentPos!.latitude, _currentPos!.longitude),
-                        width: 40,
-                        height: 40,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Container(
-                              width: 12, height: 12,
-                              decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                            ),
-                          ),
-                        ),
-                      )
-                    ],
-                  )
-              ],
-            ),
-          ),
+          _buildLocationBar(),
 
-          // Chat Header Bar
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(_formatDate(DateTime.now().toIso8601String()), style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w600)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(4)),
-                  child: Row(
-                    children: [
-                      Text(_sent ? (_ticketCode ?? 'PENDING') : 'DRAFT-5', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 11, fontWeight: FontWeight.bold)),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.copy, size: 12, color: Colors.black54),
-                    ],
-                  ),
-                )
-              ],
-            ),
-          ),
+          // Map View
+          _buildMap(mapHeight, fullMapHeight),
+
+          // Incident date/time + draft/ticket status
+          _buildIncidentMetaBar(),
 
           // Chat feed
           Expanded(
             child: ListView(
               controller: _scrollCtrl,
-              padding: const EdgeInsets.all(16),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
               children: [
                 ..._chatFeed.map((msg) => _buildChatBubble(msg)),
+                if (_sending) _buildSendingIndicator(),
                 if (!_sent && !_cancelled) _buildCategoryGrid(),
-                const SizedBox(height: 20),
               ],
             ),
           ),
-          
+
           // Bottom Input Bar
-          if (!_cancelled)
-            Container(
-              color: const Color(0xFFF5F5F7),
-              padding: EdgeInsets.only(left: 12, right: 12, top: 12, bottom: MediaQuery.of(context).padding.bottom + 12),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: _attachGalleryImage,
-                    child: Icon(Icons.image, color: Colors.grey[500], size: 26),
-                  ),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                    onTap: _showCameraDialog,
-                    child: Icon(Icons.camera_alt, color: Colors.grey[500], size: 26),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _commentCtrl,
-                      decoration: InputDecoration(
-                        hintText: 'Type here...',
-                        hintStyle: GoogleFonts.outfit(color: Colors.grey[500]),
-                        border: InputBorder.none,
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => _sendChatMessage(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _sendChatMessage,
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF4CAF50),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.send, color: Colors.white, size: 20),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          if (!_cancelled) _buildInputBar() else _buildClosedBanner(),
         ],
       ),
     );

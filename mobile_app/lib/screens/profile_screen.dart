@@ -640,10 +640,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                               ),
                                             );
                                           } finally {
-                                            if (mounted)
+                                            if (mounted) {
                                               setStateDialog(
                                                 () => isLoading = false,
                                               );
+                                            }
                                           }
                                         },
                                 style: ElevatedButton.styleFrom(
@@ -863,10 +864,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             ),
                                           );
                                         } finally {
-                                          if (mounted)
+                                          if (mounted) {
                                             setStateDialog(
                                               () => isLoading = false,
                                             );
+                                          }
                                         }
                                       },
                               style: ElevatedButton.styleFrom(
@@ -1075,10 +1077,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             ),
                                           );
                                         } finally {
-                                          if (mounted)
+                                          if (mounted) {
                                             setStateDialog(
                                               () => isLoading = false,
                                             );
+                                          }
                                         }
                                       },
                               style: ElevatedButton.styleFrom(
@@ -1400,10 +1403,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             ),
                                           );
                                         } finally {
-                                          if (mounted)
+                                          if (mounted) {
                                             setStateDialog(
                                               () => isLoading = false,
                                             );
+                                          }
                                         }
                                       },
                               style: ElevatedButton.styleFrom(

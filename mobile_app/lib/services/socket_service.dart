@@ -51,8 +51,14 @@ class SocketService {
     _socket?.on(event, callback);
   }
 
-  static void off(String event) {
-    _socket?.off(event);
+  /// Removes listeners for [event]. If [handler] is given, only that specific
+  /// listener is removed (other screens' listeners stay attached).
+  static void off(String event, [EventCallback? handler]) {
+    if (handler != null) {
+      _socket?.off(event, handler);
+    } else {
+      _socket?.off(event);
+    }
   }
 
   static void emit(String event, dynamic data) {
