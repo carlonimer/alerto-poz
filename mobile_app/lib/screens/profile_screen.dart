@@ -392,7 +392,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       Text('Edit Profile', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                       const SizedBox(height: 8),
-                      Container(height: 2, width: double.infinity, color: const Color(0xFFF4B400)),
+                      const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                       const SizedBox(height: 16),
                       _buildDialogTextField('First Name', controller: firstCtrl),
                       const SizedBox(height: 12),
