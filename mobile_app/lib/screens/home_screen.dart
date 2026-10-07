@@ -388,10 +388,16 @@ class _HomeScreenState extends State<HomeScreen>
           child: AnimatedBuilder(
             animation: _pulseAnimation,
             builder: (context, child) {
-              return Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
+              return GestureDetector(
+                onTap: () {
+                  if (_myLocation != null) {
+                    _animatedMapMove(_myLocation!, 17.0);
+                  }
+                },
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
                   // Outer waving radar circle
                   Container(
                     width: 40 + (60 * _pulseAnimation.value),
