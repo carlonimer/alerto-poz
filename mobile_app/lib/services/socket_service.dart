@@ -21,11 +21,10 @@ class SocketService {
     _socket = io.io(
       serverUrl,
       io.OptionBuilder()
-          .setTransports(['websocket'])
+          .setTransports(['websocket', 'polling'])
           .enableAutoConnect()
           .enableReconnection()
           .setReconnectionDelay(2000)
-          .setReconnectionAttempts(10)
           .build(),
     );
 

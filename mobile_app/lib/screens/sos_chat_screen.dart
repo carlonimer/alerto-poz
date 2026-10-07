@@ -602,10 +602,15 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
 
     dynamic res;
-    try {
-      res = await completer.future.timeout(const Duration(seconds: 8));
-    } catch (_) {
+    if (!SocketService.isConnected) {
+      // If socket is known to be disconnected, don't wait for timeout
       res = null;
+    } else {
+      try {
+        res = await completer.future.timeout(const Duration(seconds: 15));
+      } catch (_) {
+        res = null;
+      }
     }
     if (res is List && res.isNotEmpty) res = res.first;
     final ticket = (res is Map && res['success'] == true) ? res['ticketNumber']?.toString() : null;
