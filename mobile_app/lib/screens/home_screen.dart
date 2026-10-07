@@ -239,20 +239,19 @@ class _HomeScreenState extends State<HomeScreen>
       
       CroppedFile? croppedFile = await ImageCropper().cropImage(
         sourcePath: image.path,
-        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
         uiSettings: [
           AndroidUiSettings(
             toolbarTitle: 'Crop Profile Picture',
             toolbarColor: Colors.white,
             toolbarWidgetColor: Colors.black,
-            initAspectRatio: CropAspectRatioPreset.square,
-            lockAspectRatio: true,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
             hideBottomControls: false,
           ),
           IOSUiSettings(
             title: 'Crop Profile Picture',
-            aspectRatioLockEnabled: true,
-            resetAspectRatioEnabled: false,
+            aspectRatioLockEnabled: false,
+            resetAspectRatioEnabled: true,
           ),
         ],
       );
