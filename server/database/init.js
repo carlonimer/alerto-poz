@@ -284,6 +284,16 @@ async function initDatabase(pool) {
         );
     `);
 
+    // 10. Persistent File Storage (for Render ephemeral filesystem workaround)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS file_storage (
+            filename VARCHAR(255) PRIMARY KEY,
+            mime_type VARCHAR(100),
+            data LONGBLOB,
+            created_at BIGINT
+        );
+    `);
+
     // Preseed responders table if empty
     const [responderCount] = await pool.query("SELECT COUNT(*) as count FROM responders");
     if (responderCount[0].count === 0) {

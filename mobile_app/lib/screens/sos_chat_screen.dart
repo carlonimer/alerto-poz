@@ -50,7 +50,7 @@ class SosChatScreen extends StatefulWidget {
 
 class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final _commentCtrl = TextEditingController();
-  bool _isDraft = false;
+  final bool _isDraft = false;
   Timer? _offlineQueueTimer;
   final ScrollController _scrollCtrl = ScrollController();
   final MapController _mapController = MapController();
@@ -585,7 +585,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   /// Emits the SOS report and waits for the server acknowledgement so we get
   /// the real ticket number (used as the incident id for follow-up messages).
-  Future<void> _doTransmit({String forceStatus = 'pending', bool background = false}) async {
+  Future<void> _doTransmit({bool background = false}) async {
     if (_sending && !background) return;
     if (!background) setState(() => _sending = true);
     if (!background) _scrollToBottom();

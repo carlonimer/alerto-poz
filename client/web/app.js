@@ -2262,7 +2262,7 @@ class CitizenMobileClient {
         });
 
         const profileImg = (this.activeUser && this.activeUser.profile_image) 
-            ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`)
+            ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : (this.activeUser.profile_image.startsWith('/') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`))
             : '/public/logo.png';
 
         const pinHtml = `
@@ -2331,7 +2331,7 @@ class CitizenMobileClient {
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(this.consoleMap);
 
             const profileImg = (this.activeUser && this.activeUser.profile_image) 
-                ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`)
+                ? (this.activeUser.profile_image.startsWith('http') || this.activeUser.profile_image.startsWith('data:') ? this.activeUser.profile_image : (this.activeUser.profile_image.startsWith('/') ? this.activeUser.profile_image : `/${this.activeUser.profile_image}`))
                 : '/public/logo.png';
 
             const pinHtml = `

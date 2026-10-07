@@ -1320,22 +1320,38 @@ app.post('/api/user/profile-picture', (req, res) => {
             const { id } = req.body;
             if (!id || !req.file) return res.status(400).json({ success: false, message: "Missing ID or Image" });
         
-        const relativePath = '/uploads/profiles/' + req.file.filename;
+        let relativePath = '/uploads/profiles/' + req.file.filename;
 
-        // Helper to delete old image
+        // Helper to delete old image locally (for JSON fallback)
         const deleteOldImage = (oldPath) => {
             if (oldPath && oldPath.startsWith('/uploads/profiles/')) {
                 const fullPath = path.join(__dirname, 'public', oldPath);
                 if (fs.existsSync(fullPath)) {
-                    fs.unlinkSync(fullPath);
+                    try { fs.unlinkSync(fullPath); } catch (e) {}
                 }
             }
         };
 
         if (useMySQL) {
-            // Get old image first
+            // Read file into buffer and save to persistent database storage
+            const fileBuffer = fs.readFileSync(req.file.path);
+            await pool.query(
+                "INSERT INTO file_storage (filename, mime_type, data, created_at) VALUES (?, ?, ?, ?)",
+                [req.file.filename, req.file.mimetype, fileBuffer, Date.now()]
+            );
+            relativePath = '/api/files/' + req.file.filename;
+
+            // Get old image and delete if exists
             const [oldRows] = await pool.query("SELECT profile_image FROM users WHERE id = ?", [id]);
-            if (oldRows.length > 0) deleteOldImage(oldRows[0].profile_image);
+            if (oldRows.length > 0 && oldRows[0].profile_image) {
+                const oldUrl = oldRows[0].profile_image;
+                if (oldUrl.startsWith('/api/files/')) {
+                    const oldFilename = oldUrl.split('/').pop();
+                    await pool.query("DELETE FROM file_storage WHERE filename = ?", [oldFilename]);
+                } else {
+                    deleteOldImage(oldUrl); // legacy cleanup
+                }
+            }
 
             await pool.query("UPDATE users SET profile_image = ?, updated_at = ? WHERE id = ?", [relativePath, Date.now(), id]);
             await logActivity(id, "Updated profile picture", req);
@@ -1359,6 +1375,26 @@ app.post('/api/user/profile-picture', (req, res) => {
         res.json({ success: true, imageUrl: relativePath }); // Keep url in response just in case, but use imageUrl
     } catch(e) { res.status(500).json({ success: false, message: e.message }); }
     });
+});
+
+app.get('/api/files/:filename', async (req, res) => {
+    try {
+        if (!useMySQL) {
+            return res.status(404).send("File storage only available on MySQL");
+        }
+        const [rows] = await pool.query("SELECT mime_type, data FROM file_storage WHERE filename = ?", [req.params.filename]);
+        if (rows.length === 0) {
+            return res.status(404).send("Not found");
+        }
+        const fileRecord = rows[0];
+        res.setHeader('Content-Type', fileRecord.mime_type);
+        // Add caching headers so mobile app doesn't refetch on every build
+        res.setHeader('Cache-Control', 'public, max-age=31536000'); 
+        res.send(fileRecord.data);
+    } catch (e) {
+        console.error("File serve error:", e);
+        res.status(500).send("Error serving file");
+    }
 });
 
 app.get('/api/user/activity-logs', async (req, res) => {
