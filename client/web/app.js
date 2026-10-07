@@ -3995,6 +3995,20 @@ Stay calm and provide clear updates.`;
         
         // 1. Fetch new messages from the database
         if (this.activeIncident.id && !String(this.activeIncident.id).startsWith("DRAFT-")) {
+            // Inject the auto-reply activation message
+            if (this.activeIncident.status && this.activeIncident.status !== 'draft') {
+                const sosMessage = `🚨 INCIDENT ACTIVATED<br>
+Ticket Code: <b>${this.activeIncident.id}</b><br>
+Your emergency request has been received.<br>
+Keep this ticket number for reference.<br><br>
+Your emergency location and details have been sent to the Command Center.<br>
+For emergency validation, please provide:<br>
+📸 Validation picture of the incident<br>
+🎥 Validation video, if available<br>
+Stay calm and provide clear updates.`;
+                this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble", this.activeIncident.createdAt);
+            }
+
             try {
                 const response = await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`);
                 if (response.ok) {

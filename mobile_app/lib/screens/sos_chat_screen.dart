@@ -131,6 +131,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         'type': 'system',
         'content': 'Emergency report prepared by ${(widget.user?.name ?? 'USER').toUpperCase()}',
       });
+      _chatFeed.add({
+        'role': 'bot',
+        'type': 'activated',
+        'content': '',
+        'timestamp': _createdAt.toIso8601String(),
+      });
       _fetchHistory();
     } else {
       _restoreDraftFromPrefs();
@@ -168,10 +174,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (data is! Map || data['incident_id'] != _incidentId || !mounted) return;
     setState(() {
       _chatFeed.add({
-        'role': data['sender_id'] == widget.user?.id.toString() ? 'user' : 'bot',
-        'type': data['is_media'] == true ? 'image' : 'text',
-        'content': data['message'],
-        'timestamp': DateTime.now().toIso8601String(),
+        'role': data['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
+        'type': (data['message_type'] == 'image' || data['message_type'] == 'video' || data['is_media'] == true) ? 'image' : 'text',
+        'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
+        'timestamp': data['timestamp'] != null 
+            ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(data['timestamp'].toString()) ?? DateTime.now().millisecondsSinceEpoch).toIso8601String() 
+            : DateTime.now().toIso8601String(),
       });
     });
     _scrollToBottom();
@@ -463,10 +471,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         setState(() {
           for (var msg in msgs) {
             _chatFeed.add({
-              'role': msg['senderId']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
-              'type': msg['isMedia'] == true ? 'image' : 'text',
-              'content': msg['content'],
-              'timestamp': msg['createdAt'] ?? DateTime.now().toIso8601String(),
+              'role': msg['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
+              'type': (msg['message_type'] == 'image' || msg['message_type'] == 'video' || msg['isMedia'] == true) ? 'image' : 'text',
+              'content': msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '',
+              'timestamp': msg['timestamp'] ?? msg['createdAt'] ?? DateTime.now().toIso8601String(),
             });
           }
         });
@@ -602,15 +610,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
 
     dynamic res;
-    if (!SocketService.isConnected) {
-      // If socket is known to be disconnected, don't wait for timeout
+    try {
+      // Wait up to 45 seconds to allow Render free tier to wake up and connect
+      res = await completer.future.timeout(const Duration(seconds: 45));
+    } catch (_) {
       res = null;
-    } else {
-      try {
-        res = await completer.future.timeout(const Duration(seconds: 15));
-      } catch (_) {
-        res = null;
-      }
     }
     if (res is List && res.isNotEmpty) res = res.first;
     final ticket = (res is Map && res['success'] == true) ? res['ticketNumber']?.toString() : null;
