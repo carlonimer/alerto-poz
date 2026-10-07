@@ -35,33 +35,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _pickProfileImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    if (image == null) return;
-    
-    CroppedFile? croppedFile = await ImageCropper().cropImage(
-      sourcePath: image.path,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Crop Profile Picture',
-          toolbarColor: Colors.white,
-          toolbarWidgetColor: Colors.black,
-          initAspectRatio: CropAspectRatioPreset.original,
-          lockAspectRatio: false,
-          hideBottomControls: false,
-        ),
-        IOSUiSettings(
-          title: 'Crop Profile Picture',
-          aspectRatioLockEnabled: false,
-          resetAspectRatioEnabled: true,
-        ),
-      ],
-    );
-
-    if (croppedFile == null) return;
-
-    if (!mounted) return;
     try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image == null) return;
+      
+      CroppedFile? croppedFile = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Profile Picture',
+            toolbarColor: Colors.white,
+            toolbarWidgetColor: Colors.black,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+            hideBottomControls: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Profile Picture',
+            aspectRatioLockEnabled: false,
+            resetAspectRatioEnabled: true,
+          ),
+        ],
+      );
+
+      if (croppedFile == null) return;
+
+      if (!mounted) return;
       if (_user?.id != null) {
         final res = await ApiService.updateProfilePicture(_user!.id.toString(), croppedFile.path);
         if (!mounted) return;
@@ -94,7 +94,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to upload image: $e')),
+        SnackBar(content: Text('Error: $e')),
       );
     }
   }
@@ -360,21 +360,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ---- DIALOG IMPLEMENTATIONS ----
 
   void _showEditProfileDialog() {
-    final firstCtrl = TextEditingController(text: _user?.firstName ?? '');
-    final middleCtrl = TextEditingController(text: _user?.middleName ?? '');
-    final lastCtrl = TextEditingController(text: _user?.lastName ?? '');
-    final suffixCtrl = TextEditingController(text: _user?.suffix ?? '');
-    final birthdateCtrl = TextEditingController(text: _user?.birthdate ?? '');
-    final addressCtrl = TextEditingController(text: _user?.address ?? '');
-    final phoneCtrl = TextEditingController(text: _user?.phone ?? '');
-    final emailCtrl = TextEditingController(text: _user?.email ?? '');
-    String? selectedGender = ['Male', 'Female', 'Other'].contains(_user?.gender) 
-        ? _user!.gender 
-        : null;
-    bool isLoading = false;
+    try {
+      final firstCtrl = TextEditingController(text: _user?.firstName ?? '');
+      final middleCtrl = TextEditingController(text: _user?.middleName ?? '');
+      final lastCtrl = TextEditingController(text: _user?.lastName ?? '');
+      final suffixCtrl = TextEditingController(text: _user?.suffix ?? '');
+      final birthdateCtrl = TextEditingController(text: _user?.birthdate ?? '');
+      final addressCtrl = TextEditingController(text: _user?.address ?? '');
+      final phoneCtrl = TextEditingController(text: _user?.phone ?? '');
+      final emailCtrl = TextEditingController(text: _user?.email ?? '');
+      String? selectedGender = ['Male', 'Female', 'Other'].contains(_user?.gender) 
+          ? _user!.gender 
+          : null;
+      bool isLoading = false;
 
-    showDialog(
-      context: context,
+      showDialog(
+        context: context,
       barrierDismissible: !isLoading,
       builder: (context) {
         return StatefulBuilder(
@@ -512,8 +513,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             );
           },
         );
-      },
-    );
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening dialog: $e')),
+        );
+      }
+    }
   }
 
   void _showFeedbackDialog() {
