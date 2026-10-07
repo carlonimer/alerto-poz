@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
@@ -1268,94 +1269,114 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _triggerSos() {
+  void _triggerSos() async {
     // Check if there is already an active incident for this user
     if (_user != null) {
-      ApiService.checkActiveIncident(_user!.id.toString()).then((res) {
+      try {
+        final res = await ApiService.checkActiveIncident(_user!.id.toString());
         if (!mounted) return;
         if (res['success'] == true && res['active'] == true) {
-          // Show draft conflict modal
-          showDialog(
-            context: context,
-            builder: (ctx) => Dialog(
-              backgroundColor: const Color(0xFFF9EAE1),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.warning_rounded, color: Colors.orange),
-                        const SizedBox(width: 8),
-                        Text('Active Report', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?',
-                      style: GoogleFonts.outfit(fontSize: 13, color: Colors.black87),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _navigateToChat(null); // Start new
-                            },
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(50),
-                                side: const BorderSide(color: Color(0xFF8B3A3A), width: 1.5),
-                              ),
-                            ),
-                            child: Text('Start New', style: GoogleFonts.outfit(color: const Color(0xFF8B3A3A), fontWeight: FontWeight.w700, fontSize: 14)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _navigateToChat(null, res['incident'] as Map<String, dynamic>?);
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFF05023),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-                              elevation: 2,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 18),
-                                const SizedBox(width: 8),
-                                Text('Continue', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                              ]
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
+          _showConflictDialog(true, res['incident'] as Map<String, dynamic>?);
         } else {
-          _navigateToChat(null);
+          _checkLocalDraft();
         }
-      }).catchError((e) {
-        _navigateToChat(null);
-      });
+      } catch (e) {
+        _checkLocalDraft();
+      }
+    } else {
+      _checkLocalDraft();
+    }
+  }
+
+  void _checkLocalDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    final draftStr = prefs.getString('draft_incident_payload');
+    if (draftStr != null) {
+      _showConflictDialog(false, null);
     } else {
       _navigateToChat(null);
     }
+  }
+
+  void _showConflictDialog(bool isActive, Map<String, dynamic>? activeIncident) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFFF9EAE1),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.warning_rounded, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Text(isActive ? 'Active Report' : 'Draft Emergency', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isActive 
+                  ? 'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?'
+                  : 'You have an unsent draft emergency report. Do you want to continue with your draft or start a new one?',
+                style: GoogleFonts.outfit(fontSize: 13, color: Colors.black87),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        if (!isActive) {
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.remove('draft_incident_payload');
+                        }
+                        _navigateToChat(null); // Start new
+                      },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(50),
+                          side: const BorderSide(color: Color(0xFF8B3A3A), width: 1.5),
+                        ),
+                      ),
+                      child: Text('Start New', style: GoogleFonts.outfit(color: const Color(0xFF8B3A3A), fontWeight: FontWeight.w700, fontSize: 14)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _navigateToChat(null, activeIncident); // Continue
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF05023),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
+                        elevation: 2,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          Text('Continue', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                        ]
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _navigateToChat(String? category, [Map<String, dynamic>? activeIncident]) {
