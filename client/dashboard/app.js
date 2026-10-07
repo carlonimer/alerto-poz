@@ -918,7 +918,7 @@ class CommandDashboard {
 
     getAvatarHtml(profileImage, gender, size = 32) {
         if (profileImage && profileImage.trim() !== '') {
-            const url = profileImage.startsWith('http') ? profileImage : profileImage;
+            const url = profileImage.startsWith('http') ? profileImage : `${window.SERVER_URL || ''}${profileImage}`;
             return `<img src="${url}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; box-shadow: 0 2px 5px rgba(0,0,0,0.1); flex-shrink: 0;" />`;
         }
         const g = (gender || '').toLowerCase();

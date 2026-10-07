@@ -1045,7 +1045,7 @@ class CitizenMobileClient {
                         cropper.destroy();
                         cropper = null;
                         
-                        this.activeUser.profile_image = data.url;
+                        this.activeUser.profile_image = data.imageUrl;
                         if (localStorage.getItem("alerto-token")) {
                             localStorage.setItem("alerto-user", JSON.stringify(this.activeUser));
                         } else if (sessionStorage.getItem("alerto-token")) {

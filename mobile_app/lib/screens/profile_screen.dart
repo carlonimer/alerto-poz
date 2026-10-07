@@ -187,11 +187,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                   )
                                                   as ImageProvider
                                               : NetworkImage(
-                                                _user!.profileImage.startsWith(
-                                                      'http',
-                                                    )
-                                                    ? _user!.profileImage
-                                                    : '${ApiService.baseUrl}${_user!.profileImage.startsWith('/') ? '' : '/'}${_user!.profileImage}',
+                                                _user!.profileImage.startsWith('http')
+                                                    ? '${_user!.profileImage}?t=${DateTime.now().millisecondsSinceEpoch}'
+                                                    : '${ApiService.baseUrl}${_user!.profileImage.startsWith('/') ? '' : '/'}${_user!.profileImage}?t=${DateTime.now().millisecondsSinceEpoch}',
                                               ),
                                       fit: BoxFit.cover,
                                     )
