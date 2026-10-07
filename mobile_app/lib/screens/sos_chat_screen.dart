@@ -71,6 +71,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
   Position? _currentPos;
   LatLng? _incidentPos;
+  LatLng? _selectedPos;
+  Timer? _geocodeTimer;
   String _currentAddress = 'Locating...';
 
   static const List<Map<String, dynamic>> _categories = [
@@ -184,7 +186,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Location ─────────────────────────
 
   LatLng? get _markerPos =>
-      _currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : _incidentPos;
+      _selectedPos ?? (_currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : _incidentPos);
 
   Future<void> _initLocation() async {
     if (mounted && _currentPos == null) setState(() => _currentAddress = 'Locating...');
@@ -193,12 +195,16 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (pos != null) {
       setState(() {
         _currentPos = pos;
+        _selectedPos ??= LatLng(pos.latitude, pos.longitude);
         _currentAddress = 'Locating...';
       });
-      _moveMap(LatLng(pos.latitude, pos.longitude), 15.0);
-      _resolveAddress(pos.latitude, pos.longitude);
+      _moveMap(_selectedPos!, 15.0);
+      _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
     } else if (_incidentPos != null) {
-      setState(() => _currentAddress = 'Locating...');
+      setState(() {
+        _selectedPos = _incidentPos;
+        _currentAddress = 'Locating...';
+      });
       _moveMap(_incidentPos!, 15.0);
       _resolveAddress(_incidentPos!.latitude, _incidentPos!.longitude);
     } else {
@@ -252,14 +258,22 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  void _recenterMap() {
-    final p = _markerPos;
-    if (p == null) {
-      _initLocation();
-      return;
-    }
+  Future<void> _recenterMap() async {
     if (!_isMapExpanded) setState(() => _isMapExpanded = true);
-    _moveMap(p, 16.0);
+    final pos = await LocationService.getCurrentPosition();
+    if (pos != null && mounted) {
+      final p = LatLng(pos.latitude, pos.longitude);
+      if (!_sent) {
+        setState(() {
+          _selectedPos = p;
+          _currentAddress = 'Locating...';
+        });
+        _resolveAddress(p.latitude, p.longitude);
+      }
+      _moveMap(p, 18.5);
+    } else {
+      _initLocation();
+    }
   }
 
   void _zoomBy(double delta) {
@@ -382,13 +396,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   Future<void> _sendSos() async {
     if (_selectedCategory == null) return;
-    final pos = await LocationService.getCurrentPosition();
-    await _doTransmit(pos);
+    await _doTransmit();
   }
 
   /// Emits the SOS report and waits for the server acknowledgement so we get
   /// the real ticket number (used as the incident id for follow-up messages).
-  Future<void> _doTransmit(dynamic pos) async {
+  Future<void> _doTransmit() async {
     if (_sending) return;
     setState(() => _sending = true);
     _scrollToBottom();
@@ -399,8 +412,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       'reporterName': widget.user?.name ?? 'Citizen',
       'reporterPhone': widget.user?.phone ?? '',
       'category': _selectedCategory,
-      'lat': pos?.latitude ?? _markerPos?.latitude ?? _defaultCenter.latitude,
-      'lng': pos?.longitude ?? _markerPos?.longitude ?? _defaultCenter.longitude,
+      'lat': _markerPos?.latitude ?? _defaultCenter.latitude,
+      'lng': _markerPos?.longitude ?? _defaultCenter.longitude,
       'notes': _commentCtrl.text.trim(),
       'attachments': _attachedImages,
       'timestamp': DateTime.now().toIso8601String(),
@@ -867,6 +880,20 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   initialCenter: marker ?? _defaultCenter,
                   initialZoom: 15.0,
                   interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+                  onPositionChanged: (position, hasGesture) {
+                    if (hasGesture && !_sent && position.center != null) {
+                      setState(() {
+                        _selectedPos = position.center;
+                        _currentAddress = 'Updating location...';
+                      });
+                      _geocodeTimer?.cancel();
+                      _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
+                        if (mounted && _selectedPos != null) {
+                          _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
+                        }
+                      });
+                    }
+                  },
                 ),
                 children: [
                   TileLayer(
