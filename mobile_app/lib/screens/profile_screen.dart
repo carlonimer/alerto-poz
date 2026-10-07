@@ -63,12 +63,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (widget.onUserUpdated != null) {
             widget.onUserUpdated!(updatedUser);
           }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(res['message'] ?? 'Failed to upload image')),
+          );
         }
       }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to upload image')),
+        SnackBar(content: Text('Failed to upload image: $e')),
       );
     }
   }

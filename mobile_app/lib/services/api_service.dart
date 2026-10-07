@@ -143,8 +143,11 @@ class ApiService {
       'POST',
       Uri.parse('$baseUrl/api/user/profile-picture'),
     );
-    final headers = await _getHeaders(auth: true);
-    request.headers.addAll(headers);
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
     request.fields['id'] = userId;
     request.files.add(await http.MultipartFile.fromPath('profile_image', filePath));
     
