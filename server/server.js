@@ -1783,6 +1783,80 @@ app.delete('/api/incidents/draft/:userId', async (req, res) => {
     }
 });
 
+// Submit SOS Report (HTTP fallback for socket 'citizen-sos-report')
+app.post('/api/incidents', async (req, res) => {
+    try {
+        let report = req.body;
+        let isNewEmergency = false;
+        let oldDraftId = null;
+
+        if (!report.id || report.id === 'draft' || report.id.startsWith('DRAFT-')) {
+            isNewEmergency = true;
+            if (report.id && report.id.startsWith('DRAFT-')) {
+                oldDraftId = report.id;
+            }
+            report.id = await generateUniqueTicketNumber();
+        }
+
+        // Fetch previous state to detect if this is an activation
+        let previousStatus = null;
+        if (!isNewEmergency) {
+            if (useMySQL) {
+                const [rows] = await pool.query("SELECT status FROM incidents WHERE id=?", [report.id]);
+                if (rows.length > 0) {
+                    previousStatus = rows[0].status;
+                } else {
+                    isNewEmergency = true; // Offline mobile app generated this ID
+                }
+            } else {
+                const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                const inc = db.incidents.find(i => i.id === report.id);
+                if (inc) {
+                    previousStatus = inc.status;
+                } else {
+                    isNewEmergency = true;
+                }
+            }
+        }
+
+        const isActivation = isNewEmergency || (previousStatus && previousStatus.toLowerCase() === 'draft' && report.status.toLowerCase() !== 'draft');
+
+        // This is an update (or new insert) to an existing incident
+        await addIncident(report);
+        
+        // Delete the old draft record if one existed
+        if (oldDraftId) {
+            if (useMySQL) {
+                await pool.query("DELETE FROM incidents WHERE id = ?", [oldDraftId]);
+            } else {
+                const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                db.incidents = db.incidents.filter(i => i.id !== oldDraftId);
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+            }
+            io.emit('incident-deleted', { id: oldDraftId });
+        }
+        
+        if (isNewEmergency) {
+            io.emit('new-incident-alert', report);
+        } else {
+            io.emit('incident-updated', report);
+        }
+        console.log(`SOS HTTP POST Saved: ${report.id}`);
+        
+        if (isActivation) {
+            await recordIncidentEvent(report.id, report.id, 'SOS alert activated', previousStatus, report.status, 'Citizen App');
+            io.emit('incident_status_changed', report);
+        } else {
+            await recordIncidentEvent(report.id, report.id, 'Emergency Details Updated', null, report.status, 'Citizen App');
+        }
+
+        res.json({ success: true, ticketNumber: report.id, incident: report });
+    } catch (e) {
+        console.error("SOS HTTP POST save error:", e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Hardware Push Button Trigger Endpoint
 app.post('/api/hardware/trigger', async (req, res) => {
     try {

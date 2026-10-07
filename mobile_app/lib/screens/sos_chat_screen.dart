@@ -604,19 +604,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       'createdAt': DateTime.now().toIso8601String(),
     };
 
-    final completer = Completer<dynamic>();
-    SocketService.emitSosReportWithAck(payload, (res) {
-      if (!completer.isCompleted) completer.complete(res);
-    });
-
     dynamic res;
     try {
-      // Wait up to 45 seconds to allow Render free tier to wake up and connect
-      res = await completer.future.timeout(const Duration(seconds: 45));
+      res = await ApiService.submitSosReport(payload);
     } catch (_) {
       res = null;
     }
-    if (res is List && res.isNotEmpty) res = res.first;
     final ticket = (res is Map && res['success'] == true) ? res['ticketNumber']?.toString() : null;
 
     if (!mounted) return;

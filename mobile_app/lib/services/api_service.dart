@@ -254,6 +254,17 @@ class ApiService {
     return body;
   }
 
+  static Future<Map<String, dynamic>> submitSosReport(Map<String, dynamic> data) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/api/incidents'),
+      headers: await _getHeaders(auth: true),
+      body: jsonEncode(data),
+    );
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    body['_statusCode'] = res.statusCode;
+    return body;
+  }
+
   static Future<Map<String, dynamic>> deleteDraftIncident(String userId) async {
     final res = await http.delete(
       Uri.parse('$baseUrl/api/incidents/draft/$userId'),
