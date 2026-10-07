@@ -2215,9 +2215,23 @@ io.on('connection', async (socket) => {
 
             // Fetch previous state to detect if this is an activation
             let previousStatus = null;
-            if (!isNewEmergency && useMySQL) {
-                const [rows] = await pool.query("SELECT status FROM incidents WHERE id=?", [report.id]);
-                if (rows.length > 0) previousStatus = rows[0].status;
+            if (!isNewEmergency) {
+                if (useMySQL) {
+                    const [rows] = await pool.query("SELECT status FROM incidents WHERE id=?", [report.id]);
+                    if (rows.length > 0) {
+                        previousStatus = rows[0].status;
+                    } else {
+                        isNewEmergency = true; // Offline mobile app generated this ID
+                    }
+                } else {
+                    const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                    const inc = db.incidents.find(i => i.id === report.id);
+                    if (inc) {
+                        previousStatus = inc.status;
+                    } else {
+                        isNewEmergency = true;
+                    }
+                }
             }
 
             const isActivation = isNewEmergency || (previousStatus && previousStatus.toLowerCase() === 'draft' && report.status.toLowerCase() !== 'draft');

@@ -65,6 +65,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   String? _assignedUnit;
   bool _sent = false;
   bool _sending = false;
+  bool _queued = false;
   bool _cancelled = false; // New cancelled state
   bool _hasText = false;
   DateTime _createdAt = DateTime.now();
@@ -220,8 +221,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               _selectedPos = LatLng(draft['lat'], draft['lng']);
               _currentAddress = 'Draft Location';
             }
-            if (draft['notes'] != null) _commentCtrl.text = draft['notes'];
-            if (draft['attachments'] != null) _attachedImages = List<String>.from(draft['attachments']);
+            if (draft['details'] != null) _commentCtrl.text = draft['details'];
+            if (draft['media'] != null) _attachedImages = List<String>.from(draft['media']);
           });
         }
       } catch (_) {}
@@ -239,14 +240,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
     final payload = {
       'reporterId': widget.user?.id ?? 0,
-      'reporterName': widget.user?.name ?? 'Citizen',
       'reporterPhone': widget.user?.phone ?? '',
+      'reporter': widget.user?.name ?? 'Citizen',
       'category': _selectedCategory,
       'lat': _selectedPos?.latitude ?? _defaultCenter.latitude,
       'lng': _selectedPos?.longitude ?? _defaultCenter.longitude,
-      'notes': _commentCtrl.text.trim(),
-      'attachments': _attachedImages,
-      'timestamp': DateTime.now().toIso8601String(),
+      'details': _commentCtrl.text.trim(),
+      'media': _attachedImages,
+      'createdAt': DateTime.now().toIso8601String(),
     };
     
     SharedPreferences.getInstance().then((prefs) {
@@ -285,7 +286,62 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         } else if (act['type'] == 'attachment') {
           await ApiService.sendMessage(act['incidentId'], act['payload'], mediaPath: act['mediaPath']);
         } else if (act['type'] == 'status') {
-          SocketService.emitSosReportWithAck(act['payload'], (_) {});
+          final c = Completer();
+          SocketService.emitSosReportWithAck(act['payload'], (res) {
+            if (!c.isCompleted) c.complete(res);
+          });
+          final res = await c.future.timeout(const Duration(seconds: 8));
+          if (res is List && res.isNotEmpty) {
+             if (res.first['success'] == true && res.first['ticketNumber'] != null) {
+               final realTicket = res.first['ticketNumber'].toString();
+               final oldId = act['payload']['id'];
+               if (mounted && _incidentId == oldId) {
+                  setState(() {
+                     _incidentId = realTicket;
+                     _ticketCode = realTicket;
+                     _queued = false;
+                     _chatFeed.add({
+                       'role': 'bot',
+                       'type': 'activated',
+                       'content': '',
+                       'timestamp': DateTime.now().toIso8601String(),
+                     });
+                  });
+                  SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload'));
+               }
+               for (var nextAct in queue) {
+                 if (nextAct['incidentId'] == oldId) {
+                   nextAct['incidentId'] = realTicket;
+                 }
+               }
+             } else {
+               throw Exception('Server rejected queued status');
+             }
+          } else if (res != null && res is Map && res['success'] == true && res['ticketNumber'] != null) {
+               final realTicket = res['ticketNumber'].toString();
+               final oldId = act['payload']['id'];
+               if (mounted && _incidentId == oldId) {
+                  setState(() {
+                     _incidentId = realTicket;
+                     _ticketCode = realTicket;
+                     _queued = false;
+                     _chatFeed.add({
+                       'role': 'bot',
+                       'type': 'activated',
+                       'content': '',
+                       'timestamp': DateTime.now().toIso8601String(),
+                     });
+                  });
+                  SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload'));
+               }
+               for (var nextAct in queue) {
+                 if (nextAct['incidentId'] == oldId) {
+                   nextAct['incidentId'] = realTicket;
+                 }
+               }
+          } else {
+             throw Exception('Failed to send queued status');
+          }
         }
       } catch (_) {
         hasFailed = true;
@@ -527,17 +583,17 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (!background) _scrollToBottom();
 
     final payload = {
-      'id': _incidentId,
-      'reporterId': widget.user?.id ?? 0,
-      'reporterName': widget.user?.name ?? 'Citizen',
-      'reporterPhone': widget.user?.phone ?? '',
-      'category': _selectedCategory,
-      'lat': _markerPos?.latitude ?? _defaultCenter.latitude,
-      'lng': _markerPos?.longitude ?? _defaultCenter.longitude,
-      'notes': _commentCtrl.text.trim(),
-      'attachments': _attachedImages,
-      'timestamp': DateTime.now().toIso8601String(),
+      'id': _incidentId ?? 'draft',
       'status': 'pending',
+      'reporterId': widget.user?.id ?? 0,
+      'reporterPhone': widget.user?.phone ?? '',
+      'reporter': widget.user?.name ?? 'Citizen',
+      'lat': _selectedPos?.latitude ?? _defaultCenter.latitude,
+      'lng': _selectedPos?.longitude ?? _defaultCenter.longitude,
+      'category': _selectedCategory,
+      'details': _commentCtrl.text.trim(),
+      'media': _attachedImages,
+      'createdAt': DateTime.now().toIso8601String(),
     };
 
     final completer = Completer<dynamic>();
@@ -557,20 +613,33 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (!mounted) return;
     setState(() {
       _sending = false;
-      _sent = true;
       _createdAt = DateTime.now();
       if (ticket != null) {
         _incidentId = ticket;
         _ticketCode = ticket;
+        _sent = true;
+        _queued = false;
+        _chatFeed.add({
+          'role': 'bot',
+          'type': 'activated',
+          'content': '',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload')); // Clear draft once sent
       } else {
-        _ticketCode ??= 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
+        _incidentId ??= 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
+        _ticketCode = _incidentId;
+        _queued = true;
+        _sent = true; // Mark as sent locally so user can continue chatting
+        _chatFeed.add({
+          'role': 'bot',
+          'type': 'system',
+          'content': 'No internet connection. Your emergency report is QUEUED and will be sent automatically once the connection is restored.',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        payload['id'] = _incidentId;
+        _queueOfflineAction({'type': 'status', 'payload': payload});
       }
-      _chatFeed.add({
-        'role': 'bot',
-        'type': 'activated',
-        'content': '',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
     });
     _scrollToBottom();
   }
@@ -1143,8 +1212,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Incident meta bar ─────────────────────────
 
   Widget _buildIncidentMetaBar() {
-    final code = _sent ? (_ticketCode ?? 'PENDING') : 'DRAFT-5';
-    final dotColor = _cancelled ? _C.redDeep : (_sent ? _C.pending : Colors.grey);
+    final code = _queued ? 'QUEUED' : (_sent ? (_ticketCode ?? 'PENDING') : 'DRAFT');
+    final dotColor = _cancelled ? _C.redDeep : (_queued ? Colors.orange : (_sent ? _C.pending : Colors.grey));
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,

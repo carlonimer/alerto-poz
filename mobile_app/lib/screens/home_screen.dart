@@ -98,13 +98,19 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final res = await ApiService.checkActiveIncident(_user!.id.toString());
       if (res['success'] == true && res['active'] == true && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You have an active emergency incident.'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 5),
-          ),
-        );
+        final inc = res['incident'];
+        if (inc != null && inc['status'] != 'draft' && inc['status'] != 'cancelled') {
+          // Navigate to SOSChatScreen automatically for active requested incident
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SOSChatScreen(
+                user: _user,
+                activeIncident: inc,
+              ),
+            ),
+          );
+        }
       }
     } catch(e) {}
   }

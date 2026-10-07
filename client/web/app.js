@@ -1304,8 +1304,11 @@ class CitizenMobileClient {
                         }
                     }
 
-                    // ALWAYS open the User Main Dashboard first, even if there is an existing Draft/Active Emergency
                     let lastState = "homepage";
+                    
+                    if (this.activeIncident && this.activeIncident.status && this.activeIncident.status !== 'draft' && this.activeIncident.status !== 'cancelled') {
+                        lastState = "chat";
+                    }
 
                     if (lastState && ["homepage", "home", "chat", "profile"].includes(lastState)) {
                         this.transitionAppState(lastState);
