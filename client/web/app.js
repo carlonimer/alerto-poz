@@ -2102,10 +2102,13 @@ class CitizenMobileClient {
                 },
                 (err) => {
                     console.warn("GPS Watch Error: ", err);
+                    const chatGeofenceAddress = document.getElementById('chat-geofence-address');
                     if (err.code === err.PERMISSION_DENIED) {
                         this.addressSearchInput.value = "Location permissions denied";
+                        if (chatGeofenceAddress) chatGeofenceAddress.textContent = "Location permissions denied";
                     } else if (this.addressSearchInput.value === "Locating...") {
                         this.addressSearchInput.value = "Unknown Location";
+                        if (chatGeofenceAddress) chatGeofenceAddress.textContent = "Unknown Location";
                     }
                 },
                 { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
@@ -2121,6 +2124,10 @@ class CitizenMobileClient {
     async syncGPSUI() {
         if (!this.addressSearchInput.value || this.addressSearchInput.value.includes("📍") || this.addressSearchInput.value.includes("16.1")) {
             this.addressSearchInput.value = "Locating...";
+            const chatGeofenceAddress = document.getElementById('chat-geofence-address');
+            if (chatGeofenceAddress && (chatGeofenceAddress.textContent.includes("Buneg") || chatGeofenceAddress.textContent.includes("📍"))) {
+                chatGeofenceAddress.textContent = "Locating...";
+            }
         }
 
         if (this.homeMap && this.homeUserMarker) {
@@ -2158,14 +2165,20 @@ class CitizenMobileClient {
             if (town) parts.push(town);
             if (province) parts.push(province);
 
+            const chatGeofenceAddress = document.getElementById('chat-geofence-address');
             if (parts.length > 0) {
-                this.addressSearchInput.value = parts.join(", ");
+                const addressStr = parts.join(", ");
+                this.addressSearchInput.value = addressStr;
+                if (chatGeofenceAddress) chatGeofenceAddress.textContent = addressStr;
             } else {
                 this.addressSearchInput.value = "Unknown Location";
+                if (chatGeofenceAddress) chatGeofenceAddress.textContent = "Unknown Location";
             }
         } catch (err) {
             console.error("Reverse geocoding error:", err);
             this.addressSearchInput.value = "Unknown Location";
+            const chatGeofenceAddress = document.getElementById('chat-geofence-address');
+            if (chatGeofenceAddress) chatGeofenceAddress.textContent = "Unknown Location";
         }
     }
 
