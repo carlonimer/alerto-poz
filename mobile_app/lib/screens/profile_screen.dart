@@ -5,6 +5,7 @@ import '../models/user.dart';
 import 'history_screen.dart';
 import '../services/api_service.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserModel? user;
@@ -38,10 +39,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     if (image == null) return;
     
+    CroppedFile? croppedFile = await ImageCropper().cropImage(
+      sourcePath: image.path,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Crop Profile Picture',
+          toolbarColor: Colors.white,
+          toolbarWidgetColor: Colors.black,
+          initAspectRatio: CropAspectRatioPreset.square,
+          lockAspectRatio: true,
+          hideBottomControls: false,
+        ),
+        IOSUiSettings(
+          title: 'Crop Profile Picture',
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+        ),
+      ],
+    );
+
+    if (croppedFile == null) return;
+
     if (!mounted) return;
     try {
       if (_user?.id != null) {
-        final res = await ApiService.updateProfilePicture(_user!.id.toString(), image.path);
+        final res = await ApiService.updateProfilePicture(_user!.id.toString(), croppedFile.path);
         if (!mounted) return;
         if (res['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -49,7 +72,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
           
           // Get the new image path from response (or optimistic update)
-          String newImageUrl = res['imageUrl'] ?? image.path; // Fallback to path if not returned
+          String newImageUrl = res['imageUrl'] ?? croppedFile.path; // Fallback to path if not returned
           // Ensure it starts with http or '/'
           if (!newImageUrl.startsWith('http') && !newImageUrl.startsWith('data:') && !newImageUrl.startsWith('/')) {
             newImageUrl = '/$newImageUrl';

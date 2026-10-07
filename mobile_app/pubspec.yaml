@@ -32,6 +32,7 @@ dependencies:
   # Utilities
   permission_handler: ^11.3.1
   intl: ^0.20.3
+  image_cropper: ^12.2.1
 
 dev_dependencies:
   flutter_test:

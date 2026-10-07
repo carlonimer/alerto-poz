@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
@@ -236,9 +237,31 @@ class _HomeScreenState extends State<HomeScreen>
       final XFile? image = await picker.pickImage(source: source);
       if (image == null) return;
       
+      CroppedFile? croppedFile = await ImageCropper().cropImage(
+        sourcePath: image.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Profile Picture',
+            toolbarColor: Colors.white,
+            toolbarWidgetColor: Colors.black,
+            initAspectRatio: CropAspectRatioPreset.square,
+            lockAspectRatio: true,
+            hideBottomControls: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Profile Picture',
+            aspectRatioLockEnabled: true,
+            resetAspectRatioEnabled: false,
+          ),
+        ],
+      );
+
+      if (croppedFile == null) return;
+
       if (!mounted) return;
       if (_user?.id != null) {
-        final res = await ApiService.updateProfilePicture(_user!.id.toString(), image.path);
+        final res = await ApiService.updateProfilePicture(_user!.id.toString(), croppedFile.path);
         if (!mounted) return;
         if (res['success'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
