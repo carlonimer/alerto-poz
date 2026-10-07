@@ -394,47 +394,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 8),
                       const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                       const SizedBox(height: 16),
-                      _buildDialogTextField('First Name', controller: firstCtrl),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Middle Initial', controller: middleCtrl),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Last Name', controller: lastCtrl),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Suffix (e.g. Jr, Sr)', controller: suffixCtrl),
-                      const SizedBox(height: 12),
-                      GestureDetector(
-                        onTap: () async {
-                          final date = await showDatePicker(
-                            context: context,
-                            initialDate: DateTime.now(),
-                            firstDate: DateTime(1900),
-                            lastDate: DateTime.now(),
-                          );
-                          if (date != null) {
-                            setStateDialog(() => birthdateCtrl.text = '${date.month}/${date.day}/${date.year}');
-                          }
-                        },
-                        child: AbsorbPointer(
-                          child: _buildDialogTextField('Date of Birth', controller: birthdateCtrl, suffixIcon: Icons.calendar_today),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _buildDialogDropdown(
-                        selectedGender,
-                        ['Male', 'Female', 'Other'],
-                        (v) {
-                          if (v != null) {
-                            setStateDialog(() => selectedGender = v);
-                          }
-                        },
-                        hint: 'Select Gender'
-                      ),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Barangay', controller: addressCtrl),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Email Address', controller: emailCtrl),
-                      const SizedBox(height: 12),
-                      _buildDialogTextField('Phone Number', controller: phoneCtrl),
+                      const Text('Testing if layout works!'),
                       const SizedBox(height: 24),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
