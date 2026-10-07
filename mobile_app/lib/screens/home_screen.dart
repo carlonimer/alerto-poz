@@ -104,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => SOSChatScreen(
+              builder: (_) => SosChatScreen(
                 user: _user,
                 activeIncident: inc,
               ),
