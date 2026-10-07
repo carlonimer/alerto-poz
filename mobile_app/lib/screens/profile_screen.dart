@@ -628,10 +628,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 8),
                       Container(height: 2, width: double.infinity, color: const Color(0xFFF5A623)),
                       const SizedBox(height: 16),
-                      Text('Enter your current passcode to create a new one.', style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12)),
+                      Text(
+                        _user!.hasPasscode ? 'Enter your current passcode to create a new one.' : 'Create a new passcode for emergency verification.', 
+                        style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 12)
+                      ),
                       const SizedBox(height: 16),
-                      _buildDialogTextField('Current Passcode (if changing)', controller: currentCtrl, obscureText: true),
-                      const SizedBox(height: 12),
+                      if (_user!.hasPasscode) ...[
+                        _buildDialogTextField('Current Passcode', controller: currentCtrl, obscureText: true),
+                        const SizedBox(height: 12),
+                      ],
                       _buildDialogTextField('New Passcode', controller: newCtrl, obscureText: true),
                       const SizedBox(height: 12),
                       _buildDialogTextField('Confirm New Passcode', controller: confirmCtrl, obscureText: true),
@@ -719,13 +724,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     double alertRadius = (settings['emergency_alert_radius'] ?? 1000).toDouble();
     bool liveLoc = settings['live_location'] == 1 || settings['live_location'] == true;
     bool gpsAccess = settings['gps_enabled'] == 1 || settings['gps_enabled'] == true || settings['gps_enabled'] == null;
-    bool realTime = settings['live_location'] == 1 || settings['live_location'] == true; // same logic as liveLoc?
-    bool showTraffic = settings['show_traffic'] == 1 || settings['show_traffic'] == true;
-    bool showDisaster = settings['show_disaster_zones'] == 1 || settings['show_disaster_zones'] == true || settings['show_disaster_zones'] == null;
-    bool showEvac = settings['show_evacuation_centers'] == 1 || settings['show_evacuation_centers'] == true || settings['show_evacuation_centers'] == null;
-    bool showBarangay = settings['show_barangay_boundaries'] == 1 || settings['show_barangay_boundaries'] == true || settings['show_barangay_boundaries'] == null;
+    bool showLabels = settings['show_labels'] == 1 || settings['show_labels'] == true || settings['show_labels'] == null;
+    bool showRoutes = settings['show_routes'] == 1 || settings['show_routes'] == true || settings['show_routes'] == null;
+    bool showMarkers = settings['show_markers'] == 1 || settings['show_markers'] == true || settings['show_markers'] == null;
+    bool locationControls = settings['location_controls'] == 1 || settings['location_controls'] == true || settings['location_controls'] == null;
     bool autoRefresh = settings['auto_refresh'] == 1 || settings['auto_refresh'] == true || settings['auto_refresh'] == null;
-    bool darkMode = settings['dark_mode'] == 1 || settings['dark_mode'] == true;
     bool isLoading = false;
 
     showDialog(
@@ -785,15 +788,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onChanged: (v) => setStateDialog(() => alertRadius = v),
                       ),
                       const SizedBox(height: 8),
+                      _buildCheckbox('Show Labels', showLabels, (v) => setStateDialog(() => showLabels = v ?? false)),
+                      _buildCheckbox('Show Routes', showRoutes, (v) => setStateDialog(() => showRoutes = v ?? false)),
+                      _buildCheckbox('Show Markers', showMarkers, (v) => setStateDialog(() => showMarkers = v ?? false)),
+                      _buildCheckbox('Location Controls', locationControls, (v) => setStateDialog(() => locationControls = v ?? false)),
                       _buildCheckbox('Enable Live Location', liveLoc, (v) => setStateDialog(() => liveLoc = v ?? false)),
                       _buildCheckbox('Allow GPS Access', gpsAccess, (v) => setStateDialog(() => gpsAccess = v ?? false)),
-                      _buildCheckbox('Enable Real-Time Tracking', realTime, (v) => setStateDialog(() => realTime = v ?? false)),
-                      _buildCheckbox('Show Traffic', showTraffic, (v) => setStateDialog(() => showTraffic = v ?? false)),
-                      _buildCheckbox('Show Disaster Zones', showDisaster, (v) => setStateDialog(() => showDisaster = v ?? false)),
-                      _buildCheckbox('Show Evacuation Centers', showEvac, (v) => setStateDialog(() => showEvac = v ?? false)),
-                      _buildCheckbox('Show Barangay Boundaries', showBarangay, (v) => setStateDialog(() => showBarangay = v ?? false)),
                       _buildCheckbox('Auto-Refresh Map', autoRefresh, (v) => setStateDialog(() => autoRefresh = v ?? false)),
-                      _buildCheckbox('Dark Mode Navigation', darkMode, (v) => setStateDialog(() => darkMode = v ?? false)),
                       const SizedBox(height: 24),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
@@ -811,17 +812,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 final mapData = {
                                   'user_id': _user!.id,
                                   'map_type': mapType == 'Standard' ? 'default' : mapType.toLowerCase(),
+                                  'show_labels': showLabels ? 1 : 0,
+                                  'show_routes': showRoutes ? 1 : 0,
+                                  'show_markers': showMarkers ? 1 : 0,
+                                  'location_controls': locationControls ? 1 : 0,
                                   'live_location': liveLoc ? 1 : 0,
                                   'gps_enabled': gpsAccess ? 1 : 0,
-                                  'show_traffic': showTraffic ? 1 : 0,
-                                  'show_disaster_zones': showDisaster ? 1 : 0,
-                                  'show_evacuation_centers': showEvac ? 1 : 0,
-                                  'show_barangay_boundaries': showBarangay ? 1 : 0,
                                   'navigation_preference': navPref,
                                   'notification_radius': notifRadius.toInt(),
                                   'emergency_alert_radius': alertRadius.toInt(),
                                   'auto_refresh': autoRefresh ? 1 : 0,
-                                  'dark_mode': darkMode ? 1 : 0,
                                 };
                                 final res = await ApiService.saveMapSettings(mapData);
                                 if (res['success'] == true && mounted) {

@@ -316,22 +316,84 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                   _buildDetailRow('Agency', inc['assignedUnit'] ?? 'N/A'),
                                   _buildDetailRow('Vehicle', inc['assignedVehicle'] ?? 'N/A'),
                                   const SizedBox(height: 12),
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                    decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade200),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      'View Details \u2192',
-                                      style: GoogleFonts.outfit(
-                                        color: const Color(0xFF3B82F6),
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13,
+                                  Row(
+                                    children: [
+                                      if ((inc['status'] ?? 'draft').toString().toLowerCase() == 'draft') ...[
+                                        Expanded(
+                                          child: InkWell(
+                                            onTap: () async {
+                                              bool? confirm = await showDialog(
+                                                context: context,
+                                                builder: (c) => AlertDialog(
+                                                  title: const Text('Cancel Draft'),
+                                                  content: const Text('Are you sure you want to cancel this draft emergency?'),
+                                                  actions: [
+                                                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('No')),
+                                                    TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Yes')),
+                                                  ],
+                                                ),
+                                              );
+                                              if (confirm == true) {
+                                                try {
+                                                  final userId = widget.user.id.toString();
+                                                  final isDraftId = idStr.startsWith('DRAFT-');
+                                                  http.Response res;
+                                                  if (isDraftId) {
+                                                    res = await http.delete(Uri.parse('${ApiService.baseUrl}/api/incidents/draft/$userId'));
+                                                  } else {
+                                                    res = await http.put(
+                                                      Uri.parse('${ApiService.baseUrl}/api/incidents/$idStr'),
+                                                      headers: {'Content-Type': 'application/json'},
+                                                      body: jsonEncode({'status': 'cancelled'}),
+                                                    );
+                                                  }
+                                                  if (res.statusCode == 200 && mounted) {
+                                                    _fetchHistory();
+                                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Draft cancelled.')));
+                                                  }
+                                                } catch (e) {
+                                                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error cancelling draft.')));
+                                                }
+                                              }
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                              decoration: BoxDecoration(color: Colors.red[50], border: Border.all(color: Colors.red.shade200), borderRadius: BorderRadius.circular(8)),
+                                              alignment: Alignment.center,
+                                              child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.red[700], fontWeight: FontWeight.w600, fontSize: 13)),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () {
+                                            String st = (inc['status'] ?? 'draft').toString().toLowerCase();
+                                            if (st != 'resolved' && st != 'cancelled' && st != 'closed') {
+                                              // Navigate to active tracking (SOSChatScreen)
+                                              Navigator.pushReplacementNamed(context, '/sos_chat'); // or handled via home
+                                              // We'll just pop history so home screen can load it.
+                                              Navigator.pop(context);
+                                            } else {
+                                              _showIncidentDetails(inc);
+                                            }
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(vertical: 12),
+                                            decoration: BoxDecoration(color: Colors.blue[50], border: Border.all(color: Colors.blue.shade200), borderRadius: BorderRadius.circular(8)),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              ((inc['status'] ?? 'draft').toString().toLowerCase() != 'resolved' && 
+                                               (inc['status'] ?? 'draft').toString().toLowerCase() != 'cancelled' && 
+                                               (inc['status'] ?? 'draft').toString().toLowerCase() != 'closed') 
+                                                ? 'View / Track \u2192' : 'View Details \u2192',
+                                              style: GoogleFonts.outfit(color: Colors.blue[700], fontWeight: FontWeight.w600, fontSize: 13),
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -358,6 +420,52 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
             TextSpan(text: value),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showIncidentDetails(Map<String, dynamic> inc) {
+    final String idStr = inc['id']?.toString() ?? '';
+    final String shortId = idStr.length >= 8 ? idStr.substring(0, 8).toUpperCase() : idStr.toUpperCase();
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Emergency Details', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 16),
+              _buildDetailRow('Emergency ID', 'ALR-$shortId'),
+              _buildDetailRow('Category', (inc['category'] ?? 'Emergency').toString().toUpperCase()),
+              _buildDetailRow('Status', (inc['status'] ?? 'Draft').toString().toUpperCase().replaceAll('_', ' ')),
+              _buildDetailRow('Location', inc['locationAddress'] ?? 'N/A'),
+              _buildDetailRow('Reported', _formatDate(inc['createdAt'])),
+              _buildDetailRow('Details', inc['details'] ?? 'No details provided'),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 8),
+              _buildDetailRow('Agency', inc['assignedUnit'] ?? 'N/A'),
+              _buildDetailRow('Vehicle', inc['assignedVehicle'] ?? 'N/A'),
+              _buildDetailRow('Responders', inc['assignedResponders'] ?? 'N/A'),
+              if (inc['resolutionDate'] != null)
+                _buildDetailRow('Resolved', _formatDate(inc['resolutionDate'])),
+              if (inc['notes'] != null && inc['notes'].toString().isNotEmpty)
+                _buildDetailRow('Notes', inc['notes']),
+              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Close', style: GoogleFonts.outfit(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

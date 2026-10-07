@@ -8,6 +8,7 @@ import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/location_service.dart';
+import '../main.dart';
 import 'sos_chat_screen.dart';
 import 'call_screen.dart';
 import 'login_screen.dart';
@@ -247,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        MaterialPageRoute(builder: (_) => const AuthGate()),
         (_) => false,
       );
     }
@@ -263,6 +264,11 @@ class _HomeScreenState extends State<HomeScreen>
         return Colors.blue;
     }
   }
+
+  bool get _showLabels => (_user?.mapSettings?['show_labels'] ?? 1) == 1 || _user?.mapSettings?['show_labels'] == true;
+  bool get _showRoutes => (_user?.mapSettings?['show_routes'] ?? 1) == 1 || _user?.mapSettings?['show_routes'] == true;
+  bool get _showMarkers => (_user?.mapSettings?['show_markers'] ?? 1) == 1 || _user?.mapSettings?['show_markers'] == true;
+  bool get _locationControls => (_user?.mapSettings?['location_controls'] ?? 1) == 1 || _user?.mapSettings?['location_controls'] == true;
 
   List<Marker> _buildMarkers() {
     final markers = <Marker>[];
@@ -321,38 +327,7 @@ class _HomeScreenState extends State<HomeScreen>
       );
     }
 
-    // Incident markers hidden as requested
-    /*
-    for (final incident in _incidents) {
-      final lat = (incident['lat'] as num?)?.toDouble() ?? 0;
-      final lng = (incident['lng'] as num?)?.toDouble() ?? 0;
-      markers.add(
-        Marker(
-          point: LatLng(lat, lng),
-          width: 44,
-          height: 44,
-          child: GestureDetector(
-            onTap: () => _showIncidentSheet(incident),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.red.shade700,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: const Icon(Icons.warning_rounded,
-                  color: Colors.white, size: 22),
-            ),
-          ),
-        ),
-      );
-    }
-    */
+    if (!_showMarkers) return markers;
 
     // Responder markers
     for (final r in _responders) {
@@ -512,7 +487,7 @@ class _HomeScreenState extends State<HomeScreen>
           children: [
             TileLayer(
               urlTemplate: _selectedMapType == 'satellite'
-                  ? 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+                  ? (_showLabels ? 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}' : 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}')
                   : _selectedMapType == 'terrain'
                       ? 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
                       : 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
@@ -586,10 +561,11 @@ class _HomeScreenState extends State<HomeScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                GestureDetector(
-                  onTap: _getMyLocation,
-                  child: const Icon(Icons.near_me, color: Colors.blue),
-                ),
+                if (_locationControls)
+                  GestureDetector(
+                    onTap: _getMyLocation,
+                    child: const Icon(Icons.near_me, color: Colors.blue),
+                  ),
                 const SizedBox(width: 16),
               ],
             ),
@@ -1237,7 +1213,7 @@ class _HomeScreenState extends State<HomeScreen>
                             if (!mounted) return;
                             Navigator.pushAndRemoveUntil(
                               context,
-                              MaterialPageRoute(builder: (_) => const LoginScreen()),
+                              MaterialPageRoute(builder: (_) => const AuthGate()),
                               (_) => false,
                             );
                           },
