@@ -475,7 +475,8 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (!_showMarkers) return markers;
 
-    // Responder markers
+    // Responder markers (Temporarily removed as requested)
+    /*
     for (final r in _responders) {
       final lat = (r['lat'] as num?)?.toDouble() ?? 0;
       final lng = (r['lng'] as num?)?.toDouble() ?? 0;
@@ -508,6 +509,7 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
+    */
 
     return markers;
   }
