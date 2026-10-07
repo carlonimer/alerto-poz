@@ -201,11 +201,42 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _pickProfileImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    if (image == null) return;
     
-    if (!mounted) return;
+    // Show options for Camera or Gallery
+    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Select Image Source', style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.blue),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.blue),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
     try {
+      final XFile? image = await picker.pickImage(source: source);
+      if (image == null) return;
+      
+      if (!mounted) return;
       if (_user?.id != null) {
         final res = await ApiService.updateProfilePicture(_user!.id.toString(), image.path);
         if (!mounted) return;
@@ -214,12 +245,16 @@ class _HomeScreenState extends State<HomeScreen>
             const SnackBar(content: Text('Profile picture updated successfully!')),
           );
           _loadUser(); // Refresh user data to show new image
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(res['message'] ?? 'Failed to upload image')),
+          );
         }
       }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to upload image')),
+        const SnackBar(content: Text('Failed to upload image. Please check permissions.')),
       );
     }
   }
@@ -757,136 +792,196 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showMapTypeDialog() {
+    final settings = _user?.mapSettings ?? {};
+    
+    String capFirst(String? s) {
+      if (s == null || s.isEmpty) return 'Default';
+      return s[0].toUpperCase() + s.substring(1);
+    }
+    
+    String mapType = capFirst(settings['map_type']);
+    if (mapType == 'Default') mapType = 'Standard';
+    if (!['Standard', 'Satellite', 'Terrain'].contains(mapType)) {
+      mapType = 'Standard';
+    }
+
+    String navPref = settings['navigation_preference'] ?? 'Fastest Route';
+    double notifRadius = (settings['notification_radius'] ?? 500).toDouble();
+    double alertRadius = (settings['emergency_alert_radius'] ?? 1000).toDouble();
+    bool liveLoc = settings['live_location'] == 1 || settings['live_location'] == true;
+    bool gpsAccess = settings['gps_enabled'] == 1 || settings['gps_enabled'] == true || settings['gps_enabled'] == null;
+    bool showLabels = settings['show_labels'] == 1 || settings['show_labels'] == true || settings['show_labels'] == null;
+    bool showRoutes = settings['show_routes'] == 1 || settings['show_routes'] == true || settings['show_routes'] == null;
+    bool showMarkers = settings['show_markers'] == 1 || settings['show_markers'] == true || settings['show_markers'] == null;
+    bool locationControls = settings['location_controls'] == 1 || settings['location_controls'] == true || settings['location_controls'] == null;
+    bool autoRefresh = settings['auto_refresh'] == 1 || settings['auto_refresh'] == true || settings['auto_refresh'] == null;
+    bool isLoading = false;
+
     showDialog(
       context: context,
-      barrierColor: Colors.transparent, // Like the web popup
-      builder: (ctx) => Stack(
-        children: [
-          Positioned(
-            top: 140,
-            right: 16,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                width: 280,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.15),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    )
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Map Type',
-                          style: GoogleFonts.outfit(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            color: Colors.black87,
+      barrierDismissible: !isLoading,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              backgroundColor: Colors.white,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Map Settings', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
+                      const SizedBox(height: 8),
+                      Container(height: 2, width: double.infinity, color: const Color(0xFFF4B400)),
+                      const SizedBox(height: 16),
+                      Text('Map Type', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14)),
+                      const SizedBox(height: 8),
+                      _buildDialogDropdown(
+                        mapType,
+                        ['Standard', 'Satellite', 'Terrain'],
+                        (v) {
+                          if (v != null) setStateDialog(() => mapType = v);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Text('Navigation Preference', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14)),
+                      const SizedBox(height: 8),
+                      _buildDialogDropdown(
+                        navPref,
+                        ['Fastest Route', 'Shortest Route', 'Avoid Tolls'],
+                        (v) {
+                          if (v != null) setStateDialog(() => navPref = v);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Text('Notification Radius (Meters: ${notifRadius.toInt()})', style: GoogleFonts.outfit(fontWeight: FontWeight.w500, fontSize: 13)),
+                      Slider(
+                        value: notifRadius,
+                        min: 0,
+                        max: 2000,
+                        activeColor: Colors.blue,
+                        onChanged: (v) => setStateDialog(() => notifRadius = v),
+                      ),
+                      Text('Emergency Alert Radius (Meters: ${alertRadius.toInt()})', style: GoogleFonts.outfit(fontWeight: FontWeight.w500, fontSize: 13)),
+                      Slider(
+                        value: alertRadius,
+                        min: 0,
+                        max: 5000,
+                        activeColor: Colors.blue,
+                        onChanged: (v) => setStateDialog(() => alertRadius = v),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildCheckbox('Show Labels', showLabels, (v) => setStateDialog(() => showLabels = v ?? false)),
+                      _buildCheckbox('Show Routes', showRoutes, (v) => setStateDialog(() => showRoutes = v ?? false)),
+                      _buildCheckbox('Show Markers', showMarkers, (v) => setStateDialog(() => showMarkers = v ?? false)),
+                      _buildCheckbox('Location Controls', locationControls, (v) => setStateDialog(() => locationControls = v ?? false)),
+                      _buildCheckbox('Enable Live Location', liveLoc, (v) => setStateDialog(() => liveLoc = v ?? false)),
+                      _buildCheckbox('Allow GPS Access', gpsAccess, (v) => setStateDialog(() => gpsAccess = v ?? false)),
+                      _buildCheckbox('Auto-Refresh Map', autoRefresh, (v) => setStateDialog(() => autoRefresh = v ?? false)),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: isLoading ? null : () => Navigator.pop(context),
+                            child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.grey[600], fontWeight: FontWeight.w600)),
                           ),
-                        ),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(ctx),
-                          child: const Icon(Icons.close, size: 20, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildMapTypeOption(
-                          type: 'default',
-                          label: 'Default',
-                          tileUrl: 'https://mt1.google.com/vt/lyrs=m&x=13495&y=7410&z=14',
-                        ),
-                        _buildMapTypeOption(
-                          type: 'satellite',
-                          label: 'Satellite',
-                          tileUrl: 'https://mt1.google.com/vt/lyrs=s&x=13495&y=7410&z=14',
-                        ),
-                        _buildMapTypeOption(
-                          type: 'terrain',
-                          label: 'Terrain',
-                          tileUrl: 'https://mt1.google.com/vt/lyrs=p&x=13495&y=7410&z=14',
-                        ),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: isLoading ? null : () async {
+                              if (_user == null) return;
+                              setStateDialog(() => isLoading = true);
+                              try {
+                                final mapData = {
+                                  'user_id': _user!.id,
+                                  'map_type': mapType == 'Standard' ? 'default' : mapType.toLowerCase(),
+                                  'show_labels': showLabels ? 1 : 0,
+                                  'show_routes': showRoutes ? 1 : 0,
+                                  'show_markers': showMarkers ? 1 : 0,
+                                  'location_controls': locationControls ? 1 : 0,
+                                  'live_location': liveLoc ? 1 : 0,
+                                  'gps_enabled': gpsAccess ? 1 : 0,
+                                  'navigation_preference': navPref,
+                                  'notification_radius': notifRadius.toInt(),
+                                  'emergency_alert_radius': alertRadius.toInt(),
+                                  'auto_refresh': autoRefresh ? 1 : 0,
+                                };
+                                final res = await ApiService.saveMapSettings(mapData);
+                                if (res['success'] == true && mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Map settings saved!')));
+                                  final updatedUser = _user!.copyWith(mapSettings: mapData);
+                                  setState(() {
+                                    _user = updatedUser;
+                                    _selectedMapType = mapData['map_type'] as String? ?? 'default';
+                                  });
+                                  Navigator.pop(context);
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['message'] ?? 'Failed to save settings')));
+                                }
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                              } finally {
+                                if (mounted) setStateDialog(() => isLoading = false);
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF5A623),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              elevation: 0,
+                            ),
+                            child: isLoading
+                                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : Text('Save', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ),
-        ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDialogDropdown(String value, List<String> items, Function(String?) onChanged) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F2F5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.outfit()))).toList(),
+          onChanged: onChanged,
+        ),
       ),
     );
   }
 
-  Widget _buildMapTypeOption({
-    required String type,
-    required String label,
-    required String tileUrl,
-  }) {
-    final isSelected = _selectedMapType == type;
-    return GestureDetector(
-      onTap: () async {
-        setState(() => _selectedMapType = type);
-        Navigator.pop(context);
-        if (_user != null) {
-          final settings = _user!.mapSettings ?? {};
-          final newSettings = Map<String, dynamic>.from(settings);
-          newSettings['user_id'] = _user!.id;
-          newSettings['map_type'] = type;
-          try {
-            await ApiService.saveMapSettings(newSettings);
-            _user = _user!.copyWith(mapSettings: newSettings);
-          } catch (e) {
-            debugPrint('Failed to sync map type: $e');
-          }
-        }
-      },
-      child: Column(
-        children: [
-          Container(
-            width: 74,
-            height: 74,
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isSelected ? Colors.blue : Colors.transparent,
-                width: 2,
-              ),
-              image: DecorationImage(
-                image: NetworkImage(
-                  tileUrl,
-                  headers: const {'User-Agent': 'AlertoPoz Mobile App'},
-                ),
-                fit: BoxFit.cover,
-              ),
-            ),
+  Widget _buildCheckbox(String title, bool value, Function(bool?) onChanged) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 24,
+          height: 24,
+          child: Checkbox(
+            value: value,
+            onChanged: onChanged,
+            activeColor: const Color(0xFFF5A623),
           ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: GoogleFonts.outfit(
-              fontSize: 13,
-              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-              color: isSelected ? Colors.blue : Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 12),
+        Text(title, style: GoogleFonts.outfit(fontSize: 14)),
+      ],
     );
   }
 
