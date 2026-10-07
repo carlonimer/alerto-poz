@@ -778,24 +778,24 @@ class CitizenMobileClient {
 
     initProfileEvents() {
         // Back Button
-        document.getElementById("btn-profile-back").addEventListener("click", () => {
+        const __el_btn_profile_back = document.getElementById("btn-profile-back"); if (__el_btn_profile_back) __el_btn_profile_back.addEventListener("click", () => {
             this.transitionAppState("home");
         });
 
         // Logout
-        document.getElementById("btn-profile-logout").addEventListener("click", () => {
+        const __el_btn_profile_logout = document.getElementById("btn-profile-logout"); if (__el_btn_profile_logout) __el_btn_profile_logout.addEventListener("click", () => {
             document.getElementById("modal-logout-confirm").classList.remove("hidden");
         });
-        document.getElementById("btn-cancel-logout").addEventListener("click", () => {
+        const __el_btn_cancel_logout = document.getElementById("btn-cancel-logout"); if (__el_btn_cancel_logout) __el_btn_cancel_logout.addEventListener("click", () => {
             document.getElementById("modal-logout-confirm").classList.add("hidden");
         });
-        document.getElementById("btn-confirm-logout").addEventListener("click", () => {
+        const __el_btn_confirm_logout = document.getElementById("btn-confirm-logout"); if (__el_btn_confirm_logout) __el_btn_confirm_logout.addEventListener("click", () => {
             document.getElementById("modal-logout-confirm").classList.add("hidden");
             this.handleLogoutToggle(true); // pass true to bypass native confirm
         });
 
         // Map Settings
-        document.getElementById("btn-menu-mapsettings").addEventListener("click", async () => {
+        const __el_btn_menu_mapsettings = document.getElementById("btn-menu-mapsettings"); if (__el_btn_menu_mapsettings) __el_btn_menu_mapsettings.addEventListener("click", async () => {
             document.getElementById("modal-map-settings").classList.remove("hidden");
             try {
                 const res = await fetch(`${SERVER_URL}/api/user/map-settings/${this.activeUser.id}`);
@@ -820,18 +820,18 @@ class CitizenMobileClient {
             } catch (e) { console.error(e); }
         });
 
-        document.getElementById("setting-notif-rad").addEventListener("input", (e) => {
+        const __el_setting_notif_rad = document.getElementById("setting-notif-rad"); if (__el_setting_notif_rad) __el_setting_notif_rad.addEventListener("input", (e) => {
             document.getElementById("val-notif-rad").innerText = e.target.value;
         });
-        document.getElementById("setting-alert-rad").addEventListener("input", (e) => {
+        const __el_setting_alert_rad = document.getElementById("setting-alert-rad"); if (__el_setting_alert_rad) __el_setting_alert_rad.addEventListener("input", (e) => {
             document.getElementById("val-alert-rad").innerText = e.target.value;
         });
 
-        document.getElementById("btn-cancel-map-settings").addEventListener("click", () => {
+        const __el_btn_cancel_map_settings = document.getElementById("btn-cancel-map-settings"); if (__el_btn_cancel_map_settings) __el_btn_cancel_map_settings.addEventListener("click", () => {
             document.getElementById("modal-map-settings").classList.add("hidden");
         });
 
-        document.getElementById("btn-save-map-settings").addEventListener("click", async () => {
+        const __el_btn_save_map_settings = document.getElementById("btn-save-map-settings"); if (__el_btn_save_map_settings) __el_btn_save_map_settings.addEventListener("click", async () => {
             const payload = {
                 user_id: this.activeUser.id,
                 map_type: document.getElementById("setting-map-type").value,
@@ -860,7 +860,7 @@ class CitizenMobileClient {
         });
 
         // Duplicate passcode listeners removed to prevent double firing        // Edit Profile
-        document.getElementById("btn-open-edit-profile").addEventListener("click", () => {
+        const __el_btn_open_edit_profile = document.getElementById("btn-open-edit-profile"); if (__el_btn_open_edit_profile) __el_btn_open_edit_profile.addEventListener("click", () => {
             document.getElementById("modal-edit-profile").classList.remove("hidden");
             document.getElementById("edit-profile-firstname").value = this.activeUser.first_name || '';
             document.getElementById("edit-profile-middlename").value = this.activeUser.middle_name || '';
@@ -873,11 +873,11 @@ class CitizenMobileClient {
             document.getElementById("edit-profile-phone").value = this.activeUser.phone || '';
         });
 
-        document.getElementById("btn-cancel-edit-profile").addEventListener("click", () => {
+        const __el_btn_cancel_edit_profile = document.getElementById("btn-cancel-edit-profile"); if (__el_btn_cancel_edit_profile) __el_btn_cancel_edit_profile.addEventListener("click", () => {
             document.getElementById("modal-edit-profile").classList.add("hidden");
         });
 
-        document.getElementById("btn-save-edit-profile").addEventListener("click", async () => {
+        const __el_btn_save_edit_profile = document.getElementById("btn-save-edit-profile"); if (__el_btn_save_edit_profile) __el_btn_save_edit_profile.addEventListener("click", async () => {
             const first = document.getElementById("edit-profile-firstname").value.trim();
             const last = document.getElementById("edit-profile-lastname").value.trim();
             const email = document.getElementById("edit-profile-email").value.trim();
@@ -925,7 +925,7 @@ class CitizenMobileClient {
         });
 
         // Feedback
-        document.getElementById("btn-menu-feedback").addEventListener("click", () => {
+        const __el_btn_menu_feedback = document.getElementById("btn-menu-feedback"); if (__el_btn_menu_feedback) __el_btn_menu_feedback.addEventListener("click", () => {
             document.getElementById("modal-feedback").classList.remove("hidden");
             document.getElementById("feedback-subject").value = "";
             document.getElementById("feedback-message").value = "";
@@ -933,15 +933,15 @@ class CitizenMobileClient {
             document.getElementById("feedback-media-upload").value = "";
         });
 
-        document.getElementById("btn-cancel-feedback").addEventListener("click", () => {
+        const __el_btn_cancel_feedback = document.getElementById("btn-cancel-feedback"); if (__el_btn_cancel_feedback) __el_btn_cancel_feedback.addEventListener("click", () => {
             document.getElementById("modal-feedback").classList.add("hidden");
         });
 
-        document.getElementById("btn-feedback-screenshot").addEventListener("click", () => {
+        const __el_btn_feedback_screenshot = document.getElementById("btn-feedback-screenshot"); if (__el_btn_feedback_screenshot) __el_btn_feedback_screenshot.addEventListener("click", () => {
             document.getElementById("feedback-media-upload").click();
         });
 
-        document.getElementById("feedback-media-upload").addEventListener("change", (e) => {
+        const __el_feedback_media_upload = document.getElementById("feedback-media-upload"); if (__el_feedback_media_upload) __el_feedback_media_upload.addEventListener("change", (e) => {
             const file = e.target.files[0];
             if (file) {
                 if (file.size > 5 * 1024 * 1024) return alert("File size must be less than 5MB");
@@ -954,7 +954,7 @@ class CitizenMobileClient {
             }
         });
 
-        document.getElementById("btn-save-feedback").addEventListener("click", async () => {
+        const __el_btn_save_feedback = document.getElementById("btn-save-feedback"); if (__el_btn_save_feedback) __el_btn_save_feedback.addEventListener("click", async () => {
             const subject = document.getElementById("feedback-subject").value.trim();
             const message = document.getElementById("feedback-message").value.trim();
             const category = document.getElementById("feedback-category").value;
@@ -980,11 +980,11 @@ class CitizenMobileClient {
 
         // Profile Picture Upload & Crop
         let cropper = null;
-        document.getElementById("btn-edit-avatar").addEventListener("click", () => {
+        const __el_btn_edit_avatar = document.getElementById("btn-edit-avatar"); if (__el_btn_edit_avatar) __el_btn_edit_avatar.addEventListener("click", () => {
             document.getElementById("profile-image-upload").click();
         });
 
-        document.getElementById("profile-image-upload").addEventListener("change", (e) => {
+        const __el_profile_image_upload = document.getElementById("profile-image-upload"); if (__el_profile_image_upload) __el_profile_image_upload.addEventListener("change", (e) => {
             const file = e.target.files[0];
             if (!file) return;
             if (file.size > 5 * 1024 * 1024) return alert("File size must be less than 5MB");
@@ -1013,18 +1013,18 @@ class CitizenMobileClient {
             e.target.value = "";
         });
 
-        document.getElementById("btn-cancel-crop").addEventListener("click", () => {
+        const __el_btn_cancel_crop = document.getElementById("btn-cancel-crop"); if (__el_btn_cancel_crop) __el_btn_cancel_crop.addEventListener("click", () => {
             document.getElementById("modal-image-crop").classList.add("hidden");
             if (cropper) cropper.destroy();
             cropper = null;
         });
 
-        document.getElementById("btn-crop-zoom-in").addEventListener("click", () => cropper && cropper.zoom(0.1));
-        document.getElementById("btn-crop-zoom-out").addEventListener("click", () => cropper && cropper.zoom(-0.1));
-        document.getElementById("btn-crop-rotate-left").addEventListener("click", () => cropper && cropper.rotate(-90));
-        document.getElementById("btn-crop-rotate-right").addEventListener("click", () => cropper && cropper.rotate(90));
+        const __el_btn_crop_zoom_in = document.getElementById("btn-crop-zoom-in"); if (__el_btn_crop_zoom_in) __el_btn_crop_zoom_in.addEventListener("click", () => cropper && cropper.zoom(0.1));
+        const __el_btn_crop_zoom_out = document.getElementById("btn-crop-zoom-out"); if (__el_btn_crop_zoom_out) __el_btn_crop_zoom_out.addEventListener("click", () => cropper && cropper.zoom(-0.1));
+        const __el_btn_crop_rotate_left = document.getElementById("btn-crop-rotate-left"); if (__el_btn_crop_rotate_left) __el_btn_crop_rotate_left.addEventListener("click", () => cropper && cropper.rotate(-90));
+        const __el_btn_crop_rotate_right = document.getElementById("btn-crop-rotate-right"); if (__el_btn_crop_rotate_right) __el_btn_crop_rotate_right.addEventListener("click", () => cropper && cropper.rotate(90));
 
-        document.getElementById("btn-save-crop").addEventListener("click", () => {
+        const __el_btn_save_crop = document.getElementById("btn-save-crop"); if (__el_btn_save_crop) __el_btn_save_crop.addEventListener("click", () => {
             if (!cropper) return;
             const canvas = cropper.getCroppedCanvas({ width: 400, height: 400 });
 
