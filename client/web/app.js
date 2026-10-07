@@ -464,6 +464,15 @@ class CitizenMobileClient {
             });
         }
 
+        const btnBannerClose = document.getElementById("btn-banner-close");
+        if (btnBannerClose) {
+            btnBannerClose.addEventListener("click", () => {
+                this.isBannerDismissed = true;
+                const banner = document.getElementById("banner-active-emergency");
+                if (banner) banner.classList.add("hidden");
+            });
+        }
+
         // History Modal Listeners
         const btnMenuHistory = document.getElementById("btn-menu-history");
         const btnUserHistory = document.getElementById("btn-user-history");
@@ -3056,7 +3065,7 @@ Stay calm and provide clear updates.`;
 
     syncActiveIncidentStatus() {
         const banner = document.getElementById("banner-active-emergency");
-        if (!this.activeIncident || ["closed", "resolved", "cancelled"].includes(this.activeIncident.status)) {
+        if (!this.activeIncident || ["closed", "resolved", "cancelled"].includes(this.activeIncident.status) || this.isBannerDismissed) {
             if (banner) banner.classList.add("hidden");
         } else {
             if (banner) {
