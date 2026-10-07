@@ -32,8 +32,8 @@ const uploadProfile = multer({
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
     fileFilter: (req, file, cb) => {
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-        if (allowedTypes.includes(file.mimetype)) {
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/octet-stream'];
+        if (allowedTypes.includes(file.mimetype) || (file.originalname && file.originalname.match(/\.(jpg|jpeg|png|webp)$/i))) {
             cb(null, true);
         } else {
             cb(new Error("Invalid file type. Only JPG, PNG, and WebP are allowed."));
@@ -1277,10 +1277,13 @@ app.get('/api/user/map-settings/:id', async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/user/profile-picture', uploadProfile.single('profile_image'), async (req, res) => {
-    try {
-        const { id } = req.body;
-        if (!id || !req.file) return res.status(400).json({ error: "Missing ID or Image" });
+app.post('/api/user/profile-picture', (req, res) => {
+    uploadProfile.single('profile_image')(req, res, async (err) => {
+        if (err) return res.status(400).json({ success: false, message: err.message });
+        
+        try {
+            const { id } = req.body;
+            if (!id || !req.file) return res.status(400).json({ success: false, message: "Missing ID or Image" });
         
         const relativePath = '/uploads/profiles/' + req.file.filename;
 
@@ -1318,8 +1321,9 @@ app.post('/api/user/profile-picture', uploadProfile.single('profile_image'), asy
                 io.emit('profile-updated', formattedUser);
             }
         }
-        res.json({ success: true, url: relativePath });
-    } catch(e) { res.status(500).json({ error: e.message }); }
+        res.json({ success: true, imageUrl: relativePath }); // Keep url in response just in case, but use imageUrl
+    } catch(e) { res.status(500).json({ success: false, message: e.message }); }
+    });
 });
 
 app.get('/api/user/activity-logs', async (req, res) => {
