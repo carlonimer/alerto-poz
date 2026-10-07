@@ -511,134 +511,15 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   // ───────────────────────── Dialogs ─────────────────────────
 
-  void _showCameraDialog() {
-    String? tempImagePath;
-    bool useFrontCamera = false;
-
-    Widget actionBtn(String label, Color color, VoidCallback onTap) => Expanded(
-          child: ElevatedButton(
-            onPressed: onTap,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: color,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: Text(label, style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700)),
-          ),
-        );
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(builder: (context, setDialogState) {
-          Future<void> capture() async {
-            final picker = ImagePicker();
-            final file = await picker.pickImage(
-              source: ImageSource.camera,
-              imageQuality: 60,
-              preferredCameraDevice: useFrontCamera ? CameraDevice.front : CameraDevice.rear,
-            );
-            if (file != null) setDialogState(() => tempImagePath = file.path);
-          }
-
-          return Dialog(
-            backgroundColor: const Color(0xFF232736),
-            insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Capture Photo',
-                                style: GoogleFonts.outfit(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                            Container(height: 3, width: 48, color: _C.orange, margin: const EdgeInsets.only(top: 6)),
-                          ],
-                        ),
-                      ),
-                      Material(
-                        color: const Color(0xFF6366F1),
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: () => setDialogState(() => useFrontCamera = !useFrontCamera),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.flip_camera_ios_rounded, color: Colors.white, size: 16),
-                                const SizedBox(width: 6),
-                                Text(useFrontCamera ? 'Front' : 'Rear',
-                                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  GestureDetector(
-                    onTap: tempImagePath == null ? capture : null,
-                    child: AspectRatio(
-                      aspectRatio: 4 / 3,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: Colors.white12),
-                        ),
-                        child: tempImagePath != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(13),
-                                child: Image.file(File(tempImagePath!), fit: BoxFit.cover, width: double.infinity),
-                              )
-                            : Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.camera_alt_rounded, color: Colors.white38, size: 48),
-                                  const SizedBox(height: 8),
-                                  Text('Tap to open camera',
-                                      style: GoogleFonts.outfit(color: Colors.white54, fontSize: 13)),
-                                ],
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  if (tempImagePath == null)
-                    Row(children: [
-                      actionBtn('Capture', const Color(0xFF2196F3), capture),
-                      const SizedBox(width: 10),
-                      actionBtn('Cancel', const Color(0xFFF44336), () => Navigator.pop(context)),
-                    ])
-                  else
-                    Row(children: [
-                      actionBtn('Retake', _C.orange, () => setDialogState(() => tempImagePath = null)),
-                      const SizedBox(width: 8),
-                      actionBtn('Confirm', const Color(0xFF10B981), () {
-                        Navigator.pop(context); // Close dialog
-                        _handleImageTaken(tempImagePath!); // Send image
-                      }),
-                      const SizedBox(width: 8),
-                      actionBtn('Cancel', const Color(0xFFF44336), () => Navigator.pop(context)),
-                    ]),
-                ],
-              ),
-            ),
-          );
-        });
-      },
+  Future<void> _openCameraDirectly() async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 60,
     );
+    if (file != null) {
+      _handleImageTaken(file.path);
+    }
   }
 
   void _showCloseIncidentDialog() {
@@ -1486,7 +1367,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   tooltip: 'Take photo',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
-                  onPressed: _showCameraDialog,
+                  onPressed: _openCameraDirectly,
                 ),
                 const SizedBox(width: 4),
                 Expanded(
