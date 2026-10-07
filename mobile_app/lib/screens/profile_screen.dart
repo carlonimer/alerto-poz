@@ -394,7 +394,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 8),
                       const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                       const SizedBox(height: 16),
-                      const Text('Testing if layout works!'),
+                      _buildDialogTextField('First Name', controller: firstCtrl),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Middle Initial', controller: middleCtrl),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Last Name', controller: lastCtrl),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Suffix (e.g. Jr, Sr)', controller: suffixCtrl),
+                      const SizedBox(height: 12),
+                      GestureDetector(
+                        onTap: () async {
+                          final date = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime.now(),
+                            firstDate: DateTime(1900),
+                            lastDate: DateTime.now(),
+                          );
+                          if (date != null) {
+                            setStateDialog(() => birthdateCtrl.text = '${date.month}/${date.day}/${date.year}');
+                          }
+                        },
+                        child: AbsorbPointer(
+                          child: _buildDialogTextField('Date of Birth', controller: birthdateCtrl, suffixIcon: Icons.calendar_today),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDialogDropdown(
+                        selectedGender,
+                        ['Male', 'Female', 'Other'],
+                        (v) {
+                          if (v != null) {
+                            setStateDialog(() => selectedGender = v);
+                          }
+                        },
+                        hint: 'Select Gender'
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Barangay', controller: addressCtrl),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Email Address', controller: emailCtrl),
+                      const SizedBox(height: 12),
+                      _buildDialogTextField('Phone Number', controller: phoneCtrl),
                       const SizedBox(height: 24),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
@@ -507,7 +547,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       Text('Send Feedback', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                       const SizedBox(height: 8),
-                      Container(height: 2, width: double.infinity, color: const Color(0xFFF4B400)),
+                      const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                       const SizedBox(height: 16),
                       _buildDialogTextField('Subject', controller: subjectCtrl),
                       const SizedBox(height: 12),
@@ -524,7 +564,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       _buildDialogTextField('Message (Max 1000 chars)', controller: messageCtrl, maxLines: 4),
                       const SizedBox(height: 12),
                       Container(
-                        width: double.infinity,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey[300]!),
@@ -620,7 +659,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       Text('Passcode Settings', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                       const SizedBox(height: 8),
-                      Container(height: 2, width: double.infinity, color: const Color(0xFFF5A623)),
+                      const Divider(color: Color(0xFFF5A623), thickness: 2, height: 2),
                       const SizedBox(height: 16),
                       Text(
                         _user!.hasPasscode ? 'Enter your current passcode to create a new one.' : 'Create a new passcode for emergency verification.', 
@@ -743,7 +782,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       Text('Map Settings', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                       const SizedBox(height: 8),
-                      Container(height: 2, width: double.infinity, color: const Color(0xFFF4B400)),
+                      const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                       const SizedBox(height: 16),
                       Text('Map Type', style: GoogleFonts.outfit(fontWeight: FontWeight.w600, fontSize: 14)),
                       const SizedBox(height: 8),
@@ -874,7 +913,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 Text('Logout', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
                 const SizedBox(height: 8),
-                Container(height: 2, width: double.infinity, color: const Color(0xFFF4B400)),
+                const Divider(color: Color(0xFFF4B400), thickness: 2, height: 2),
                 const SizedBox(height: 16),
                 Text('Are you sure you want to logout?', style: GoogleFonts.outfit(color: Colors.black87, fontSize: 15)),
                 const SizedBox(height: 32),
