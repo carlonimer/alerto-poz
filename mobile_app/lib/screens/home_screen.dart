@@ -383,11 +383,13 @@ class _HomeScreenState extends State<HomeScreen>
           point: _myLocation!,
           width: 100,
           height: 100,
+          rotate: true,
           child: AnimatedBuilder(
             animation: _pulseAnimation,
             builder: (context, child) {
               return Stack(
                 alignment: Alignment.center,
+                clipBehavior: Clip.none,
                 children: [
                   // Outer waving radar circle
                   Container(
@@ -403,32 +405,48 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                   // Inner map pin with profile picture
-                  SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: Stack(
-                      alignment: Alignment.topCenter,
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          color: Color(0xFFF44336),
-                          size: 48,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black38,
-                              blurRadius: 6,
-                              offset: Offset(0, 2),
+                  Positioned(
+                    bottom: 50, // Anchor the bottom of the pin to the center of the marker
+                    child: SizedBox(
+                      width: 56,
+                      height: 64,
+                      child: Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          Positioned(
+                            bottom: -2,
+                            child: Transform.rotate(
+                              angle: 3.14159 / 4,
+                              child: Container(
+                                width: 16,
+                                height: 16,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(2),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Colors.black26,
+                                      blurRadius: 4,
+                                      offset: Offset(2, 2),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ],
-                        ),
-                        Positioned(
-                          top: 6,
-                          child: Container(
-                            width: 22,
-                            height: 22,
+                          ),
+                          Container(
+                            width: 56,
+                            height: 56,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               color: Colors.white,
+                              border: Border.all(color: Colors.white, width: 4),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black12,
+                                  blurRadius: 4,
+                                ),
+                              ],
                               image: DecorationImage(
                                 image: _user != null && _user!.profileImage.isNotEmpty
                                     ? (_user!.profileImage.startsWith('data:image')
@@ -442,8 +460,8 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ],

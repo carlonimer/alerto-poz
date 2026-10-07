@@ -2263,17 +2263,17 @@ class CitizenMobileClient {
             : '/public/logo.png';
 
         const pinHtml = `
-            <div style="position: relative; width: 48px; height: 48px; display: flex; justify-content: center; align-items: flex-start;">
-                <i class="fa-solid fa-location-dot" style="color: #ef4444; font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.4));"></i>
-                <img src="${profileImg}" style="position: absolute; top: 6px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+            <div style="position: relative; width: 56px; height: 64px; display: flex; justify-content: center; align-items: flex-start; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
+                <div style="position: absolute; bottom: 2px; width: 16px; height: 16px; background: white; transform: rotate(45deg); border-radius: 2px;"></div>
+                <img src="${profileImg}" style="position: absolute; top: 0; width: 56px; height: 56px; border-radius: 50%; border: 4px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
             </div>
         `;
 
         const citizenDivIcon = L.divIcon({
             className: 'citizen-marker-home',
             html: pinHtml,
-            iconSize: [48, 48],
-            iconAnchor: [24, 48]
+            iconSize: [56, 64],
+            iconAnchor: [28, 64]
         });
 
         this.homeUserMarker = L.marker([this.gps.lat, this.gps.lng], {
@@ -2332,17 +2332,17 @@ class CitizenMobileClient {
                 : '/public/logo.png';
 
             const pinHtml = `
-                <div style="position: relative; width: 48px; height: 48px; display: flex; justify-content: center; align-items: flex-start;">
-                    <i class="fa-solid fa-location-dot" style="color: #ef4444; font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.4));"></i>
-                    <img src="${profileImg}" style="position: absolute; top: 6px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
+                <div style="position: relative; width: 56px; height: 64px; display: flex; justify-content: center; align-items: flex-start; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
+                    <div style="position: absolute; bottom: 2px; width: 16px; height: 16px; background: white; transform: rotate(45deg); border-radius: 2px;"></div>
+                    <img src="${profileImg}" style="position: absolute; top: 0; width: 56px; height: 56px; border-radius: 50%; border: 4px solid white; object-fit: cover; background: white;" onerror="this.src='/public/logo.png'">
                 </div>
             `;
 
             const divIcon = L.divIcon({
                 className: 'citizen-marker-console',
                 html: pinHtml,
-                iconSize: [48, 48],
-                iconAnchor: [24, 48]
+                iconSize: [56, 64],
+                iconAnchor: [28, 64]
             });
 
             this.consoleUserMarker = L.marker([this.gps.lat, this.gps.lng], {
