@@ -648,6 +648,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         },
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFFF5A623),
+                                  minimumSize: const Size(80, 40),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -870,6 +871,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFF5A623),
+                                minimumSize: const Size(80, 40),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
@@ -1081,6 +1083,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFF5A623),
+                                minimumSize: const Size(80, 40),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
@@ -1405,6 +1408,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFF5A623),
+                                minimumSize: const Size(80, 40),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
@@ -1507,6 +1511,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFF44336), // Red
+                          minimumSize: const Size(80, 40),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
