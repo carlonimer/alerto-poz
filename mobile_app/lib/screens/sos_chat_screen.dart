@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -878,20 +879,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   initialCenter: marker ?? _defaultCenter,
                   initialZoom: 15.0,
                   interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
-                  onPositionChanged: (position, hasGesture) {
-                    if (hasGesture && !_sent && position.center != null) {
-                      setState(() {
-                        _selectedPos = position.center;
-                        _currentAddress = 'Updating location...';
-                      });
-                      _geocodeTimer?.cancel();
-                      _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
-                        if (mounted && _selectedPos != null) {
-                          _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
-                        }
-                      });
-                    }
-                  },
                 ),
                 children: [
                   TileLayer(
@@ -902,7 +889,32 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   if (marker != null)
                     MarkerLayer(
                       markers: [
-                        Marker(point: marker, width: 64, height: 64, child: _buildPulseMarker()),
+                        Marker(
+                          point: marker, 
+                          width: 64, 
+                          height: 64, 
+                          child: GestureDetector(
+                            onPanUpdate: _sent ? null : (details) {
+                              try {
+                                final cam = _mapController.camera;
+                                final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
+                                final newPt = math.Point(pt.x + details.delta.dx, pt.y + details.delta.dy);
+                                final newLatLng = cam.pointToLatLng(newPt);
+                                setState(() {
+                                  _selectedPos = newLatLng;
+                                  _currentAddress = 'Updating location...';
+                                });
+                                _geocodeTimer?.cancel();
+                                _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
+                                  if (mounted && _selectedPos != null) {
+                                    _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
+                                  }
+                                });
+                              } catch (_) {}
+                            },
+                            child: _buildPulseMarker(),
+                          ),
+                        ),
                       ],
                     ),
                 ],
