@@ -852,7 +852,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         actions: [
           IconButton(icon: const Icon(Icons.phone, color: Colors.grey), onPressed: () {}),
           IconButton(icon: const Icon(Icons.videocam, color: Colors.grey), onPressed: () {}),
-          if (_sent && !_cancelled)
+          if (!_cancelled)
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, color: Colors.grey),
               onSelected: (value) {
