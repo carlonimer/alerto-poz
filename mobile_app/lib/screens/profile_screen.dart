@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/user.dart';
@@ -6,6 +7,7 @@ import 'history_screen.dart';
 import '../services/api_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import '../services/socket_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   final UserModel? user;
@@ -32,6 +34,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _user = widget.user;
+    SocketService.onProfileUpdated(_onProfileSync);
+  }
+
+  void _onProfileSync(dynamic data) {
+    if (!mounted || _user == null) return;
+    final mapData = data as Map<String, dynamic>?;
+    if (mapData != null && mapData['id'].toString() == _user!.id.toString() && mapData.containsKey('name')) {
+      setState(() {
+        _user = UserModel.fromJson(mapData);
+      });
+      if (widget.onUserUpdated != null) {
+        widget.onUserUpdated!(_user!);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    SocketService.off('profile-updated');
+    super.dispose();
   }
 
   Future<void> _pickProfileImage() async {
@@ -698,6 +720,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final messageCtrl = TextEditingController();
     String selectedType = 'Suggestion';
     bool isLoading = false;
+    String? feedbackImagePath;
 
     showDialog(
       context: context,
@@ -743,7 +766,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 12),
                         _buildDialogDropdown(
                           selectedType,
-                          ['Suggestion', 'Bug Report', 'Other'],
+                          ['Suggestion', 'Bug Report', 'Complaint', 'Feature Request', 'Other'],
                           (v) {
                             if (v != null) {
                               setStateDialog(() => selectedType = v);
@@ -757,31 +780,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           maxLines: 4,
                         ),
                         const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey[300]!),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                        if (feedbackImagePath != null)
+                          Stack(
+                            alignment: Alignment.topRight,
                             children: [
-                              Icon(
-                                Icons.image,
-                                size: 16,
-                                color: Colors.grey[600],
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Attach Screenshot (Optional)',
-                                style: GoogleFonts.outfit(
-                                  color: Colors.grey[600],
-                                  fontSize: 13,
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(feedbackImagePath!),
+                                  width: double.infinity,
+                                  height: 150,
+                                  fit: BoxFit.cover,
                                 ),
                               ),
+                              IconButton(
+                                icon: const Icon(Icons.cancel, color: Colors.white),
+                                onPressed: () {
+                                  setStateDialog(() => feedbackImagePath = null);
+                                },
+                              ),
                             ],
+                          )
+                        else
+                          InkWell(
+                            onTap: () async {
+                              final ImagePicker picker = ImagePicker();
+                              final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                              if (image != null) {
+                                setStateDialog(() => feedbackImagePath = image.path);
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey[300]!),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.image,
+                                    size: 16,
+                                    color: Colors.grey[600],
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Attach Screenshot (Optional)',
+                                    style: GoogleFonts.outfit(
+                                      color: Colors.grey[600],
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
                         const SizedBox(height: 24),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
@@ -826,6 +881,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                 'subject': subjectCtrl.text,
                                                 'type': selectedType,
                                                 'message': messageCtrl.text,
+                                                'filePath': feedbackImagePath,
                                               });
                                           if (res['success'] == true &&
                                               mounted) {
@@ -845,8 +901,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                             ).showSnackBar(
                                               SnackBar(
                                                 content: Text(
-                                                  res['message'] ??
-                                                      'Failed to submit',
+                                                  res['message'] ?? res['error'] ?? 'Failed to submit',
                                                 ),
                                               ),
                                             );

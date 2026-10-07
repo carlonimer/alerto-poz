@@ -7,10 +7,13 @@ class ApiService {
   // e.g. 'http://192.168.1.X:3000' or Render URL
   static const String baseUrl = 'https://alerto-poz.onrender.com'; // Production
   // static const String baseUrl = 'http://localhost:3000'; // Web / iOS Emulator
-  // static const String baseUrl = 'http://192.168.100.131:3000'; // Local Network IP
+  // static const String baseUrl = 'http://192.168.100.46:3000'; // Local Network IP
 
-  static Future<Map<String, String>> _getHeaders({bool auth = false}) async {
-    final headers = {'Content-Type': 'application/json'};
+  static Future<Map<String, String>> _getHeaders({bool auth = false, bool isMultipart = false}) async {
+    final headers = <String, String>{};
+    if (!isMultipart) {
+      headers['Content-Type'] = 'application/json';
+    }
     if (auth) {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
@@ -166,12 +169,21 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> submitFeedback(Map<String, dynamic> data) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/api/feedback'),
-      headers: await _getHeaders(auth: true),
-      body: jsonEncode(data),
-    );
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/feedback'));
+    request.headers.addAll(await _getHeaders(auth: true, isMultipart: true));
+    
+    request.fields['user_id'] = data['userId']?.toString() ?? '';
+    request.fields['subject'] = data['subject']?.toString() ?? '';
+    request.fields['category'] = data['type']?.toString() ?? '';
+    request.fields['message'] = data['message']?.toString() ?? '';
+
+    if (data['filePath'] != null && data['filePath'].toString().isNotEmpty) {
+      request.files.add(await http.MultipartFile.fromPath('feedback_image', data['filePath']));
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   /// Web: fetch(`${SERVER_URL}/api/user/passcode`, { method: "POST", body: JSON.stringify({id, currentPasscode, newPasscode}) })

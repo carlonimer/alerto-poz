@@ -129,6 +129,15 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) return;
       _loadData();
     });
+    SocketService.onProfileUpdated((data) {
+      if (!mounted || _user == null) return;
+      final mapData = data as Map<String, dynamic>?;
+      if (mapData != null && mapData['id'].toString() == _user!.id.toString() && mapData.containsKey('name')) {
+        setState(() {
+          _user = UserModel.fromJson(mapData);
+        });
+      }
+    });
   }
 
   Future<void> _loadData() async {

@@ -455,6 +455,14 @@ class CitizenMobileClient {
             });
         }
 
+        const btnBannerContinue = document.getElementById("btn-banner-continue");
+        if (btnBannerContinue) {
+            btnBannerContinue.addEventListener("click", () => {
+                if (this.activeIncident) {
+                    this.transitionAppState("chat");
+                }
+            });
+        }
 
         // History Modal Listeners
         const btnMenuHistory = document.getElementById("btn-menu-history");
@@ -1287,8 +1295,8 @@ class CitizenMobileClient {
                         }
                     }
 
-                    // Always restore the session UI (Chat screen) if there is an active emergency
-                    let lastState = this.activeIncident ? "chat" : "homepage";
+                    // ALWAYS open the User Main Dashboard first, even if there is an existing Draft/Active Emergency
+                    let lastState = "homepage";
 
                     if (lastState && ["homepage", "home", "chat", "profile"].includes(lastState)) {
                         this.transitionAppState(lastState);
@@ -3047,6 +3055,19 @@ Stay calm and provide clear updates.`;
     }
 
     syncActiveIncidentStatus() {
+        const banner = document.getElementById("banner-active-emergency");
+        if (!this.activeIncident || ["closed", "resolved", "cancelled"].includes(this.activeIncident.status)) {
+            if (banner) banner.classList.add("hidden");
+        } else {
+            if (banner) {
+                banner.classList.remove("hidden");
+                const bannerText = banner.querySelector(".banner-text span");
+                if (bannerText) {
+                    bannerText.textContent = this.activeIncident.status === "draft" ? "Draft Emergency Exists" : "Emergency Session Active";
+                }
+            }
+        }
+        
         if (!this.activeIncident) return;
         this.reportStatusBadge.textContent = this.activeIncident.status;
 

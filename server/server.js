@@ -68,6 +68,33 @@ const uploadChatMedia = multer({
     }
 });
 
+const feedbackMediaStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = path.join(__dirname, 'public', 'uploads', 'feedbacks');
+        if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'feedback-' + uniqueSuffix + ext);
+    }
+});
+
+const uploadFeedbackMedia = multer({
+    storage: feedbackMediaStorage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error("Invalid file type. Only JPG, JPEG, PNG, and WebP are allowed."));
+        }
+    }
+});
+
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -1224,22 +1251,30 @@ app.post('/api/user/passcode/verify', async (req, res) => {
         }
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.post('/api/feedback', async (req, res) => {
-    try {
-        const { user_id, subject, category, message, media_path } = req.body;
-        const ts = Date.now();
-        if (useMySQL) {
-            await pool.query("INSERT INTO feedbacks (user_id, subject, category, message, media_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [user_id, subject, category, message, media_path, ts, ts]);
-            await logActivity(user_id, "Submitted feedback", req);
-        } else {
-            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
-            if (!db.feedbacks) db.feedbacks = [];
-            db.feedbacks.push({ id: ts, user_id, subject, category, message, media_path, created_at: ts, updated_at: ts, status: 'New' });
-            fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
-            await logActivity(user_id, "Submitted feedback", req);
-        }
-        res.json({ success: true });
-    } catch(e) { res.status(500).json({ error: e.message }); }
+app.post('/api/feedback', (req, res) => {
+    uploadFeedbackMedia.single('feedback_image')(req, res, async (err) => {
+        if (err) return res.status(400).json({ success: false, message: err.message });
+        try {
+            const { user_id, subject, category, message } = req.body;
+            let media_path = req.body.media_path || '';
+            if (req.file) {
+                media_path = '/uploads/feedbacks/' + req.file.filename;
+            }
+            
+            const ts = Date.now();
+            if (useMySQL) {
+                await pool.query("INSERT INTO feedbacks (user_id, subject, category, message, media_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [user_id, subject, category, message, media_path, ts, ts]);
+                await logActivity(user_id, "Submitted feedback", req);
+            } else {
+                const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                if (!db.feedbacks) db.feedbacks = [];
+                db.feedbacks.push({ id: ts, user_id, subject, category, message, media_path, created_at: ts, updated_at: ts, status: 'New' });
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+                await logActivity(user_id, "Submitted feedback", req);
+            }
+            res.json({ success: true });
+        } catch(e) { res.status(500).json({ error: e.message }); }
+    });
 });
 
 app.post('/api/user/map-settings', async (req, res) => {
