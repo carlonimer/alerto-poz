@@ -379,8 +379,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
     if (!_sent) {
       _selectedCategory = 'other';
-      final pos = await LocationService.getCurrentPosition();
-      await _doTransmit(pos);
+      await _doTransmit();
     }
 
     if (_sent && _incidentId != null) {
@@ -472,8 +471,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
     if (!_sent) {
       _selectedCategory = 'other';
-      final pos = await LocationService.getCurrentPosition();
-      await _doTransmit(pos);
+      await _doTransmit();
     }
 
     if (_incidentId != null) {
