@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
@@ -47,8 +48,10 @@ class SosChatScreen extends StatefulWidget {
   State<SosChatScreen> createState() => _SosChatScreenState();
 }
 
-class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateMixin {
+class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final _commentCtrl = TextEditingController();
+  bool _isDraft = false;
+  Timer? _offlineQueueTimer;
   final ScrollController _scrollCtrl = ScrollController();
   final MapController _mapController = MapController();
   late final AnimationController _pulseCtrl;
@@ -66,7 +69,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   bool _hasText = false;
   DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
-  final List<String> _attachedImages = []; // base64 strings
+  List<String> _attachedImages = []; // base64 strings
 
   bool _isMapExpanded = true;
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
@@ -96,6 +99,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    
+    _offlineQueueTimer = Timer.periodic(const Duration(seconds: 5), (_) => _flushOfflineQueue());
+
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
     _commentCtrl.addListener(() {
       final has = _commentCtrl.text.trim().isNotEmpty;
@@ -125,6 +132,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       });
       _fetchHistory();
     } else {
+      _restoreDraftFromPrefs();
       _chatFeed.add({
         'role': 'bot',
         'type': 'system',
@@ -188,6 +196,117 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   LatLng? get _markerPos =>
       _selectedPos ?? (_currentPos != null ? LatLng(_currentPos!.latitude, _currentPos!.longitude) : _incidentPos);
+
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
+      _saveDraftToPrefs();
+    }
+  }
+
+  void _markPending() {
+    if (_isDraft && _sent && _incidentId != null) {
+      _isDraft = false;
+      _doTransmit(forceStatus: 'pending', background: true);
+    }
+  }
+
+  Future<void> _restoreDraftFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final draftStr = prefs.getString('draft_incident_payload');
+    if (draftStr != null) {
+      try {
+        final draft = jsonDecode(draftStr) as Map<String, dynamic>;
+        if (mounted) {
+          setState(() {
+            _incidentId = draft['id'];
+            _selectedCategory = draft['category'];
+            _isDraft = true;
+            _sent = true;
+            if (draft['lat'] != null && draft['lng'] != null) {
+              _selectedPos = LatLng(draft['lat'], draft['lng']);
+              _currentAddress = 'Draft Location';
+            }
+            if (draft['notes'] != null) _commentCtrl.text = draft['notes'];
+            if (draft['attachments'] != null) _attachedImages = List<String>.from(draft['attachments']);
+          });
+          _fetchHistory();
+        }
+      } catch (_) {}
+    }
+  }
+
+  void _saveDraftToPrefs() {
+    if (!_sent || _incidentId == null || _cancelled) return;
+    _isDraft = true;
+    _doTransmit(forceStatus: 'draft', background: true);
+
+    final payload = {
+      'id': _incidentId,
+      'reporterId': widget.user?.id ?? 0,
+      'reporterName': widget.user?.name ?? 'Citizen',
+      'reporterPhone': widget.user?.phone ?? '',
+      'category': _selectedCategory,
+      'lat': _markerPos?.latitude ?? _defaultCenter.latitude,
+      'lng': _markerPos?.longitude ?? _defaultCenter.longitude,
+      'notes': _commentCtrl.text.trim(),
+      'attachments': _attachedImages,
+      'timestamp': DateTime.now().toIso8601String(),
+      'status': 'draft',
+    };
+    
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString('draft_incident_payload', jsonEncode(payload));
+    });
+  }
+
+  void _queueOfflineAction(Map<String, dynamic> action) async {
+    final prefs = await SharedPreferences.getInstance();
+    final queueStr = prefs.getString('offline_queue') ?? '[]';
+    final queue = jsonDecode(queueStr) as List<dynamic>;
+    queue.add(action);
+    prefs.setString('offline_queue', jsonEncode(queue));
+  }
+
+  Future<void> _flushOfflineQueue() async {
+    if (!SocketService.isConnected) return;
+    final prefs = await SharedPreferences.getInstance();
+    final queueStr = prefs.getString('offline_queue');
+    if (queueStr == null) return;
+    
+    final queue = jsonDecode(queueStr) as List<dynamic>;
+    if (queue.isEmpty) return;
+
+    final List<dynamic> failed = [];
+    bool hasFailed = false;
+
+    for (var act in queue) {
+      if (hasFailed) {
+        failed.add(act);
+        continue;
+      }
+      try {
+        if (act['type'] == 'message') {
+          await ApiService.sendMessage(act['incidentId'], act['payload']);
+        } else if (act['type'] == 'attachment') {
+          await ApiService.sendMessage(act['incidentId'], act['payload'], mediaPath: act['mediaPath']);
+        } else if (act['type'] == 'status') {
+          SocketService.emitSosReportWithAck(act['payload'], (_) {});
+        }
+      } catch (_) {
+        hasFailed = true;
+        failed.add(act);
+      }
+    }
+    
+    if (failed.isEmpty) {
+      prefs.remove('offline_queue');
+    } else {
+      prefs.setString('offline_queue', jsonEncode(failed));
+    }
+  }
+
 
   Future<void> _initLocation() async {
     if (mounted && _currentPos == null) setState(() => _currentAddress = 'Locating...');
@@ -384,13 +503,22 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
 
     if (_sent && _incidentId != null) {
+      _markPending();
+      final payload = {'senderId': widget.user?.id, 'content': 'Image Attachment'};
       try {
         await ApiService.sendMessage(
           _incidentId!,
-          {'senderId': widget.user?.id, 'content': 'Image Attachment'},
+          payload,
           mediaPath: path,
         );
-      } catch (e) {/* best-effort: ignore network errors */}
+      } catch (e) {
+        _queueOfflineAction({
+           'type': 'attachment',
+           'incidentId': _incidentId,
+           'payload': payload,
+           'mediaPath': path,
+        });
+      }
     }
   }
 
@@ -401,10 +529,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   /// Emits the SOS report and waits for the server acknowledgement so we get
   /// the real ticket number (used as the incident id for follow-up messages).
-  Future<void> _doTransmit() async {
-    if (_sending) return;
-    setState(() => _sending = true);
-    _scrollToBottom();
+  Future<void> _doTransmit({String forceStatus = 'pending', bool background = false}) async {
+    if (_sending && !background) return;
+    if (!background) setState(() => _sending = true);
+    if (!background) _scrollToBottom();
 
     final payload = {
       'id': _incidentId,
@@ -805,10 +933,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               tooltip: 'Map layers',
               icon: const Icon(Icons.layers_rounded, color: _C.ink, size: 22),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              onSelected: (value) => setState(() {
-                _mapLayer = value;
-                _isMapExpanded = true;
-              }),
+              onSelected: (value) {
+                _markPending();
+                setState(() {
+                  _mapLayer = value;
+                  _isMapExpanded = true;
+                });
+              },
               itemBuilder: (_) => [
                 _buildLayerMenuItem('Standard', Icons.map_outlined),
                 _buildLayerMenuItem('Satellite', Icons.satellite_alt_outlined),
@@ -894,7 +1025,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                           width: 64, 
                           height: 64, 
                           child: GestureDetector(
-                            onPanUpdate: _sent ? null : (details) {
+                            onPanUpdate: (details) {
+                              _markPending();
                               try {
                                 final cam = _mapController.camera;
                                 final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
