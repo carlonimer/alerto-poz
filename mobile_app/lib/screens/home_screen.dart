@@ -194,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen>
         _myLocation = LatLng(pos.latitude, pos.longitude);
         _currentAddress = 'Locating...';
       });
-      _animatedMapMove(_myLocation!, 17);
+      _animatedMapMove(_myLocation!, 18.5);
       _resolveAddress(pos.latitude, pos.longitude);
     } else {
       setState(() {
@@ -391,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen>
               return GestureDetector(
                 onTap: () {
                   if (_myLocation != null) {
-                    _animatedMapMove(_myLocation!, 17.0);
+                    _animatedMapMove(_myLocation!, 18.5);
                   }
                 },
                 child: Stack(
