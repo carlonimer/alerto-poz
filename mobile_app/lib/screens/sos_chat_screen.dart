@@ -205,12 +205,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  void _markPending() {
-    if (_isDraft && _sent && _incidentId != null) {
-      _isDraft = false;
-      _doTransmit(forceStatus: 'pending', background: true);
-    }
-  }
+
 
   Future<void> _restoreDraftFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -220,10 +215,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         final draft = jsonDecode(draftStr) as Map<String, dynamic>;
         if (mounted) {
           setState(() {
-            _incidentId = draft['id'];
             _selectedCategory = draft['category'];
-            _isDraft = true;
-            _sent = true;
             if (draft['lat'] != null && draft['lng'] != null) {
               _selectedPos = LatLng(draft['lat'], draft['lng']);
               _currentAddress = 'Draft Location';
@@ -231,29 +223,30 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
             if (draft['notes'] != null) _commentCtrl.text = draft['notes'];
             if (draft['attachments'] != null) _attachedImages = List<String>.from(draft['attachments']);
           });
-          _fetchHistory();
         }
       } catch (_) {}
     }
   }
 
   void _saveDraftToPrefs() {
-    if (!_sent || _incidentId == null || _cancelled) return;
-    _isDraft = true;
-    _doTransmit(forceStatus: 'draft', background: true);
+    // Only save a draft if it hasn't been sent and isn't cancelled
+    if (_sent || _cancelled) {
+        SharedPreferences.getInstance().then((prefs) {
+            prefs.remove('draft_incident_payload');
+        });
+        return;
+    }
 
     final payload = {
-      'id': _incidentId,
       'reporterId': widget.user?.id ?? 0,
       'reporterName': widget.user?.name ?? 'Citizen',
       'reporterPhone': widget.user?.phone ?? '',
       'category': _selectedCategory,
-      'lat': _markerPos?.latitude ?? _defaultCenter.latitude,
-      'lng': _markerPos?.longitude ?? _defaultCenter.longitude,
+      'lat': _selectedPos?.latitude ?? _defaultCenter.latitude,
+      'lng': _selectedPos?.longitude ?? _defaultCenter.longitude,
       'notes': _commentCtrl.text.trim(),
       'attachments': _attachedImages,
       'timestamp': DateTime.now().toIso8601String(),
-      'status': 'draft',
     };
     
     SharedPreferences.getInstance().then((prefs) {
@@ -503,7 +496,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
 
     if (_sent && _incidentId != null) {
-      _markPending();
       final payload = {'senderId': widget.user?.id, 'content': 'Image Attachment'};
       try {
         await ApiService.sendMessage(
@@ -934,8 +926,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               icon: const Icon(Icons.layers_rounded, color: _C.ink, size: 22),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               onSelected: (value) {
-                _markPending();
-                setState(() {
+                          setState(() {
                   _mapLayer = value;
                   _isMapExpanded = true;
                 });
@@ -1026,8 +1017,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                           height: 64, 
                           child: GestureDetector(
                             onPanUpdate: (details) {
-                              _markPending();
-                              try {
+                                                      try {
                                 final cam = _mapController.camera;
                                 final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
                                 final newPt = math.Point(pt.x + details.delta.dx, pt.y + details.delta.dy);
