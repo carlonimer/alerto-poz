@@ -769,6 +769,7 @@ class _HomeScreenState extends State<HomeScreen>
                   child: const Icon(Icons.layers, color: Colors.black87, size: 20),
                 ),
               ),
+            ],
           ),
         ),
         // Map Type Popup Menu
