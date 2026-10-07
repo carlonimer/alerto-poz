@@ -408,26 +408,26 @@ class _HomeScreenState extends State<HomeScreen>
                   Positioned(
                     bottom: 50, // Anchor the bottom of the pin to the center of the marker
                     child: SizedBox(
-                      width: 56,
-                      height: 64,
+                      width: 64,
+                      height: 72,
                       child: Stack(
                         alignment: Alignment.topCenter,
                         children: [
                           Positioned(
-                            bottom: -2,
+                            bottom: 2,
                             child: Transform.rotate(
                               angle: 3.14159 / 4,
                               child: Container(
-                                width: 16,
-                                height: 16,
+                                width: 12,
+                                height: 12,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: const Color(0xFFF05023), // Orange-red
                                   borderRadius: BorderRadius.circular(2),
                                   boxShadow: const [
                                     BoxShadow(
                                       color: Colors.black26,
-                                      blurRadius: 4,
-                                      offset: Offset(2, 2),
+                                      blurRadius: 2,
+                                      offset: Offset(1, 1),
                                     ),
                                   ],
                                 ),
@@ -435,12 +435,12 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                           Container(
-                            width: 56,
-                            height: 56,
+                            width: 64,
+                            height: 64,
                             decoration: BoxDecoration(
-                              shape: BoxShape.circle,
                               color: Colors.white,
-                              border: Border.all(color: Colors.white, width: 4),
+                              borderRadius: BorderRadius.circular(16), // Not perfectly round
+                              border: Border.all(color: const Color(0xFFF05023), width: 3), // Orange-red border
                               boxShadow: const [
                                 BoxShadow(
                                   color: Colors.black12,
