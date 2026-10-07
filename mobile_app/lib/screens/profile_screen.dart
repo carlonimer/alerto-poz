@@ -368,9 +368,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final addressCtrl = TextEditingController(text: _user?.address ?? '');
     final phoneCtrl = TextEditingController(text: _user?.phone ?? '');
     final emailCtrl = TextEditingController(text: _user?.email ?? '');
-    String selectedGender = ['Male', 'Female', 'Other'].contains(_user?.gender) 
+    String? selectedGender = ['Male', 'Female', 'Other'].contains(_user?.gender) 
         ? _user!.gender 
-        : 'Male';
+        : null;
     bool isLoading = false;
 
     showDialog(
@@ -414,7 +414,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           }
                         },
                         child: AbsorbPointer(
-                          child: _buildDialogTextField('Birthdate', controller: birthdateCtrl, suffixIcon: Icons.calendar_today),
+                          child: _buildDialogTextField('Date of Birth', controller: birthdateCtrl, suffixIcon: Icons.calendar_today),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -426,11 +426,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             setStateDialog(() => selectedGender = v);
                           }
                         },
+                        hint: 'Select Gender'
                       ),
                       const SizedBox(height: 12),
-                      _buildDialogTextField('Address', controller: addressCtrl),
+                      _buildDialogTextField('Barangay', controller: addressCtrl),
                       const SizedBox(height: 12),
-                      _buildDialogTextField('Email', controller: emailCtrl),
+                      _buildDialogTextField('Email Address', controller: emailCtrl),
                       const SizedBox(height: 12),
                       _buildDialogTextField('Phone Number', controller: phoneCtrl),
                       const SizedBox(height: 24),
@@ -455,7 +456,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   'last_name': lastCtrl.text,
                                   'suffix': suffixCtrl.text,
                                   'birthdate': birthdateCtrl.text,
-                                  'gender': selectedGender,
+                                  'gender': selectedGender ?? '',
                                   'address': addressCtrl.text,
                                   'email': emailCtrl.text,
                                   'phone': phoneCtrl.text,
@@ -470,7 +471,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     suffix: suffixCtrl.text,
                                     birthdate: birthdateCtrl.text,
                                     name: '${firstCtrl.text} ${lastCtrl.text}'.trim(),
-                                    gender: selectedGender,
+                                    gender: selectedGender ?? '',
                                     address: addressCtrl.text,
                                     phone: phoneCtrl.text,
                                     email: emailCtrl.text,
@@ -968,7 +969,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildDialogDropdown(String value, List<String> items, ValueChanged<String?> onChanged) {
+  Widget _buildDialogDropdown(String? value, List<String> items, ValueChanged<String?> onChanged, {String? hint}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), // small vertical tweak to match height
       decoration: BoxDecoration(
@@ -980,6 +981,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: DropdownButton<String>(
           isExpanded: true,
           value: value,
+          hint: hint != null ? Text(hint, style: GoogleFonts.outfit(color: Colors.grey[500], fontSize: 14)) : null,
           items: items.map((item) => DropdownMenuItem(value: item, child: Text(item, style: GoogleFonts.outfit(color: Colors.grey[800], fontSize: 14)))).toList(),
           onChanged: onChanged,
           icon: Icon(Icons.keyboard_arrow_down, color: Colors.grey[400]),
