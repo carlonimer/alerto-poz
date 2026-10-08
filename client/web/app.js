@@ -1087,7 +1087,6 @@ class CitizenMobileClient {
 
         this.socket.on('connect', () => {
             console.log("WebSocket connected successfully");
-            this.isOnline = true;
             this.syncOfflineQueue();
         });
 
@@ -1110,7 +1109,6 @@ class CitizenMobileClient {
 
         this.socket.on('disconnect', () => {
             console.log("WebSocket disconnected");
-            this.isOnline = false;
         });
 
         this.socket.on('broadcast-advisory', (data) => {
@@ -2927,7 +2925,7 @@ Stay calm and provide clear updates.`;
                         console.warn("Socket activation timed out. Falling back to offline mode.");
                         await handleOfflineFallback();
                     }
-                }, 5000);
+                }, 30000);
 
                 this.socket.emit('citizen-sos-report', this.activeIncident, async (response) => {
                     if (callbackFired) return;
