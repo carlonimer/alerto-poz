@@ -738,10 +738,83 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   // ───────────────────────── Dialogs ─────────────────────────
 
-  Future<void> _openCameraDirectly() async {
+  void _showCameraOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(
+                color: _C.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            _buildOptionTile(
+              icon: Icons.camera_alt,
+              color: Colors.blue,
+              title: 'Photo',
+              onTap: () {
+                Navigator.pop(context);
+                _openCamera(1);
+              },
+            ),
+            const SizedBox(height: 16),
+            _buildOptionTile(
+              icon: Icons.videocam,
+              color: Colors.red,
+              title: 'Video',
+              onTap: () {
+                Navigator.pop(context);
+                _openCamera(2);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionTile({required IconData icon, required Color color, required String title, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          border: Border.all(color: _C.divider),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Text(title, style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.w600, color: _C.ink)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCamera(int mode) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const CameraScreen()),
+      MaterialPageRoute(builder: (_) => CameraScreen(initialMode: mode)),
     );
     
     if (result != null && result is Map) {
@@ -1710,7 +1783,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   tooltip: 'Camera',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
-                  onPressed: _openCameraDirectly,
+                  onPressed: _showCameraOptions,
                 ),
                 const SizedBox(width: 4),
                 Expanded(

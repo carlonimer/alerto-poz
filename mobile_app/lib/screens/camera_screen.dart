@@ -4,7 +4,8 @@ import 'package:camera/camera.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
+  final int initialMode;
+  const CameraScreen({super.key, this.initialMode = 1});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -31,6 +32,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
+    _currentMode = widget.initialMode;
     _initCamera();
   }
 
@@ -59,6 +61,8 @@ class _CameraScreenState extends State<CameraScreen> {
       await _controller!.initialize();
       _maxZoom = await _controller!.getMaxZoomLevel();
       _minZoom = await _controller!.getMinZoomLevel();
+      _currentZoom = _minZoom;
+      _baseZoom = _minZoom;
       await _controller!.setFlashMode(_flashMode);
     } catch (e) {
       debugPrint("Error initializing camera: $e");
@@ -80,9 +84,7 @@ class _CameraScreenState extends State<CameraScreen> {
     if (_controller == null) return;
     setState(() {
       if (_flashMode == FlashMode.off) {
-        _flashMode = FlashMode.always;
-      } else if (_flashMode == FlashMode.always) {
-        _flashMode = FlashMode.auto;
+        _flashMode = FlashMode.torch;
       } else {
         _flashMode = FlashMode.off;
       }
@@ -91,8 +93,7 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   IconData _getFlashIcon() {
-    if (_flashMode == FlashMode.always) return Icons.flash_on;
-    if (_flashMode == FlashMode.auto) return Icons.flash_auto;
+    if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) return Icons.flash_on;
     return Icons.flash_off;
   }
 
@@ -180,43 +181,76 @@ class _CameraScreenState extends State<CameraScreen> {
         children: [
           // Camera Preview
           Positioned.fill(
-            child: GestureDetector(
-              onScaleStart: (details) {
-                _baseZoom = _currentZoom;
-              },
-              onScaleUpdate: (details) async {
-                if (_controller == null) return;
-                double targetZoom = _baseZoom * details.scale;
-                if (targetZoom < _minZoom) targetZoom = _minZoom;
-                if (targetZoom > _maxZoom) targetZoom = _maxZoom;
-                if (targetZoom != _currentZoom) {
-                  setState(() {
-                    _currentZoom = targetZoom;
-                  });
-                  await _controller!.setZoomLevel(_currentZoom);
-                }
-              },
-              child: CameraPreview(_controller!),
+            child: Container(
+              color: Colors.black,
+              child: Center(
+                child: GestureDetector(
+                  onScaleStart: (details) {
+                    _baseZoom = _currentZoom;
+                  },
+                  onScaleUpdate: (details) async {
+                    if (_controller == null) return;
+                    double targetZoom = _baseZoom * details.scale;
+                    if (targetZoom < _minZoom) targetZoom = _minZoom;
+                    if (targetZoom > _maxZoom) targetZoom = _maxZoom;
+                    if (targetZoom != _currentZoom) {
+                      setState(() {
+                        _currentZoom = targetZoom;
+                      });
+                      await _controller!.setZoomLevel(_currentZoom);
+                    }
+                  },
+                  child: CameraPreview(_controller!),
+                ),
+              ),
             ),
           ),
           
-          // Zoom level display
+          // Zoom level display & Slider
           Positioned(
             bottom: 160,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
+            left: 30,
+            right: 30,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${_currentZoom.toStringAsFixed(1)}x',
+                    style: GoogleFonts.outfit(color: Colors.yellow, fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
                 ),
-                child: Text(
-                  '${_currentZoom.toStringAsFixed(1)}x',
-                  style: GoogleFonts.outfit(color: Colors.yellow, fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-              ),
+                if (_maxZoom > _minZoom) ...[
+                  const SizedBox(height: 8),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 2.0,
+                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8.0),
+                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16.0),
+                    ),
+                    child: Slider(
+                      value: _currentZoom,
+                      min: _minZoom,
+                      max: _maxZoom,
+                      activeColor: Colors.yellow,
+                      inactiveColor: Colors.white54,
+                      onChanged: (value) async {
+                        if (_controller == null) return;
+                        setState(() {
+                          _currentZoom = value;
+                          _baseZoom = value;
+                        });
+                        await _controller!.setZoomLevel(value);
+                      },
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           
