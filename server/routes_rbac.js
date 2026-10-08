@@ -2,10 +2,18 @@ const { verifyAdmin } = require('./middleware/auth.js');
 
 module.exports = function(app, getDBState, pool, useMySQL) {
 
-    // Helper to filter incidents from memory DB
     const filterIncidents = (incidents, assigned_agency, barangay = null) => {
         return incidents.filter(i => {
-            if (i.assigned_agency !== assigned_agency) return false;
+            let agency = i.assigned_agency;
+            if (!agency) {
+                const cat = (i.category || '').toLowerCase();
+                if (cat === 'fire') agency = 'BFP';
+                else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
+                else if (cat === 'barangay') agency = 'Barangay';
+                else if (cat === 'report') agency = 'MDRRMO';
+                else agency = 'MDRRMO';
+            }
+            if (agency !== assigned_agency) return false;
             if (barangay && i.barangay !== barangay) return false;
             return true;
         });

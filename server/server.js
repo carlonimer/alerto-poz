@@ -372,20 +372,10 @@ async function addIncident(report) {
             const cat = report.category.toLowerCase();
             if (cat === 'fire') {
                 assigned_agency = 'BFP';
-            } else if (cat === 'medical' || cat === 'crime' || cat === 'roadcrash' || cat === 'road_crash') {
+            } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
                 assigned_agency = 'PNP';
-            } else if (cat === 'barangay' || cat === 'flooding') {
-                // If the user selected BARANGAY flow or Flooding in barangay context
-                assigned_agency = 'Barangay';
-                
-                // If we also have Flooding mapped to MDRRMO globally:
-                // Actually, the spec says "Flooding -> LDRRMC/MDRRMO". But if resident selects BARANGAY -> FLOODING, it goes to Barangay.
-                // The frontend will send the exact category. We'll map 'barangay' category to 'Barangay'.
-                if (cat === 'flooding') {
-                    // Let's keep it MDRRMO if reported from main screen, but if from Barangay flow, the frontend should maybe pass something else.
-                    // If frontend just sends 'barangay' for the barangay flow:
-                    assigned_agency = 'MDRRMO'; 
-                }
+            } else if (cat === 'report') {
+                assigned_agency = 'MDRRMO';
             } else if (cat === 'barangay') {
                 assigned_agency = 'Barangay';
             }

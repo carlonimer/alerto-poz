@@ -323,8 +323,9 @@ class CommandDashboard {
             if (!agency) {
                 const cat = (inc.category || '').toLowerCase();
                 if (cat === 'fire') agency = 'BFP';
-                else if (cat === 'medical' || cat === 'crime' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
+                else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
                 else if (cat === 'barangay') agency = 'Barangay';
+                else if (cat === 'report') agency = 'MDRRMO';
                 else agency = 'MDRRMO';
             }
 
@@ -466,16 +467,40 @@ class CommandDashboard {
 
         this.socket.on('incident-updated', (incident) => {
             const filtered = this.filterIncidents([incident]);
+            const idx = this.incidents.findIndex(i => i.id === incident.id);
+
             if (filtered.length === 0) {
-                // If it was assigned to us before but now isn't, maybe we should remove it? Let's just ignore.
+                // If it was assigned to us before but now isn't, remove it.
+                if (idx !== -1) {
+                    this.incidents.splice(idx, 1);
+                    this.renderLogsTable();
+                    this.renderHistoryRecords();
+                    this.updateAnalytics();
+                    // Also clear markers if any
+                    if (this.gpsStreams && this.gpsStreams[incident.id]) {
+                        clearInterval(this.gpsStreams[incident.id]);
+                        delete this.gpsStreams[incident.id];
+                    }
+                    if (this.incidentMarkers && this.incidentMarkers[incident.id]) {
+                        this.map.removeLayer(this.incidentMarkers[incident.id]);
+                        delete this.incidentMarkers[incident.id];
+                    }
+                }
                 return;
             }
-            const idx = this.incidents.findIndex(i => i.id === incident.id);
+
             if (idx !== -1) {
                 this.incidents[idx] = incident;
-                this.renderLogsTable();
-                this.renderHistoryRecords();
-                this.updateAnalytics();
+            } else {
+                // It's newly assigned to this agency (e.g., draft activated with a new category)
+                this.incidents.unshift(incident);
+                // Also plot the marker since it wasn't there before
+                this.plotIncidentMarker(incident);
+            }
+
+            this.renderLogsTable();
+            this.renderHistoryRecords();
+            this.updateAnalytics();
                 
                 // Update marker color if enroute/resolved
                 if (incident.status === 'resolved' || incident.status === 'cancelled') {
@@ -539,7 +564,6 @@ class CommandDashboard {
                     this.selectedIncident = incident;
                     this.renderDispatcherChat(incident);
                 }
-            }
         });
 
         this.socket.on('barangay-assistance-request', (req) => {
