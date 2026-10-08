@@ -452,20 +452,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     _toast('Copied $code');
   }
 
-  void _selectCategory(String key, String label) async {
+  void _selectCategory(String key, String label) {
     if (_sent || _sending) return;
     HapticFeedback.mediumImpact();
     setState(() {
       _selectedCategory = key;
-      _chatFeed.add({
-        'role': 'user',
-        'type': 'text',
-        'content': 'Selected Category: $label',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
     });
-    _scrollToBottom();
-    _sendSos(); // Directly trigger transmission to match UI flow
   }
 
   Future<void> _attachGalleryImage() async {
@@ -578,6 +570,32 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   Future<void> _sendChatMessage() async {
     final txt = _commentCtrl.text.trim();
+    
+    if (!_sent) {
+      if (_selectedCategory == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please select an emergency type first.')),
+          );
+        }
+        return;
+      }
+      await _doTransmit();
+      if (txt.isNotEmpty) {
+        setState(() {
+          _chatFeed.add({
+            'role': 'user',
+            'type': 'text',
+            'content': txt,
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+        });
+        _commentCtrl.clear();
+        _scrollToBottom();
+      }
+      return;
+    }
+
     if (txt.isEmpty) return;
 
     setState(() {
@@ -590,11 +608,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
     _commentCtrl.clear();
     _scrollToBottom();
-
-    if (!_sent) {
-      _selectedCategory = 'other';
-      await _doTransmit();
-    }
 
     if (_incidentId != null) {
       try {
@@ -1609,27 +1622,32 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   ),
                 ),
                 const SizedBox(width: 6),
-                Tooltip(
-                  message: 'Send',
-                  child: AnimatedScale(
-                    scale: _hasText ? 1.0 : 0.92,
-                    duration: const Duration(milliseconds: 180),
-                    child: Material(
-                      color: _hasText ? _C.send : _C.send.withValues(alpha: 0.75),
-                      shape: const CircleBorder(),
-                      elevation: _hasText ? 2 : 0,
-                      child: InkWell(
-                        key: const ValueKey('btn_send'),
-                        customBorder: const CircleBorder(),
-                        onTap: _sendChatMessage,
-                        child: const SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                Builder(
+                  builder: (context) {
+                    final canSend = _hasText || (!_sent && _selectedCategory != null);
+                    return Tooltip(
+                      message: 'Send',
+                      child: AnimatedScale(
+                        scale: canSend ? 1.0 : 0.92,
+                        duration: const Duration(milliseconds: 180),
+                        child: Material(
+                          color: canSend ? _C.send : _C.send.withValues(alpha: 0.75),
+                          shape: const CircleBorder(),
+                          elevation: canSend ? 2 : 0,
+                          child: InkWell(
+                            key: const ValueKey('btn_send'),
+                            customBorder: const CircleBorder(),
+                            onTap: canSend ? _sendChatMessage : null,
+                            child: const SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  }
                 ),
               ],
             ),
