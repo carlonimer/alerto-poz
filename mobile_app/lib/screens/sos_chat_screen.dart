@@ -51,14 +51,11 @@ class SosChatScreen extends StatefulWidget {
 
 class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final _commentCtrl = TextEditingController();
-  final bool _isDraft = false;
-  Timer? _offlineQueueTimer;
   final ScrollController _scrollCtrl = ScrollController();
   final MapController _mapController = MapController();
   late final AnimationController _pulseCtrl;
 
   static const LatLng _defaultCenter = LatLng(16.1086, 120.5424); // Pozorrubio
-  static const String _fallbackAddress = 'Buneg, Pozorrubio, Pangasinan';
 
   String? _incidentId;
   String? _selectedCategory;
@@ -103,8 +100,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     
-    _offlineQueueTimer = Timer.periodic(const Duration(seconds: 5), (_) => _flushOfflineQueue());
-
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
     _commentCtrl.addListener(() {
       final has = _commentCtrl.text.trim().isNotEmpty;
@@ -283,13 +278,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   void _saveDraftToPrefs() {}
 
-  void _queueOfflineAction(Map<String, dynamic> action) async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueStr = prefs.getString('offline_queue') ?? '[]';
-    final queue = jsonDecode(queueStr) as List<dynamic>;
-    queue.add(action);
-    prefs.setString('offline_queue', jsonEncode(queue));
-  }
+
 
   Future<void> _flushOfflineQueue() async {}
 
@@ -577,17 +566,16 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           mediaPath: path,
         );
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to send attachment due to network error.')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to send attachment due to network error.')),
+          );
+        }
       }
     }
   }
 
-  Future<void> _sendSos() async {
-    if (_selectedCategory == null) return;
-    await _doTransmit();
-  }
+
 
   /// Emits the SOS report and waits for the server acknowledgement so we get
   /// the real ticket number (used as the incident id for follow-up messages).
@@ -895,7 +883,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Header ─────────────────────────
 
   PreferredSizeWidget _buildAppBar() {
-    final canPop = Navigator.of(context).canPop();
     return AppBar(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
@@ -1569,7 +1556,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Widget _buildCategoryTile(Map<String, dynamic> cat, double width) {
     final color = cat['color'] as Color;
     final selected = _selectedCategory == cat['key'];
-    final hasSelection = _selectedCategory != null && _selectedCategory!.isNotEmpty;
     final enabled = !_sending && !_sent && !_cancelled;
     
     // Only grey out unselected categories AFTER the report is submitted (i.e. not enabled).
