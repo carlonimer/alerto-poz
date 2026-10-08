@@ -2653,7 +2653,7 @@ class CitizenMobileClient {
 
             } catch (e) {
                 console.error("SOS Trigger Error", e);
-                alert("Network error: Could not verify emergency status. Proceeding to offline mode if possible.");
+                // Silently fallback to offline draft mode if server is unreachable or waking up
                 await this.createNewDraftAndEnterChat(false);
             }
 
