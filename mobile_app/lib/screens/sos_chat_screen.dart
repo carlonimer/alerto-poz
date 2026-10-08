@@ -179,6 +179,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   void _onChatMessage(dynamic data) {
     if (data is! Map || data['incident_id'] != _incidentId || !mounted) return;
+    
+    // Ignore if it's our own message because we already appended it optimistically
+    if (data['sender_id']?.toString() == widget.user?.id.toString()) return;
+
     setState(() {
       _chatFeed.add({
         'role': data['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
@@ -443,7 +447,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
 
     if (_sent && _incidentId != null) {
-      final payload = {'senderId': widget.user?.id, 'content': 'Image Attachment'};
+      final payload = {'senderId': widget.user?.id, 'messageContent': 'Image Attachment'};
       try {
         await ApiService.sendMessage(
           _incidentId!,
@@ -545,7 +549,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       try {
         await ApiService.sendMessage(_incidentId!, {
           'senderId': widget.user?.id,
-          'content': txt,
+          'messageContent': txt,
         });
       } catch (e) {
         if (mounted) {
@@ -1640,9 +1644,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
               children: [
-                ..._chatFeed.map((msg) => _buildChatBubble(msg)),
-                if (_sending) _buildSendingIndicator(),
+                if (_chatFeed.isNotEmpty) _buildChatBubble(_chatFeed.first),
                 _buildCategoryGrid(),
+                ..._chatFeed.skip(1).map((msg) => _buildChatBubble(msg)),
+                if (_sending) _buildSendingIndicator(),
               ],
             ),
           ),
