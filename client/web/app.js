@@ -2175,7 +2175,7 @@ class CitizenMobileClient {
             }
 
             const parts = [];
-            if (brgyStr) parts.push(brgyStr);
+            if (brgyStr) parts.push(`Barangay ${brgyStr}`);
             if (town) parts.push(town);
             if (province) parts.push(province);
 

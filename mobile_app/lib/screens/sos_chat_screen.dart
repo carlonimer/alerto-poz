@@ -412,13 +412,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? '';
       var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? '';
 
-      var brgyStr = barangay.toString();
+      var brgyStr = barangay.toString().trim();
       if (brgyStr.toLowerCase().startsWith('barangay ')) {
         brgyStr = brgyStr.substring(9).trim();
       }
 
       final parts = <String>[];
-      if (brgyStr.isNotEmpty) parts.add(brgyStr);
+      if (brgyStr.isNotEmpty) parts.add('Barangay $brgyStr');
       if (town.toString().isNotEmpty) parts.add(town.toString());
       if (province.toString().isNotEmpty) parts.add(province.toString());
       

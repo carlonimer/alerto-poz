@@ -902,11 +902,15 @@ class CommandDashboard {
                             let town = addr.town || addr.municipality || addr.city || addr.county || "Pozorrubio"; // Fallback to Pozorrubio
                             let prov = addr.province || addr.state || addr.region || "Pangasinan"; // Fallback to Pangasinan
 
-                            if (brgy.toLowerCase().startsWith("barangay ")) {
-                                brgy = brgy.substring(9).trim();
+                            let brgyStr = brgy.trim();
+                            if (brgyStr.toLowerCase().startsWith("barangay ")) {
+                                brgyStr = brgyStr.substring(9).trim();
                             }
 
-                            const parts = [brgy, town, prov].filter(p => p !== "");
+                            const parts = [];
+                            if (brgyStr) parts.push(`Barangay ${brgyStr}`);
+                            if (town) parts.push(town);
+                            if (prov) parts.push(prov);
                             const address = parts.length > 0 ? parts.join(", ") : data.display_name || "Unknown Location";
                             
                             marker.bindPopup(`
