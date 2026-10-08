@@ -19,6 +19,7 @@ import '../services/socket_service.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
 import 'call_screen.dart';
+import 'camera_screen.dart';
 
 /// Colour tokens for the ALERTO-POZ emergency chat (orange emergency theme).
 class _C {
@@ -738,13 +739,17 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Dialogs ─────────────────────────
 
   Future<void> _openCameraDirectly() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 60,
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraScreen()),
     );
-    if (file != null) {
-      _handleImageTaken(file.path);
+    
+    if (result != null && result is Map) {
+      if (result['type'] == 'video') {
+        _handleVideoTaken(result['path']);
+      } else {
+        _handleImageTaken(result['path']);
+      }
     }
   }
 
@@ -1252,20 +1257,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                           fit: BoxFit.cover,
                         ),
                       ),
-                      child: !_sent
-                          ? Align(
-                              alignment: Alignment.topRight,
-                              child: Container(
-                                margin: const EdgeInsets.all(4),
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: Colors.black54,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.open_with_rounded, size: 12, color: Colors.white),
-                              ),
-                            )
-                          : null,
                     ),
                   ],
                 ),
@@ -1697,17 +1688,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 ),
                 IconButton(
                   key: const ValueKey('btn_camera'),
-                  tooltip: 'Take photo',
+                  tooltip: 'Camera',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
                   onPressed: _openCameraDirectly,
-                ),
-                IconButton(
-                  key: const ValueKey('btn_video'),
-                  tooltip: 'Record video',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.videocam_rounded, color: _C.muted, size: 24),
-                  onPressed: _recordVideoDirectly,
                 ),
                 const SizedBox(width: 4),
                 Expanded(

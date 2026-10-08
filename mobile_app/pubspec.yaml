@@ -34,6 +34,8 @@ dependencies:
   permission_handler: ^11.3.1
   intl: ^0.20.3
   image_cropper: ^12.2.1
+  camera: ^0.12.1
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
