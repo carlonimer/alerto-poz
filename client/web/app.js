@@ -2724,49 +2724,9 @@ class CitizenMobileClient {
             localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
             
         } catch (err) {
-            console.warn("Could not connect to ALERTO-POZ Command Center. Falling back to local offline draft.", err);
-            
-            // Generate temporary ticket since network is down
-            const tempDraftId = `DRAFT-${this.activeUser.id}`;
-            this.activeIncident = {
-                id: tempDraftId,
-                category: 'draft',
-                details: `Emergency report prepared by ${this.activeUser.name}`,
-                lat: this.gps.lat || 16.1086,
-                lng: this.gps.lng || 120.5424,
-                reporter: this.activeUser.name || 'Unknown Citizen',
-                reporterPhone: this.activeUser.phone,
-                media: [],
-                createdAt: Date.now(),
-                networkReceivedAt: Date.now(),
-                status: 'draft',
-                assignedUnit: null,
-                reporterId: this.activeUser.id,
-                responseProgress: null,
-                has_sent_messages: false
-            };
-
-            this.transitionAppState("chat");
-            if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
-            this.selectedCategory = null;
-            const catGrid = document.querySelector(".emergency-categories-grid");
-            if (catGrid) catGrid.classList.remove("has-selection");
-            const categoryButtons = document.querySelectorAll(".chat-category-btn");
-            categoryButtons.forEach(b => b.classList.remove("active"));
-
-            this.chatDetailsInput.disabled = false;
-            this.chatSendBtn.disabled = false;
-            this.btnAttachMedia.disabled = false;
-
-            this.chatIncidentId.textContent = "ALR-DRAFT";
-            this.chatIncidentTime.textContent = "Not Sent";
-            this.reportStatusBadge.textContent = "Draft";
-            this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
-            this.reportStatusBadge.style.color = "var(--text-secondary)";
-
-            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-            
-            this.appendChatMessage("System", "You are currently offline. Working in offline mode. Your report will be sent automatically once network is restored.", "incoming-bubble");
+            console.warn("Could not connect to ALERTO-POZ Command Center.", err);
+            alert("Network error: Could not connect to Command Center. Please try again.");
+            return;
         }
     }
 
@@ -2898,18 +2858,16 @@ Stay calm and provide clear updates.`;
             }, 500);
         };
 
-        const handleOfflineFallback = async () => {
+        const handleNetworkError = async () => {
             this.chatSendBtn.disabled = false;
-            if (!this.activeIncident.id || this.activeIncident.id === 'draft') {
-                this.activeIncident.id = `ALERTOPOZ-26-${String(Date.now()).substring(5)}`;
+            // Ensure status remains draft if it failed to activate
+            if (!this.activeIncident.id || this.activeIncident.id === 'draft' || String(this.activeIncident.id).startsWith("ALERTOPOZ-26")) {
+                this.activeIncident.status = "draft";
+                this.activeIncident.has_sent_messages = false;
+                this.activeIncident.id = 'draft';
+                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
             }
-            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-            
-            const queue = JSON.parse(localStorage.getItem("poz_offline_queue")) || [];
-            queue.push(this.activeIncident);
-            localStorage.setItem("poz_offline_queue", JSON.stringify(queue));
-            
-            this.appendChatMessage("System", "You are offline. Report queued and will sync automatically when network is restored.", "incoming-bubble");
+            this.appendChatMessage("System", "Message failed to send. Network error. Please try again.", "incoming-bubble");
         };
 
         // If this is the first message, ACTIVATE the incident via socket to get the real ticket ID
@@ -2923,7 +2881,7 @@ Stay calm and provide clear updates.`;
                     if (!callbackFired) {
                         callbackFired = true;
                         console.warn("Socket activation timed out. Falling back to offline mode.");
-                        await handleOfflineFallback();
+                        await handleNetworkError();
                     }
                 }, 30000);
 
@@ -2936,7 +2894,7 @@ Stay calm and provide clear updates.`;
                         await handleActivationSuccess(response.incident);
                     } else {
                         alert("Error activating emergency: " + (response ? response.error : "Unknown error"));
-                        await handleOfflineFallback();
+                        await handleNetworkError();
                     }
                 });
             } else if (this.isOnline) {
@@ -2949,11 +2907,11 @@ Stay calm and provide clear updates.`;
                     if (response && response.success) {
                         await handleActivationSuccess(response.incident);
                     } else {
-                        await handleOfflineFallback();
+                        await handleNetworkError();
                     }
-                }).catch(async () => await handleOfflineFallback());
+                }).catch(async () => await handleNetworkError());
             } else {
-                await handleOfflineFallback();
+                await handleNetworkError();
             }
         } else {
             // It's already active
