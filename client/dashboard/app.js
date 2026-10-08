@@ -1753,7 +1753,8 @@ class CommandDashboard {
             return;
         }
 
-        const html = Array.from(this.broadcasts).reverse().map(b => {
+        const sortedBroadcasts = Array.from(this.broadcasts).sort((a, b) => b.timestamp - a.timestamp);
+        const html = sortedBroadcasts.map(b => {
             const time = new Date(b.timestamp).toLocaleTimeString();
             return `
                 <div class="archive-item ${b.category}">
