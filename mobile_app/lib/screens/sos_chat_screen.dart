@@ -1115,6 +1115,19 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   initialCenter: marker ?? _defaultCenter,
                   initialZoom: 15.0,
                   interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+                  onTap: (tapPosition, point) {
+                    if (_sent) return;
+                    setState(() {
+                      _selectedPos = point;
+                      _currentAddress = 'Updating location...';
+                    });
+                    _geocodeTimer?.cancel();
+                    _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
+                      if (mounted && _selectedPos != null) {
+                        _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
+                      }
+                    });
+                  },
                 ),
                 children: [
                   TileLayer(
@@ -1130,24 +1143,30 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                           width: 100, 
                           height: 100, 
                           child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
                             onPanUpdate: (details) {
                               if (_sent) return;
                               try {
                                 final cam = _mapController.camera;
-                                final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
+                                final pt = cam.latLngToScreenPoint(_selectedPos ?? marker!);
                                 final newPt = math.Point(pt.x + details.delta.dx, pt.y + details.delta.dy);
                                 final newLatLng = cam.pointToLatLng(newPt);
                                 setState(() {
                                   _selectedPos = newLatLng;
-                                  _currentAddress = 'Updating location...';
-                                });
-                                _geocodeTimer?.cancel();
-                                _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
-                                  if (mounted && _selectedPos != null) {
-                                    _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
-                                  }
                                 });
                               } catch (_) {}
+                            },
+                            onPanEnd: (_) {
+                              if (_sent) return;
+                              setState(() {
+                                _currentAddress = 'Updating location...';
+                              });
+                              _geocodeTimer?.cancel();
+                              _geocodeTimer = Timer(const Duration(milliseconds: 800), () {
+                                if (mounted && _selectedPos != null) {
+                                  _resolveAddress(_selectedPos!.latitude, _selectedPos!.longitude);
+                                }
+                              });
                             },
                             child: _buildPulseMarker(),
                           ),

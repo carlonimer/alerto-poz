@@ -19,6 +19,15 @@ class _CameraScreenState extends State<CameraScreen> {
   int _currentMode = 1;
   bool _isRecording = false;
 
+  // Flashlight state
+  FlashMode _flashMode = FlashMode.off;
+
+  // Zoom state
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
+  double _currentZoom = 1.0;
+  double _baseZoom = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +57,9 @@ class _CameraScreenState extends State<CameraScreen> {
 
     try {
       await _controller!.initialize();
+      _maxZoom = await _controller!.getMaxZoomLevel();
+      _minZoom = await _controller!.getMinZoomLevel();
+      await _controller!.setFlashMode(_flashMode);
     } catch (e) {
       debugPrint("Error initializing camera: $e");
     }
@@ -62,6 +74,26 @@ class _CameraScreenState extends State<CameraScreen> {
       _selectedCameraIdx = (_selectedCameraIdx + 1) % _cameras.length;
       _setCamera(_cameras[_selectedCameraIdx]);
     }
+  }
+
+  void _toggleFlash() {
+    if (_controller == null) return;
+    setState(() {
+      if (_flashMode == FlashMode.off) {
+        _flashMode = FlashMode.always;
+      } else if (_flashMode == FlashMode.always) {
+        _flashMode = FlashMode.auto;
+      } else {
+        _flashMode = FlashMode.off;
+      }
+    });
+    _controller!.setFlashMode(_flashMode);
+  }
+
+  IconData _getFlashIcon() {
+    if (_flashMode == FlashMode.always) return Icons.flash_on;
+    if (_flashMode == FlashMode.auto) return Icons.flash_auto;
+    return Icons.flash_off;
   }
 
   Future<void> _onShutterPressed() async {
@@ -148,7 +180,44 @@ class _CameraScreenState extends State<CameraScreen> {
         children: [
           // Camera Preview
           Positioned.fill(
-            child: CameraPreview(_controller!),
+            child: GestureDetector(
+              onScaleStart: (details) {
+                _baseZoom = _currentZoom;
+              },
+              onScaleUpdate: (details) async {
+                if (_controller == null) return;
+                double targetZoom = _baseZoom * details.scale;
+                if (targetZoom < _minZoom) targetZoom = _minZoom;
+                if (targetZoom > _maxZoom) targetZoom = _maxZoom;
+                if (targetZoom != _currentZoom) {
+                  setState(() {
+                    _currentZoom = targetZoom;
+                  });
+                  await _controller!.setZoomLevel(_currentZoom);
+                }
+              },
+              child: CameraPreview(_controller!),
+            ),
+          ),
+          
+          // Zoom level display
+          Positioned(
+            bottom: 160,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${_currentZoom.toStringAsFixed(1)}x',
+                  style: GoogleFonts.outfit(color: Colors.yellow, fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
           ),
           
           // Grid overlay (simulated)
@@ -176,8 +245,8 @@ class _CameraScreenState extends State<CameraScreen> {
             top: 40,
             left: 16,
             child: IconButton(
-              icon: const Icon(Icons.flash_off, color: Colors.white),
-              onPressed: () {},
+              icon: Icon(_getFlashIcon(), color: Colors.white),
+              onPressed: _toggleFlash,
             ),
           ),
           Positioned(
@@ -231,24 +300,27 @@ class _CameraScreenState extends State<CameraScreen> {
                           height: 72,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            border: Border.all(color: _isRecording ? Colors.red : Colors.yellow, width: 4),
+                            border: Border.all(
+                              color: _currentMode == 2 ? Colors.white70 : Colors.yellow, 
+                              width: 4
+                            ),
                           ),
                           child: Center(
                             child: Container(
                               width: _isRecording ? 24 : 56,
                               height: _isRecording ? 24 : 56,
                               decoration: BoxDecoration(
-                                color: _isRecording ? Colors.red : Colors.transparent,
+                                color: _currentMode == 2 ? Colors.red : Colors.transparent,
                                 shape: _isRecording ? BoxShape.rectangle : BoxShape.circle,
                                 borderRadius: _isRecording ? BorderRadius.circular(4) : null,
-                                border: _isRecording ? null : Border.all(color: Colors.white, width: 2),
+                                border: _currentMode == 2 ? null : Border.all(color: Colors.white, width: 2),
                               ),
                             ),
                           ),
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.flip_camera_ios, color: Colors.white, size: 32),
+                        icon: const Icon(Icons.sync, color: Colors.white, size: 32),
                         onPressed: _isRecording ? null : _switchCamera,
                       ),
                     ],
