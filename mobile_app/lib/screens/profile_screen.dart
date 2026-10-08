@@ -7,6 +7,7 @@ import 'history_screen.dart';
 import '../services/api_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/socket_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -112,6 +113,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           setState(() {
             _user = updatedUser;
           });
+
+          // Save the updated user to SharedPreferences to persist across restarts
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token') ?? '';
+          if (token.isNotEmpty) {
+            await ApiService.saveSession(token: token, user: updatedUser.toJson());
+          }
 
           if (widget.onUserUpdated != null) {
             widget.onUserUpdated!(updatedUser);
@@ -626,6 +634,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                               );
                                               setState(() {
                                                 _user = updatedUser;
+                                              });
+                                              // Save the updated user to SharedPreferences to persist across restarts
+                                              SharedPreferences.getInstance().then((prefs) {
+                                                final token = prefs.getString('auth_token') ?? '';
+                                                if (token.isNotEmpty) {
+                                                  ApiService.saveSession(token: token, user: updatedUser.toJson());
+                                                }
                                               });
                                               if (widget.onUserUpdated !=
                                                   null) {

@@ -118,7 +118,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       _selectedCategory = inc['category'];
       _ticketCode = inc['ticketCode']?.toString() ?? inc['id']?.toString() ?? _incidentId;
       _assignedUnit = inc['assignedUnit']?.toString();
-      _createdAt = DateTime.tryParse((inc['timestamp'] ?? inc['createdAt'] ?? '').toString())?.toLocal() ?? DateTime.now();
+      final cStamp = inc['timestamp'] ?? inc['createdAt'];
+      if (cStamp is int) {
+        _createdAt = DateTime.fromMillisecondsSinceEpoch(cStamp);
+      } else {
+        _createdAt = DateTime.tryParse(cStamp?.toString() ?? '')?.toLocal() ?? DateTime.now();
+      }
       final lat = double.tryParse('${inc['lat'] ?? ''}');
       final lng = double.tryParse('${inc['lng'] ?? ''}');
       if (lat != null && lng != null) _incidentPos = LatLng(lat, lng);
@@ -152,14 +157,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
     }
 
-    SocketService.on('chat-message', _onChatMessage);
+    SocketService.on('chat-message-receive', _onChatMessage);
     SocketService.on('incident-cancelled', _onIncidentCancelled);
     SocketService.on('incident-updated', _onIncidentUpdated);
   }
 
   @override
   void dispose() {
-    SocketService.off('chat-message', _onChatMessage);
+    SocketService.off('chat-message-receive', _onChatMessage);
     SocketService.off('incident-cancelled', _onIncidentCancelled);
     SocketService.off('incident-updated', _onIncidentUpdated);
     _pulseCtrl.dispose();
@@ -822,9 +827,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   String _formatDate(DateTime d) => DateFormat('MMM dd, yyyy, hh:mm a').format(d);
 
-  String _formatStamp(String? isoDate) {
-    if (isoDate == null) return '';
-    final d = DateTime.tryParse(isoDate)?.toLocal() ?? DateTime.now();
+  String _formatStamp(dynamic val) {
+    if (val == null) return '';
+    DateTime d;
+    if (val is int) {
+      d = DateTime.fromMillisecondsSinceEpoch(val);
+    } else {
+      d = DateTime.tryParse(val.toString())?.toLocal() ?? DateTime.now();
+    }
     final now = DateTime.now();
     final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
     return DateFormat(sameDay ? 'hh:mm a' : 'MMM dd, hh:mm a').format(d);
@@ -1336,7 +1346,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Widget _buildChatBubble(Map<String, dynamic> msg) {
     final isUser = msg['role'] == 'user';
     final type = msg['type'] as String;
-    final timeStr = _formatStamp(msg['timestamp'] as String?);
+    final timeStr = _formatStamp(msg['timestamp']);
     final maxW = MediaQuery.of(context).size.width * 0.75;
 
     if (type == 'image') {

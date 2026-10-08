@@ -1282,7 +1282,8 @@ class _HomeScreenState extends State<HomeScreen>
         final res = await ApiService.checkActiveIncident(_user!.id.toString());
         if (!mounted) return;
         if (res['success'] == true && res['active'] == true) {
-          _showConflictDialog(true, res['incident'] as Map<String, dynamic>?);
+          // Requirement: DO NOT CREATE A NEW ONE. Restore existing!
+          _navigateToChat(null, res['incident'] as Map<String, dynamic>?);
         } else {
           _checkLocalDraft();
         }

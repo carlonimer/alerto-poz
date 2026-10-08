@@ -2606,8 +2606,11 @@ class CitizenMobileClient {
 
                 if (res.status === 409) {
                     // Conflict: Existing emergency found
-                    this.conflictIncident = data.incident;
-                    if (this.modalDraftConflict) this.modalDraftConflict.classList.remove("hidden");
+                    // DO NOT CREATE A NEW ONE. Restore existing!
+                    this.activeIncident = data.incident;
+                    this.syncActiveIncidentStatus();
+                    await this.restoreChatHistory();
+                    this.transitionAppState("chat");
                     return;
                 }
 

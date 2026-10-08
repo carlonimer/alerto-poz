@@ -1834,6 +1834,12 @@ app.post('/api/incidents', async (req, res) => {
             report.id = await generateUniqueTicketNumber();
         }
 
+        // Ensure timestamps are BIGINT (epoch ms) to match database schema
+        if (typeof report.createdAt === 'string') {
+            report.createdAt = new Date(report.createdAt).getTime();
+        }
+        report.networkReceivedAt = Date.now();
+
         // Fetch previous state to detect if this is an activation
         let previousStatus = null;
         if (!isNewEmergency) {
