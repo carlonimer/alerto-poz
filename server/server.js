@@ -13,6 +13,71 @@ const nodemailer = require('nodemailer');
 const twilio = require('twilio');
 const crypto = require('crypto');
 const multer = require('multer');
+const exifr = require('exifr');
+
+async function getMediaMetadataMarkdown(filePath) {
+    let fallback = `\n\n**Proof of Evidence**\n* 📍 Location: Unavailable\n* Latitude: Unavailable\n* Longitude: Unavailable\n* Date: Unavailable\n* Time: Unavailable\n* Day: Unavailable`;
+    try {
+        const metadata = await exifr.parse(filePath, { tiff: true, exif: true, gps: true }).catch(() => null);
+        
+        if (!metadata) {
+            return fallback;
+        }
+
+        let lat = metadata.latitude;
+        let lng = metadata.longitude;
+        let captureDate = metadata.DateTimeOriginal || metadata.CreateDate || metadata.ModifyDate;
+
+        let location = "Unavailable";
+        let latStr = lat ? lat.toFixed(6) : "Unavailable";
+        let lngStr = lng ? lng.toFixed(6) : "Unavailable";
+        let dateStr = "Unavailable";
+        let timeStr = "Unavailable";
+        let dayStr = "Unavailable";
+
+        if (lat && lng) {
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+                    headers: { 'User-Agent': 'AlertoPoz/1.0' }
+                });
+                const geoData = await response.json();
+                if (geoData && geoData.display_name) {
+                    const addr = geoData.address;
+                    if (addr) {
+                        let parts = [];
+                        if (addr.village || addr.suburb || addr.neighbourhood) parts.push(addr.village || addr.suburb || addr.neighbourhood);
+                        if (addr.town || addr.city || addr.municipality) parts.push(addr.town || addr.city || addr.municipality);
+                        if (addr.state || addr.province) parts.push(addr.state || addr.province);
+                        location = parts.length > 0 ? parts.join(', ') : geoData.display_name;
+                    } else {
+                        location = geoData.display_name;
+                    }
+                }
+            } catch (e) {
+                console.error("Reverse geocoding failed", e);
+            }
+        }
+
+        if (captureDate) {
+            const d = new Date(captureDate);
+            if (!isNaN(d.getTime())) {
+                const optionsDate = { month: 'long', day: 'numeric', year: 'numeric' };
+                const optionsTime = { hour: 'numeric', minute: '2-digit', hour12: true };
+                const optionsDay = { weekday: 'long' };
+                
+                dateStr = d.toLocaleDateString('en-US', optionsDate);
+                timeStr = d.toLocaleTimeString('en-US', optionsTime);
+                dayStr = d.toLocaleDateString('en-US', optionsDay);
+            }
+        }
+
+        return `\n\n**Proof of Evidence**\n* 📍 Location: ${location}\n* Latitude: ${latStr}\n* Longitude: ${lngStr}\n* Date: ${dateStr}\n* Time: ${timeStr}\n* Day: ${dayStr}`;
+        
+    } catch (err) {
+        console.error("EXIF Parsing error:", err);
+        return fallback;
+    }
+}
 
 // Configure Multer for secure profile picture uploads
 const storage = multer.diskStorage({
@@ -2003,15 +2068,24 @@ app.post('/api/incidents/:id/messages', uploadChatMedia.single('media'), async (
         const incidentId = req.params.id;
         
         let mediaUrl = null;
+        let finalContent = messageContent || "";
         if (req.file) {
             mediaUrl = `/uploads/chat/${req.file.filename}`;
+            if (messageType === 'image' || messageType === 'video') {
+                const proofMetadata = await getMediaMetadataMarkdown(req.file.path);
+                if (finalContent) {
+                    finalContent += proofMetadata;
+                } else {
+                    finalContent = proofMetadata.trimStart();
+                }
+            }
         }
         
         const timestamp = Date.now();
         
         const [result] = await pool.query(
             "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [incidentId, senderId, senderRole, messageType || 'text', messageContent || null, mediaUrl, timestamp]
+            [incidentId, senderId, senderRole, messageType || 'text', finalContent || null, mediaUrl, timestamp]
         );
         
         let userProfile = null;
@@ -2030,7 +2104,7 @@ app.post('/api/incidents/:id/messages', uploadChatMedia.single('media'), async (
             sender_id: senderId,
             sender_role: senderRole,
             message_type: messageType || 'text',
-            message_content: messageContent || null,
+            message_content: finalContent || null,
             media_url: mediaUrl,
             timestamp: timestamp,
             sender_profile_image: userProfile,
