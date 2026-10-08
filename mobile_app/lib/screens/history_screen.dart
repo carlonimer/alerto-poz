@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
+import 'sos_chat_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
   final UserModel user;
@@ -210,7 +211,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             value: _selectedType,
                             isExpanded: true,
                             icon: const Icon(Icons.keyboard_arrow_down, size: 20, color: Colors.grey),
-                            items: ['All Types', 'Medical', 'Fire', 'Crime', 'Natural', 'Utility', 'Other']
+                            items: ['All Types', 'Medical', 'Fire', 'Police', 'Barangay', 'Roadcrash', 'Report']
                                 .map((t) => DropdownMenuItem(value: t, child: Text(t, style: GoogleFonts.outfit(fontSize: 14))))
                                 .toList(),
                             onChanged: (val) => setState(() => _selectedType = val!),
@@ -232,7 +233,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             value: _selectedStatus,
                             isExpanded: true,
                             icon: const Icon(Icons.keyboard_arrow_down, size: 20, color: Colors.grey),
-                            items: ['All Statuses', 'New', 'Verified', 'Dispatching Responders', 'Resolved', 'Cancelled']
+                            items: ['All Statuses', 'Draft', 'Pending', 'Dispatching Responders', 'Resolved', 'Cancelled']
                                 .map((s) => DropdownMenuItem(value: s, child: Text(s, style: GoogleFonts.outfit(fontSize: 14), overflow: TextOverflow.ellipsis)))
                                 .toList(),
                             onChanged: (val) => setState(() => _selectedStatus = val!),
@@ -318,15 +319,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                   const SizedBox(height: 12),
                                   Row(
                                     children: [
-                                      if ((inc['status'] ?? 'draft').toString().toLowerCase() == 'draft') ...[
+                                      if ((inc['status'] ?? 'draft').toString().toLowerCase() == 'draft' || (inc['status'] ?? 'draft').toString().toLowerCase() == 'pending') ...[
                                         Expanded(
                                           child: InkWell(
                                             onTap: () async {
                                               bool? confirm = await showDialog(
                                                 context: context,
                                                 builder: (c) => AlertDialog(
-                                                  title: const Text('Cancel Draft'),
-                                                  content: const Text('Are you sure you want to cancel this draft emergency?'),
+                                                  title: const Text('Cancel Report'),
+                                                  content: const Text('Are you sure you want to cancel this emergency report?'),
                                                   actions: [
                                                     TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('No')),
                                                     TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Yes')),
@@ -337,22 +338,58 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                                 try {
                                                   final userId = widget.user.id.toString();
                                                   final isDraftId = idStr.startsWith('DRAFT-');
-                                                  http.Response res;
                                                   if (isDraftId) {
-                                                    res = await http.delete(Uri.parse('${ApiService.baseUrl}/api/incidents/draft/$userId'));
+                                                    final res = await http.delete(Uri.parse('${ApiService.baseUrl}/api/incidents/draft/$userId'));
+                                                    if (res.statusCode == 200 && mounted) {
+                                                      _fetchHistory();
+                                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Emergency report cancelled.')));
+                                                    }
                                                   } else {
-                                                    res = await http.put(
-                                                      Uri.parse('${ApiService.baseUrl}/api/incidents/$idStr'),
-                                                      headers: {'Content-Type': 'application/json'},
-                                                      body: jsonEncode({'status': 'cancelled'}),
+                                                    var resCancel = await ApiService.cancelIncident(
+                                                      idStr,
+                                                      userId: userId,
+                                                      phone: widget.user.phone ?? '',
                                                     );
-                                                  }
-                                                  if (res.statusCode == 200 && mounted) {
-                                                    _fetchHistory();
-                                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Draft cancelled.')));
+                                                    if (resCancel['_statusCode'] == 401 && resCancel['passcodeRequired'] == true) {
+                                                      if (!mounted) return;
+                                                      final pass = await showDialog<String>(
+                                                        context: context,
+                                                        builder: (c) {
+                                                          final ctrl = TextEditingController();
+                                                          return AlertDialog(
+                                                            title: const Text('Passcode Required'),
+                                                            content: TextField(
+                                                              controller: ctrl,
+                                                              obscureText: true,
+                                                              decoration: const InputDecoration(hintText: 'Enter your passcode'),
+                                                            ),
+                                                            actions: [
+                                                              TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+                                                              TextButton(onPressed: () => Navigator.pop(c, ctrl.text), child: const Text('Submit')),
+                                                            ],
+                                                          );
+                                                        }
+                                                      );
+                                                      if (pass == null || pass.isEmpty) return;
+                                                      resCancel = await ApiService.cancelIncident(
+                                                        idStr,
+                                                        userId: userId,
+                                                        phone: widget.user.phone ?? '',
+                                                        passcode: pass,
+                                                      );
+                                                    }
+                                                    
+                                                    if (resCancel['success'] == true) {
+                                                      if (mounted) {
+                                                        _fetchHistory();
+                                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Emergency report cancelled.')));
+                                                      }
+                                                    } else {
+                                                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(resCancel['error'] ?? 'Error cancelling report.')));
+                                                    }
                                                   }
                                                 } catch (e) {
-                                                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error cancelling draft.')));
+                                                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error cancelling report.')));
                                                 }
                                               }
                                             },
@@ -371,10 +408,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                           onTap: () {
                                             String st = (inc['status'] ?? 'draft').toString().toLowerCase();
                                             if (st != 'resolved' && st != 'cancelled' && st != 'closed') {
-                                              // Navigate to active tracking (SOSChatScreen)
-                                              Navigator.pushReplacementNamed(context, '/sos_chat'); // or handled via home
-                                              // We'll just pop history so home screen can load it.
-                                              Navigator.pop(context);
+                                              final nav = Navigator.of(context);
+                                              nav.pop(); // Close the history modal
+                                              nav.push(
+                                                MaterialPageRoute(
+                                                  builder: (_) => SosChatScreen(
+                                                    user: widget.user,
+                                                    activeIncident: inc,
+                                                  ),
+                                                ),
+                                              );
                                             } else {
                                               _showIncidentDetails(inc);
                                             }
@@ -384,10 +427,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                             decoration: BoxDecoration(color: Colors.blue[50], border: Border.all(color: Colors.blue.shade200), borderRadius: BorderRadius.circular(8)),
                                             alignment: Alignment.center,
                                             child: Text(
-                                              ((inc['status'] ?? 'draft').toString().toLowerCase() != 'resolved' && 
+                                              ((inc['status'] ?? 'draft').toString().toLowerCase() == 'draft' || (inc['status'] ?? 'draft').toString().toLowerCase() == 'pending')
+                                                ? 'Continue \u2192' : 
+                                              (((inc['status'] ?? 'draft').toString().toLowerCase() != 'resolved' && 
                                                (inc['status'] ?? 'draft').toString().toLowerCase() != 'cancelled' && 
                                                (inc['status'] ?? 'draft').toString().toLowerCase() != 'closed') 
-                                                ? 'View / Track \u2192' : 'View Details \u2192',
+                                                ? 'View / Track \u2192' : 'View Details \u2192'),
                                               style: GoogleFonts.outfit(color: Colors.blue[700], fontWeight: FontWeight.w600, fontSize: 13),
                                             ),
                                           ),

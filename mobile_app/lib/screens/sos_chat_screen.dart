@@ -548,11 +548,46 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Future<void> _cancelIncident() async {
     if (_incidentId == null) return;
     try {
-      await ApiService.cancelIncident(
+      var res = await ApiService.cancelIncident(
         _incidentId!,
         userId: widget.user?.id.toString() ?? '',
         phone: widget.user?.phone ?? '',
       );
+
+      if (res['_statusCode'] == 401 && res['passcodeRequired'] == true) {
+        if (!mounted) return;
+        final pass = await showDialog<String>(
+          context: context,
+          builder: (c) {
+             final ctrl = TextEditingController();
+             return AlertDialog(
+               title: const Text('Passcode Required'),
+               content: TextField(
+                 controller: ctrl,
+                 obscureText: true,
+                 decoration: const InputDecoration(hintText: 'Enter your passcode'),
+               ),
+               actions: [
+                 TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+                 TextButton(onPressed: () => Navigator.pop(c, ctrl.text), child: const Text('Submit')),
+               ],
+             );
+          }
+        );
+        if (pass == null || pass.isEmpty) return;
+        res = await ApiService.cancelIncident(
+          _incidentId!,
+          userId: widget.user?.id.toString() ?? '',
+          phone: widget.user?.phone ?? '',
+          passcode: pass,
+        );
+      }
+
+      if (res['success'] != true) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['error'] ?? 'Failed to cancel incident.')));
+        return;
+      }
+
       if (mounted) {
         setState(() {
           _cancelled = true;

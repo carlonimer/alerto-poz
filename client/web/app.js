@@ -777,7 +777,6 @@ class CitizenMobileClient {
                 categoryButtons.forEach(b => b.classList.remove("active"));
                 btn.classList.add("active");
                 const catGrid = btn.closest(".emergency-categories-grid");
-                if(catGrid) catGrid.classList.add("has-selection");
                 this.selectedCategory = btn.getAttribute("data-cat");
                 this.updateSOSCategory(this.selectedCategory);
             });
@@ -1298,7 +1297,11 @@ class CitizenMobileClient {
                                 });
                                 const catGrid = document.querySelector(".emergency-categories-grid");
                                 if (catGrid) {
-                                    catGrid.classList.add("has-selection");
+                                    if (this.activeIncident && (this.activeIncident.has_sent_messages || this.activeIncident.status !== 'draft')) {
+                                        catGrid.classList.add("has-selection");
+                                    } else {
+                                        catGrid.classList.remove("has-selection");
+                                    }
                                 }
                             }
 
@@ -2621,7 +2624,6 @@ class CitizenMobileClient {
                         <h3 style="margin-top:0; color:var(--text-color);">Active Emergency Report Found</h3>
                         <p style="color:var(--text-color); margin-bottom: 20px;">You already have an active emergency report. What would you like to do?</p>
                         <button id="modal-btn-continue" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: var(--primary); color: white; font-weight: bold; font-size: 16px; cursor: pointer;">CONTINUE</button>
-                        <button id="modal-btn-startnew" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: #ef4444; color: white; font-weight: bold; font-size: 16px; cursor: pointer;">START NEW</button>
                         <button id="modal-btn-cancel" style="width: 100%; padding: 12px; border: none; border-radius: 8px; background-color: var(--surface-color-light); color: var(--text-color); font-weight: bold; font-size: 16px; cursor: pointer;">CANCEL</button>
                     `;
                     modalOverlay.appendChild(modalBox);
@@ -2641,26 +2643,7 @@ class CitizenMobileClient {
                         this.isTriggeringSos = false;
                     };
 
-                    document.getElementById("modal-btn-startnew").onclick = async () => {
-                        if (confirm("Are you sure you want to create a new emergency report?")) {
-                            document.body.removeChild(modalOverlay);
-                            if (checkData.incident && checkData.incident.id) {
-                                try {
-                                    await fetch(`${SERVER_URL}/api/incidents/${checkData.incident.id}/cancel`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            userId: this.activeUser.id,
-                                            phone: this.activeUser.phone,
-                                            passcode: this.activeUser.passcode
-                                        })
-                                    });
-                                } catch (_) {}
-                            }
-                            await this.createNewDraftAndEnterChat(true);
-                        }
-                        this.isTriggeringSos = false;
-                    };
+                    // Start new button removed to prevent duplicate emergency reports
                     return; // exit the flow
                 }
 
@@ -2859,6 +2842,8 @@ class CitizenMobileClient {
             localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
 
             // Now that we have the real ID, POST messages and media
+            const catGrid = document.querySelector(".emergency-categories-grid");
+            if (catGrid) catGrid.classList.add("has-selection");
             await this.postMessagesAndMedia(text, attachmentsToSend);
             this.chatSendBtn.disabled = false;
 
@@ -3429,7 +3414,7 @@ Stay calm and provide clear updates.`;
             // Loading state — disable button to prevent double-click
             btnConfirm.disabled = true;
             btnConfirm.textContent = "Verifying...";
-            errorText.classList.remove("hidden");
+            errorText.classList.add("hidden");
 
             try {
                 const res = await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/cancel`, {
@@ -3852,15 +3837,19 @@ Stay calm and provide clear updates.`;
             // Type Match
             let typeMatch = (t === "all");
             if (!typeMatch) {
-                if (t === "other" && !["fire", "medical", "road_crash", "police", "flood", "rescue"].includes(inc.category.toLowerCase())) {
-                    typeMatch = true;
-                } else if (inc.category.toLowerCase() === t) {
+                // Ensure correct matching between filter options and actual categories
+                const incCategory = inc.category.toLowerCase().replace('_', '');
+                if (incCategory === t.replace('_', '')) {
                     typeMatch = true;
                 }
             }
 
             // Status Match
-            let statusMatch = (s === "all" || inc.status.toLowerCase() === s);
+            let incStatus = inc.status.toLowerCase();
+            let filterStatus = s;
+            if (filterStatus === "dispatching responders") filterStatus = "dispatching";
+            
+            let statusMatch = (s === "all" || incStatus === filterStatus);
 
             // Search Match
             let searchMatch = false;
@@ -3976,11 +3965,11 @@ Stay calm and provide clear updates.`;
         const contentArea = document.getElementById("history-details-content");
 
         let draftActions = '';
-        if (inc.status.toLowerCase() === 'draft') {
+        if (inc.status.toLowerCase() === 'draft' || inc.status.toLowerCase() === 'pending') {
             draftActions = `
                 <div style="margin-top: 15px; display: flex; gap: 10px;">
                     <button onclick="mobileClient.continueDraftById('${inc.id}')" style="flex:1; padding: 10px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: 600;">Continue Report</button>
-                    <button onclick="mobileClient.cancelDraft('${inc.id}')" style="flex:1; padding: 10px; background: #ef4444; color: white; border: none; border-radius: 6px; font-weight: 600;">Cancel Draft</button>
+                    <button onclick="mobileClient.cancelDraft('${inc.id}')" style="flex:1; padding: 10px; background: #ef4444; color: white; border: none; border-radius: 6px; font-weight: 600;">Cancel Report</button>
                 </div>
             `;
         }
@@ -4061,8 +4050,11 @@ Stay calm and provide clear updates.`;
         });
         const catGrid = document.querySelector(".emergency-categories-grid");
         if (catGrid) {
-            if (this.selectedCategory) catGrid.classList.add("has-selection");
-            else catGrid.classList.remove("has-selection");
+            if (this.selectedCategory && this.activeIncident && (this.activeIncident.has_sent_messages || (this.activeIncident.status && this.activeIncident.status !== 'draft'))) {
+                catGrid.classList.add("has-selection");
+            } else {
+                catGrid.classList.remove("has-selection");
+            }
         }
 
 
@@ -4176,7 +4168,7 @@ Stay calm and provide clear updates.`;
     async cancelDraft(incidentId) {
         if (this.isCancelingDraft) return;
         this.isCancelingDraft = true;
-        if (!confirm("Are you sure you want to cancel this draft emergency? This action cannot be undone.")) {
+        if (!confirm("Are you sure you want to cancel this emergency report? This action cannot be undone.")) {
             this.isCancelingDraft = false;
             return;
         }
@@ -4189,15 +4181,38 @@ Stay calm and provide clear updates.`;
                     method: 'DELETE'
                 });
             } else {
-                res = await fetch(`${SERVER_URL}/api/incidents/${incidentId}`, {
-                    method: 'PUT',
+                let endpoint = `${SERVER_URL}/api/incidents/${incidentId}/cancel`;
+                let bodyParams = {
+                    userId: this.activeUser.id,
+                    phone: this.activeUser.phone
+                };
+                
+                res = await fetch(endpoint, {
+                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: 'cancelled' })
+                    body: JSON.stringify(bodyParams)
                 });
+                
+                if (res.status === 401) {
+                    let jsonRes = await res.json();
+                    if (jsonRes.passcodeRequired) {
+                        let pass = prompt("This incident has active interactions. Passcode required to cancel:");
+                        if (!pass) {
+                            this.isCancelingDraft = false;
+                            return;
+                        }
+                        bodyParams.passcode = pass;
+                        res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(bodyParams)
+                        });
+                    }
+                }
             }
 
             if (res.ok) {
-                alert("Draft cancelled successfully.");
+                alert("Emergency report cancelled successfully.");
                 const histDetails = document.getElementById("modal-history-details");
                 if (histDetails) histDetails.classList.add("hidden");
 
@@ -4210,10 +4225,10 @@ Stay calm and provide clear updates.`;
                 if (this.modalDraftConflict) this.modalDraftConflict.classList.add("hidden");
                 this.fetchHistory();
             } else {
-                alert("Failed to cancel draft. Please try again.");
+                alert("Failed to cancel emergency report. Please try again.");
             }
         } catch (err) {
-            alert("Network error: Could not cancel draft.");
+            alert("Network error: Could not cancel emergency report.");
             console.error(err);
         } finally {
             this.isCancelingDraft = false;

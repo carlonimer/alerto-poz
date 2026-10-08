@@ -1348,49 +1348,7 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                     child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                   ),
-                  const SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: () async {
-                      // Confirm start new
-                      final confirmNew = await showDialog<bool>(
-                        context: ctx,
-                        builder: (c2) => AlertDialog(
-                          title: const Text('Start New Report?'),
-                          content: const Text('Are you sure you want to create a new emergency report?'),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(c2, false), child: const Text('Cancel')),
-                            TextButton(onPressed: () => Navigator.pop(c2, true), child: const Text('Yes, Start New')),
-                          ]
-                        )
-                      );
-                      
-                      if (confirmNew == true) {
-                        Navigator.pop(ctx);
-                        final prefs = await SharedPreferences.getInstance();
-                        await prefs.remove('draft_incident_payload');
-                        
-                        if (activeIncident != null) {
-                          final incId = activeIncident['_id']?.toString() ?? activeIncident['id']?.toString();
-                          if (incId != null) {
-                            try {
-                              await ApiService.cancelIncident(incId, userId: _user!.id.toString(), phone: _user!.phone ?? '');
-                            } catch (_) {}
-                          }
-                        }
-
-                        // Start new bypasses active check by passing null activeIncident
-                        _navigateToChat(null); // start new
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red[600],
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
-                    ),
-                    child: Text('START NEW', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                  ),
-                  const SizedBox(height: 10),
+                  // START NEW button removed to prevent duplicate emergency reports
                   ElevatedButton(
                     onPressed: () {
                       Navigator.pop(ctx);
