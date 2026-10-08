@@ -1849,6 +1849,17 @@ app.post('/api/incidents', async (req, res) => {
         let oldDraftId = null;
 
         if (!report.id || report.id === 'draft' || report.id.startsWith('DRAFT-')) {
+            // BACKEND PROTECTION: Ensure the user does not already have an active emergency
+            if (useMySQL && report.reporterId) {
+                const [existing] = await pool.query(
+                    "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed', 'draft')",
+                    [report.reporterId, report.reporterPhone || '']
+                );
+                if (existing.length > 0) {
+                    return res.status(409).json({ error: "Active emergency report already exists.", incident: existing[0] });
+                }
+            }
+
             isNewEmergency = true;
             if (report.id && report.id.startsWith('DRAFT-')) {
                 oldDraftId = report.id;

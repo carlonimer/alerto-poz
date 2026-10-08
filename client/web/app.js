@@ -2556,7 +2556,11 @@ class CitizenMobileClient {
     }
 
     async triggerSOSFlow() {
+        if (this.isTriggeringSos) return;
+        this.isTriggeringSos = true;
+
         if (!this.activeUser) {
+            this.isTriggeringSos = false;
             alert("Please verify your credentials and Log In first.");
             return;
         }
@@ -2569,21 +2573,25 @@ class CitizenMobileClient {
 
             // Check geofence and STRICT GPS ENFORCEMENT
             if (!this.isInsidePozorrubio(this.gps.lat, this.gps.lng)) {
+                this.isTriggeringSos = false;
                 alert("STRICT GPS REQUIREMENT: Your location is outside the Pozorrubio geofence. ALERTO-POZ requires accurate location to dispatch responders.");
                 return;
             }
             if (this.gps.lat === POZORRUBIO_PLAZA.lat && this.gps.lng === POZORRUBIO_PLAZA.lng) {
+                this.isTriggeringSos = false;
                 alert("STRICT GPS REQUIREMENT: Location access is denied or unavailable. You MUST enable GPS to send an SOS Alert.");
                 return;
             }
 
             if (!this.activeUser.phone || this.activeUser.phone.trim() === '') {
+                this.isTriggeringSos = false;
                 alert("Please update your contact number before sending an emergency request.\n\nYou can add your phone number in the Profile / Account Settings.");
                 return;
             }
 
             const hasPasscode = this.activeUser.hasPasscode || this.activeUser.passcode === "SET";
             if (!hasPasscode) {
+                this.isTriggeringSos = false;
                 alert("Please create a passcode before sending an emergency request.\n\nYou can create your passcode in the Profile / Account Settings.");
                 return;
             }
@@ -2625,28 +2633,46 @@ class CitizenMobileClient {
                         this.syncActiveIncidentStatus();
                         await this.restoreChatHistory();
                         this.transitionAppState("chat");
+                        this.isTriggeringSos = false;
                     };
 
                     document.getElementById("modal-btn-cancel").onclick = () => {
                         document.body.removeChild(modalOverlay);
+                        this.isTriggeringSos = false;
                     };
 
                     document.getElementById("modal-btn-startnew").onclick = async () => {
                         if (confirm("Are you sure you want to create a new emergency report?")) {
                             document.body.removeChild(modalOverlay);
+                            if (checkData.incident && checkData.incident.id) {
+                                try {
+                                    await fetch(`${SERVER_URL}/api/incidents/${checkData.incident.id}/cancel`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            userId: this.activeUser.id,
+                                            phone: this.activeUser.phone,
+                                            passcode: this.activeUser.passcode
+                                        })
+                                    });
+                                } catch (_) {}
+                            }
                             await this.createNewDraftAndEnterChat(true);
                         }
+                        this.isTriggeringSos = false;
                     };
                     return; // exit the flow
                 }
 
                 // If no active report, proceed directly to creation
                 await this.createNewDraftAndEnterChat(false);
+                this.isTriggeringSos = false;
 
             } catch (e) {
                 console.error("SOS Trigger Error", e);
                 // Silently fallback to offline draft mode if server is unreachable or waking up
                 await this.createNewDraftAndEnterChat(false);
+                this.isTriggeringSos = false;
             }
 
         }, 800);

@@ -496,6 +496,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'timestamp': DateTime.now().toIso8601String(),
         });
         SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload')); // Clear draft once sent
+      } else if (res is Map && res['_statusCode'] == 409) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You already have an active emergency report. Please resolve it before creating a new one.')),
+        );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Network error: Could not connect to Command Center. Please try again.')),

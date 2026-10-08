@@ -1275,12 +1275,20 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  bool _isTriggeringSos = false;
+
   void _triggerSos() async {
+    if (_isTriggeringSos) return;
+    setState(() => _isTriggeringSos = true);
+
     // Check if there is already an active incident for this user
     if (_user != null) {
       try {
         final res = await ApiService.checkActiveIncident(_user!.id.toString());
-        if (!mounted) return;
+        if (!mounted) {
+          _isTriggeringSos = false;
+          return;
+        }
         if (res['success'] == true && res['hasActive'] == true) {
           // Requirement: Show modal with CONTINUE, START NEW, CANCEL
           _showConflictDialog(res['incident'] as Map<String, dynamic>?);
@@ -1289,6 +1297,7 @@ class _HomeScreenState extends State<HomeScreen>
         }
       } catch (e) {
         if (!mounted) return;
+        setState(() => _isTriggeringSos = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Network error: Could not verify emergency status. Please try again.')),
         );
@@ -1360,6 +1369,15 @@ class _HomeScreenState extends State<HomeScreen>
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.remove('draft_incident_payload');
                         
+                        if (activeIncident != null) {
+                          final incId = activeIncident['_id']?.toString() ?? activeIncident['id']?.toString();
+                          if (incId != null) {
+                            try {
+                              await ApiService.cancelIncident(incId, userId: _user!.id.toString(), phone: _user!.phone ?? '');
+                            } catch (_) {}
+                          }
+                        }
+
                         // Start new bypasses active check by passing null activeIncident
                         _navigateToChat(null); // start new
                       }
@@ -1376,6 +1394,7 @@ class _HomeScreenState extends State<HomeScreen>
                   ElevatedButton(
                     onPressed: () {
                       Navigator.pop(ctx);
+                      if (mounted) setState(() => _isTriggeringSos = false);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.grey[300],
@@ -1391,7 +1410,9 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       ),
-    );
+    ).then((_) {
+      if (mounted) setState(() => _isTriggeringSos = false);
+    });
   }
 
   void _navigateToChat(String? category, [Map<String, dynamic>? activeIncident]) {
@@ -1404,7 +1425,10 @@ class _HomeScreenState extends State<HomeScreen>
           activeIncident: activeIncident,
         ),
       ),
-    ).then((_) => _loadData());
+    ).then((_) {
+      if (mounted) setState(() => _isTriggeringSos = false);
+      _loadData();
+    });
   }
 
   Widget _buildAlertsTab() {
