@@ -135,12 +135,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         'role': 'bot',
         'type': 'system',
         'content': 'Emergency report prepared by ${(widget.user?.name ?? 'USER').toUpperCase()}',
+        'timestamp': _createdAt.subtract(const Duration(seconds: 2)).toIso8601String(),
       });
       _chatFeed.add({
         'role': 'bot',
         'type': 'activated',
         'content': '',
-        'timestamp': _createdAt.toIso8601String(),
+        'timestamp': _createdAt.subtract(const Duration(seconds: 1)).toIso8601String(),
       });
       _fetchHistory();
     } else {
@@ -149,6 +150,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         'role': 'bot',
         'type': 'system',
         'content': 'Ano ang maipaglilingkod namin?',
+        'timestamp': DateTime.now().subtract(const Duration(minutes: 1)).toIso8601String(),
       });
 
       if (widget.initialCategory != null) {
@@ -341,13 +343,23 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         final msgs = res['messages'] as List;
         setState(() {
           for (var msg in msgs) {
+            String ts = msg['timestamp']?.toString() ?? msg['createdAt']?.toString() ?? DateTime.now().toIso8601String();
+            if (int.tryParse(ts) != null) {
+              ts = DateTime.fromMillisecondsSinceEpoch(int.parse(ts)).toIso8601String();
+            }
             _chatFeed.add({
               'role': msg['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
               'type': (msg['message_type'] == 'image' || msg['message_type'] == 'video' || msg['isMedia'] == true) ? 'image' : 'text',
               'content': msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '',
-              'timestamp': msg['timestamp'] ?? msg['createdAt'] ?? DateTime.now().toIso8601String(),
+              'timestamp': ts,
             });
           }
+          
+          _chatFeed.sort((a, b) {
+            final tA = DateTime.tryParse(a['timestamp']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final tB = DateTime.tryParse(b['timestamp']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+            return tA.compareTo(tB);
+          });
         });
         _scrollToBottom();
       }
