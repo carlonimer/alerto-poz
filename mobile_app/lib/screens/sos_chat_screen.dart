@@ -110,7 +110,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       if (has != _hasText) setState(() => _hasText = has);
     });
 
-    _initLocation();
     _loadMapLayer();
 
     if (widget.activeIncident != null) {
@@ -128,23 +127,34 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       final lat = double.tryParse('${inc['lat'] ?? ''}');
       final lng = double.tryParse('${inc['lng'] ?? ''}');
       if (lat != null && lng != null) _incidentPos = LatLng(lat, lng);
-      _sent = true;
+      _sent = (inc['status'] != 'draft');
       if (inc['status'] == 'cancelled') {
         _cancelled = true;
       }
-      _chatFeed.add({
-        'role': 'bot',
-        'type': 'system',
-        'content': 'Emergency report prepared by ${(widget.user?.name ?? 'USER').toUpperCase()}',
-        'timestamp': _createdAt.subtract(const Duration(seconds: 2)).toIso8601String(),
-      });
-      _chatFeed.add({
-        'role': 'bot',
-        'type': 'activated',
-        'content': '',
-        'timestamp': _createdAt.subtract(const Duration(seconds: 1)).toIso8601String(),
-      });
-      _fetchHistory();
+      
+      if (_sent) {
+        _chatFeed.add({
+          'role': 'bot',
+          'type': 'system',
+          'content': 'Emergency report prepared by ${(widget.user?.name ?? 'USER').toUpperCase()}',
+          'timestamp': _createdAt.subtract(const Duration(seconds: 2)).toIso8601String(),
+        });
+        _chatFeed.add({
+          'role': 'bot',
+          'type': 'activated',
+          'content': '',
+          'timestamp': _createdAt.subtract(const Duration(seconds: 1)).toIso8601String(),
+        });
+        _fetchHistory();
+      } else {
+        _restoreDraftFromPrefs();
+        _chatFeed.add({
+          'role': 'bot',
+          'type': 'system',
+          'content': 'Ano ang maipaglilingkod namin?',
+          'timestamp': DateTime.now().subtract(const Duration(minutes: 1)).toIso8601String(),
+        });
+      }
     } else {
       _restoreDraftFromPrefs();
       _chatFeed.add({
@@ -159,6 +169,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         _selectCategory(cat['key'] as String, cat['label'] as String);
       }
     }
+
+    _initLocation();
 
     SocketService.on('chat-message-receive', _onChatMessage);
     SocketService.on('incident-cancelled', _onIncidentCancelled);
@@ -288,7 +300,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (pos != null) {
       setState(() {
         _currentPos = pos;
-        _selectedPos ??= LatLng(pos.latitude, pos.longitude);
+        _selectedPos ??= _incidentPos ?? LatLng(pos.latitude, pos.longitude);
         _currentAddress = 'Locating...';
       });
       _moveMap(_selectedPos!, 15.0);
@@ -1053,7 +1065,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                           height: 64, 
                           child: GestureDetector(
                             onPanUpdate: (details) {
-                                                      try {
+                              if (_sent) return;
+                              try {
                                 final cam = _mapController.camera;
                                 final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
                                 final newPt = math.Point(pt.x + details.delta.dx, pt.y + details.delta.dy);
@@ -1136,6 +1149,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 border: Border.all(color: Colors.white, width: 3),
                 boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))],
               ),
+              child: !_sent ? const Icon(Icons.open_with_rounded, size: 10, color: Colors.white) : null,
             ),
           ],
         );

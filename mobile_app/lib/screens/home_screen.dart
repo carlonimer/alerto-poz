@@ -1311,7 +1311,7 @@ class _HomeScreenState extends State<HomeScreen>
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFFF9EAE1),
+        backgroundColor: const Color(0xFFF6EDE5),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1319,29 +1319,33 @@ class _HomeScreenState extends State<HomeScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Icon(Icons.warning_rounded, color: Colors.orange),
+                  const Icon(Icons.warning_rounded, color: Colors.orange, size: 26),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                    child: Text('Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87), textAlign: TextAlign.center),
                   ),
                   GestureDetector(
                     onTap: () {
                       Navigator.pop(ctx);
                       if (mounted) setState(() => _isTriggeringSos = false);
                     },
-                    child: const Icon(Icons.close, color: Colors.grey, size: 22),
+                    child: const Icon(Icons.close, color: Colors.grey, size: 26),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              Container(
+                height: 2,
+                color: const Color(0xFFF05628),
+                margin: const EdgeInsets.only(top: 10, bottom: 20),
+              ),
               Text(
                 'You already have an active emergency report. What would you like to do?',
-                style: GoogleFonts.outfit(fontSize: 13, color: Colors.black87),
+                style: GoogleFonts.outfit(fontSize: 14, color: Colors.black87),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 25),
               Row(
                 children: [
                   Expanded(
@@ -1380,12 +1384,12 @@ class _HomeScreenState extends State<HomeScreen>
                         }
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.grey[300],
+                        backgroundColor: const Color(0xFFE5E7EB),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         elevation: 0,
                       ),
-                      child: Text('START NEW', style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 14)),
+                      child: Text('START NEW', style: GoogleFonts.outfit(color: const Color(0xFF222222), fontWeight: FontWeight.w800, fontSize: 14)),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1396,12 +1400,12 @@ class _HomeScreenState extends State<HomeScreen>
                         _navigateToChat(null, activeIncident);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF05023),
+                        backgroundColor: const Color(0xFFF05628),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         elevation: 0,
                       ),
-                      child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                      child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
                     ),
                   ),
                 ],
