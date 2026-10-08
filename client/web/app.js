@@ -2625,13 +2625,13 @@ class CitizenMobileClient {
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                             <span style="font-size: 22px;">⚠️</span>
                             <h3 style="margin: 0; color: #222; font-weight: 800; font-size: 18px; flex: 1; text-align: center;">Active Emergency Report Found</h3>
-                            <span id="modal-btn-close-active" style="font-size: 24px; color: #888; cursor: pointer; line-height: 1;">✕</span>
+                            <span id="modal-btn-close-active" style="font-size: 20px; color: #888; cursor: pointer; line-height: 1; font-weight: 400;">✕</span>
                         </div>
                         <hr style="border: 0; border-top: 2px solid #F05628; margin: 10px 0 20px 0;" />
                         <p style="color: #333; margin-bottom: 25px; font-size: 15px;">You already have an active emergency report. What would you like to do?</p>
                         <div style="display: flex; justify-content: space-between; gap: 10px;">
-                            <button id="modal-btn-start-new" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #E5E7EB; color: #222; font-weight: 800; font-size: 14px; cursor: pointer;">START NEW</button>
-                            <button id="modal-btn-continue" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #F05628; color: white; font-weight: 800; font-size: 14px; cursor: pointer;">CONTINUE</button>
+                            <button id="modal-btn-start-new" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #E5E7EB; color: #222; font-weight: 700; font-size: 14px; cursor: pointer;">START NEW</button>
+                            <button id="modal-btn-continue" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #F05628; color: white; font-weight: 700; font-size: 14px; cursor: pointer;">CONTINUE</button>
                         </div>
                     `;
                     modalOverlay.appendChild(modalBox);
