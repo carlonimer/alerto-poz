@@ -747,27 +747,31 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   ),
                 ),
                 const SizedBox(height: 24),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 8,
-                  runSpacing: 8,
+                Row(
                   children: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: Text('Cancel', style: GoogleFonts.outfit(color: Colors.grey[600], fontWeight: FontWeight.w600)),
                     ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _cancelIncident();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF44336),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        elevation: 0,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _cancelIncident();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFF44336),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          elevation: 0,
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Confirm Close Incident',
+                              style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
+                        ),
                       ),
-                      child: Text('Confirm Close Incident',
-                          style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ),
