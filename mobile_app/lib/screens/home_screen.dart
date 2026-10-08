@@ -944,6 +944,7 @@ class _HomeScreenState extends State<HomeScreen>
               });
               if (res['success'] == true) {
                 _user = _user!.copyWith(mapSettings: settings);
+                ApiService.updateUserLocal(_user!.toJson());
               }
             } catch (e) {
               debugPrint('Failed to save map type: $e');
@@ -1318,10 +1319,20 @@ class _HomeScreenState extends State<HomeScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(Icons.warning_rounded, color: Colors.orange),
                   const SizedBox(width: 8),
-                  Text('⚠️ Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                  Expanded(
+                    child: Text('Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      if (mounted) setState(() => _isTriggeringSos = false);
+                    },
+                    child: const Icon(Icons.close, color: Colors.grey, size: 22),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -1338,7 +1349,9 @@ class _HomeScreenState extends State<HomeScreen>
                       onPressed: () async {
                         if (!_isTriggeringSos) {
                             if (mounted) setState(() => _isTriggeringSos = true);
-                        } else return;
+                        } else {
+                          return;
+                        }
                         
                         try {
                           final pos = await LocationService.getCurrentPosition();
@@ -1604,6 +1617,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 _selectedMapType = updatedUser.mapSettings!['map_type'];
                               }
                             });
+                            ApiService.updateUserLocal(updatedUser.toJson());
                           },
                         ),
                       ),

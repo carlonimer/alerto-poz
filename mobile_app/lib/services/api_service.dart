@@ -404,6 +404,11 @@ class ApiService {
     await prefs.setString('user_data', jsonEncode(user));
   }
 
+  static Future<void> updateUserLocal(Map<String, dynamic> user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_data', jsonEncode(user));
+  }
+
   static Future<Map<String, dynamic>?> getUser() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('user_data');

@@ -775,24 +775,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.json({
                 success: true,
                 otpRequired: false,
-                user: {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    phone: user.phone,
-                    type: user.type,
-                    hasPasscode: !!user.passcode,
-                    profile_image: user.profile_image,
-                    first_name: user.first_name,
-                    middle_name: user.middle_name,
-                    last_name: user.last_name,
-                    suffix: user.suffix,
-                    birthdate: user.birthdate,
-                    gender: user.gender,
-                    address: user.address,
-                    barangay: user.barangay,
-                    active: user.active
-                },
+                user: await formatUserObject(user),
                 token: sessionToken
             });
         }
@@ -829,8 +812,23 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Helper function to format user consistently
-function formatUserObject(user) {
+async function formatUserObject(user) {
     if (!user) return null;
+    let mapSettings = null;
+    if (useMySQL) {
+        try {
+            const [ms] = await pool.query("SELECT * FROM map_settings WHERE user_id = ?", [user.id]);
+            if (ms.length > 0) mapSettings = ms[0];
+        } catch(e) {}
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (db.map_settings) {
+                mapSettings = db.map_settings.find(m => String(m.user_id) === String(user.id)) || null;
+            }
+        } catch(e) {}
+    }
+
     return {
         id: user.id,
         name: user.name,
@@ -847,7 +845,8 @@ function formatUserObject(user) {
         gender: user.gender,
         address: user.address,
         barangay: user.barangay,
-        active: user.active
+        active: user.active,
+        map_settings: mapSettings
     };
 }
 
@@ -914,7 +913,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
         // Return a mock authentication session token
         res.json({
             success: true,
-            user: formatUserObject(user),
+            user: await formatUserObject(user),
             token: `alerto-session-${user.id}-${Date.now()}`,
             reset_token: resetToken
         });
@@ -954,7 +953,7 @@ app.post('/api/auth/validate', async (req, res) => {
 
         res.json({
             valid: true,
-            user: formatUserObject(user)
+            user: await formatUserObject(user)
         });
     } catch (e) {
         res.status(500).json({ valid: false, error: e.message });
@@ -1174,7 +1173,7 @@ app.post('/api/user/profile', async (req, res) => {
             }
         }
         
-        const formattedUser = formatUserObject(updatedUser) || { id };
+        const formattedUser = (await formatUserObject(updatedUser)) || { id };
         io.emit('profile-updated', formattedUser);
         
         res.json({ success: true, user: formattedUser });
@@ -1350,7 +1349,7 @@ app.post('/api/user/profile-picture', (req, res) => {
             await logActivity(id, "Updated profile picture", req);
             
             const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
-            const formattedUser = formatUserObject(rows[0]);
+            const formattedUser = await formatUserObject(rows[0]);
             io.emit('profile-updated', formattedUser || { id });
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
@@ -1361,7 +1360,7 @@ app.post('/api/user/profile-picture', (req, res) => {
                 u.updated_at = Date.now();
                 fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
                 await logActivity(id, "Updated profile picture", req);
-                const formattedUser = formatUserObject(u);
+                const formattedUser = await formatUserObject(u);
                 io.emit('profile-updated', formattedUser);
             }
         }

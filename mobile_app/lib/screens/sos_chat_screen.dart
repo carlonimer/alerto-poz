@@ -111,6 +111,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     });
 
     _initLocation();
+    _loadMapLayer();
 
     if (widget.activeIncident != null) {
       final inc = widget.activeIncident!;
@@ -173,6 +174,44 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     _commentCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadMapLayer() async {
+    final data = await ApiService.getUser();
+    if (data != null && mounted) {
+      final user = UserModel.fromJson(data);
+      if (user.mapSettings != null && user.mapSettings!['map_type'] != null) {
+        String mt = user.mapSettings!['map_type'];
+        String newLayer = 'Standard';
+        if (mt == 'satellite') newLayer = 'Satellite';
+        if (mt == 'terrain') newLayer = 'Terrain';
+        setState(() {
+          _mapLayer = newLayer;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveMapLayer(String layer) async {
+    final data = await ApiService.getUser();
+    if (data != null) {
+      final user = UserModel.fromJson(data);
+      String dbType = 'default';
+      if (layer == 'Satellite') dbType = 'satellite';
+      if (layer == 'Terrain') dbType = 'terrain';
+      
+      final settings = Map<String, dynamic>.from(user.mapSettings ?? {});
+      settings['map_type'] = dbType;
+      
+      final res = await ApiService.saveMapSettings({
+        'user_id': user.id,
+        ...settings,
+      });
+      if (res['success'] == true) {
+        final updatedUser = user.copyWith(mapSettings: settings);
+        ApiService.updateUserLocal(updatedUser.toJson());
+      }
+    }
   }
 
   // ───────────────────────── Socket handlers ─────────────────────────
@@ -922,10 +961,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               icon: const Icon(Icons.layers_rounded, color: _C.ink, size: 22),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               onSelected: (value) {
-                          setState(() {
+                setState(() {
                   _mapLayer = value;
                   _isMapExpanded = true;
                 });
+                _saveMapLayer(value);
               },
               itemBuilder: (_) => [
                 _buildLayerMenuItem('Standard', Icons.map_outlined),
