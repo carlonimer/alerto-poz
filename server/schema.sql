@@ -166,7 +166,7 @@ ON DUPLICATE KEY UPDATE
     lng = VALUES(lng),
     status = VALUES(status);
 
--- Seed Admin Panel Account (password: 1234)
+-- Seed Admin Panel Account (password: admin123)
 INSERT INTO
     users (
         name,
@@ -177,11 +177,11 @@ INSERT INTO
         active
     )
 VALUES (
-        'Pozorrubio MDRRMO Admin',
-        'admin',
+        'MDRRMO Command Center',
+        'mdrrmo@pozorrubio.gov.ph',
         '09998887777',
-        '$2a$10$aMdHgKF23fA5REXdvzCzKe/FGE.LcxsApAdgui3hCdL/FOdd3B59i',
-        'authority',
+        '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm',
+        'mdrrmo_admin',
         1
     )
 ON DUPLICATE KEY UPDATE

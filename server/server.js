@@ -206,7 +206,7 @@ const dbConfig = {
 const JSON_DB_FILE = path.join(__dirname, 'db.json');
 const INITIAL_JSON_DB = {
     users: [
-        { id: 1, phone: "09998887777", email: "admin@pozorrubio.gov.ph", password: "$2a$10$ct27geiwLgHJM4GHGgmKbOGGYp67zMdbM1y0XN7ys3hfw6JxV6uUm", name: "Pozorrubio MDRRMO Admin", type: "authority", active: 1, otp_code: null, otp_expires: null, otp_type: null }
+        { id: 1, phone: "09998887777", email: "mdrrmo@pozorrubio.gov.ph", password: "$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm", name: "MDRRMO Command Center", type: "mdrrmo_admin", active: 1, otp_code: null, otp_expires: null, otp_type: null }
     ],
     incidents: [],
     responders: [

@@ -314,13 +314,20 @@ async function initDatabase(pool) {
         // Use INSERT IGNORE in case some exist but not others
         await pool.query(`
             INSERT IGNORE INTO users (name, email, phone, password, type, active, barangay) VALUES
-            ('MDRRMO Admin', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'mdrrmo_admin', 1, NULL),
+            ('MDRRMO Command Center', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'mdrrmo_admin', 1, NULL),
             ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'bfp_admin', 1, NULL),
             ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'pnp_admin', 1, NULL),
             ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'barangay_admin', 1, 'Buneg');
         `);
         console.log("Admin panel accounts seeded/updated.");
     }
+
+    // Force update MDRRMO Command Center name
+    await pool.query("UPDATE users SET name = 'MDRRMO Command Center' WHERE email = 'mdrrmo@pozorrubio.gov.ph'");
+
+    // Ensure the old 'admin' account is removed so it no longer works
+    await pool.query("DELETE FROM users WHERE email = 'admin'");
+
 
     // Backward compatibility: upgrade old 'authority' type to 'mdrrmo_admin'
     await pool.query("UPDATE users SET type = 'mdrrmo_admin' WHERE type = 'authority'");
