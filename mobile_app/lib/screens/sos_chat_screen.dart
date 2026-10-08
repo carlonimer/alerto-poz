@@ -1493,9 +1493,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     final hasSelection = _selectedCategory != null && _selectedCategory!.isNotEmpty;
     final enabled = !_sending && !_sent && !_cancelled;
     
-    // If a category is selected, or if the form is submitted/sent/cancelled, unselected categories are greyed out.
-    // Otherwise, all are fully visible.
-    final double opacity = (selected || (!hasSelection && enabled)) ? 1.0 : 0.45;
+    // Only grey out unselected categories AFTER the report is submitted (i.e. not enabled).
+    final double opacity = (enabled || selected) ? 1.0 : 0.45;
 
     return SizedBox(
       width: width,
