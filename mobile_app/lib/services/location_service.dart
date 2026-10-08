@@ -15,8 +15,8 @@ class LocationService {
     if (!ok) return null;
     try {
       return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 15),
       );
     } catch (_) {
       return null;
@@ -26,7 +26,7 @@ class LocationService {
   static Stream<Position> positionStream() {
     return Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: LocationAccuracy.best,
         distanceFilter: 10,
       ),
     );

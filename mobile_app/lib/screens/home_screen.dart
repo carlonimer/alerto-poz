@@ -223,12 +223,12 @@ class _HomeScreenState extends State<HomeScreen>
       }
       final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
       var barangay = addr['village'] ?? addr['suburb'] ?? addr['quarter'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['city_district'] ?? '';
-      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? '';
-      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? '';
+      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? 'Pozorrubio';
+      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? 'Pangasinan';
       var brgyStr = barangay.toString().trim();
       if (brgyStr.toLowerCase().startsWith('barangay ')) brgyStr = brgyStr.substring(9).trim();
       final parts = <String>[];
-      if (brgyStr.isNotEmpty) parts.add('Barangay $brgyStr');
+      if (brgyStr.isNotEmpty) parts.add(brgyStr);
       if (town.toString().isNotEmpty) parts.add(town.toString());
       if (province.toString().isNotEmpty) parts.add(province.toString());
       

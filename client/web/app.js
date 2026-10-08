@@ -2166,8 +2166,8 @@ class CitizenMobileClient {
             const data = await res.json();
             const addr = data.address || {};
             const barangay = addr.village || addr.suburb || addr.quarter || addr.hamlet || addr.neighbourhood || addr.city_district || "";
-            const town = addr.town || addr.municipality || addr.city || addr.county || "";
-            const province = addr.province || addr.state || addr.region || "";
+            const town = addr.town || addr.municipality || addr.city || addr.county || "Pozorrubio";
+            const province = addr.province || addr.state || addr.region || "Pangasinan";
 
             let brgyStr = barangay.toString().trim();
             if (brgyStr.toLowerCase().startsWith("barangay ")) {
@@ -2175,7 +2175,7 @@ class CitizenMobileClient {
             }
 
             const parts = [];
-            if (brgyStr) parts.push(`Barangay ${brgyStr}`);
+            if (brgyStr) parts.push(brgyStr);
             if (town) parts.push(town);
             if (province) parts.push(province);
 

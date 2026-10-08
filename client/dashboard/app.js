@@ -908,7 +908,7 @@ class CommandDashboard {
                             }
 
                             const parts = [];
-                            if (brgyStr) parts.push(`Barangay ${brgyStr}`);
+                            if (brgyStr) parts.push(brgyStr);
                             if (town) parts.push(town);
                             if (prov) parts.push(prov);
                             const address = parts.length > 0 ? parts.join(", ") : data.display_name || "Unknown Location";
