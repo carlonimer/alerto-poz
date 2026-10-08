@@ -1281,9 +1281,9 @@ class _HomeScreenState extends State<HomeScreen>
       try {
         final res = await ApiService.checkActiveIncident(_user!.id.toString());
         if (!mounted) return;
-        if (res['success'] == true && res['active'] == true) {
-          // Requirement: DO NOT CREATE A NEW ONE. Restore existing!
-          _navigateToChat(null, res['incident'] as Map<String, dynamic>?);
+        if (res['success'] == true && res['hasActive'] == true) {
+          // Requirement: Show modal with CONTINUE, START NEW, CANCEL
+          _showConflictDialog(true, res['incident'] as Map<String, dynamic>?);
         } else {
           _checkLocalDraft();
         }
@@ -1301,7 +1301,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (draftStr != null) {
       _showConflictDialog(false, null);
     } else {
-      _navigateToChat(null);
+      _navigateToChat(null); // Direct to new creation
     }
   }
 
@@ -1320,62 +1320,79 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   const Icon(Icons.warning_rounded, color: Colors.orange),
                   const SizedBox(width: 8),
-                  Text(isActive ? 'Active Report' : 'Draft Emergency', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                  Text(isActive ? 'Active Emergency Report Found' : 'Draft Emergency', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
                 ],
               ),
               const SizedBox(height: 16),
               Text(
                 isActive 
-                  ? 'You already have an ongoing emergency report. Do you want to continue with your current report or start a new one?'
+                  ? 'You already have an active emergency report. What would you like to do?'
                   : 'You have an unsent draft emergency report. Do you want to continue with your draft or start a new one?',
                 style: GoogleFonts.outfit(fontSize: 13, color: Colors.black87),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        if (!isActive) {
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.remove('draft_incident_payload');
-                        }
-                        _navigateToChat(null); // Start new
-                      },
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(50),
-                          side: const BorderSide(color: Color(0xFF8B3A3A), width: 1.5),
-                        ),
-                      ),
-                      child: Text('Start New', style: GoogleFonts.outfit(color: const Color(0xFF8B3A3A), fontWeight: FontWeight.w700, fontSize: 14)),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _navigateToChat(null, activeIncident); // Continue
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF05023),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
                     ),
+                    child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: () async {
+                      // Confirm start new
+                      final confirmNew = await showDialog<bool>(
+                        context: ctx,
+                        builder: (c2) => AlertDialog(
+                          title: const Text('Start New Report?'),
+                          content: const Text('Are you sure you want to create a new emergency report?'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(c2, false), child: const Text('Cancel')),
+                            TextButton(onPressed: () => Navigator.pop(c2, true), child: const Text('Yes, Start New')),
+                          ]
+                        )
+                      );
+                      
+                      if (confirmNew == true) {
                         Navigator.pop(ctx);
-                        _navigateToChat(null, activeIncident); // Continue
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF05023),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-                        elevation: 2,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 18),
-                          const SizedBox(width: 8),
-                          Text('Continue', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                        ]
-                      ),
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.remove('draft_incident_payload');
+                        
+                        // Start new bypasses active check by passing null activeIncident
+                        _navigateToChat(null); // start new
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red[600],
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
                     ),
+                    child: Text('START NEW', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[300],
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                    ),
+                    child: Text('CANCEL', style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 14)),
                   ),
                 ],
               ),

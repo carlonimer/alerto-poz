@@ -2599,113 +2599,177 @@ class CitizenMobileClient {
             }
 
             try {
-                // Call backend to create a temporary Draft and check for existing unfinished emergencies
-                const res = await fetch(`${SERVER_URL}/api/incidents/draft`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        reporterId: this.activeUser.id,
-                        reporterPhone: this.activeUser.phone,
-                        lat: this.gps.lat,
-                        lng: this.gps.lng,
-                        reporter: this.activeUser.name,
-                        createdAt: Date.now()
-                    })
-                });
+                // FIRST: Check if active report exists without creating a draft
+                const checkRes = await fetch(`${SERVER_URL}/api/incidents/active?userId=${this.activeUser.id}&phone=${encodeURIComponent(this.activeUser.phone || '')}`);
+                const checkData = await checkRes.json();
 
-                const data = await res.json();
+                if (checkData.hasActive && checkData.incident) {
+                    const modalOverlay = document.createElement("div");
+                    modalOverlay.style.position = "fixed";
+                    modalOverlay.style.top = "0"; modalOverlay.style.left = "0"; modalOverlay.style.width = "100%"; modalOverlay.style.height = "100%";
+                    modalOverlay.style.backgroundColor = "rgba(0,0,0,0.7)";
+                    modalOverlay.style.zIndex = "9999";
+                    modalOverlay.style.display = "flex"; modalOverlay.style.justifyContent = "center"; modalOverlay.style.alignItems = "center";
+                    
+                    const modalBox = document.createElement("div");
+                    modalBox.style.backgroundColor = "var(--surface-color)";
+                    modalBox.style.padding = "20px";
+                    modalBox.style.borderRadius = "12px";
+                    modalBox.style.width = "90%";
+                    modalBox.style.maxWidth = "400px";
+                    modalBox.style.textAlign = "center";
+                    
+                    modalBox.innerHTML = `
+                        <h3 style="margin-top:0; color:var(--text-color);">Active Emergency Report Found</h3>
+                        <p style="color:var(--text-color); margin-bottom: 20px;">You already have an active emergency report. What would you like to do?</p>
+                        <button id="modal-btn-continue" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: var(--primary); color: white; font-weight: bold; font-size: 16px; cursor: pointer;">CONTINUE</button>
+                        <button id="modal-btn-startnew" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: #ef4444; color: white; font-weight: bold; font-size: 16px; cursor: pointer;">START NEW</button>
+                        <button id="modal-btn-cancel" style="width: 100%; padding: 12px; border: none; border-radius: 8px; background-color: var(--surface-color-light); color: var(--text-color); font-weight: bold; font-size: 16px; cursor: pointer;">CANCEL</button>
+                    `;
+                    modalOverlay.appendChild(modalBox);
+                    document.body.appendChild(modalOverlay);
 
-                if (res.status === 409) {
-                    // Conflict: Existing emergency found
-                    // DO NOT CREATE A NEW ONE. Restore existing!
-                    this.activeIncident = data.incident;
-                    this.syncActiveIncidentStatus();
-                    await this.restoreChatHistory();
-                    this.transitionAppState("chat");
-                    return;
+                    document.getElementById("modal-btn-continue").onclick = async () => {
+                        document.body.removeChild(modalOverlay);
+                        this.activeIncident = checkData.incident;
+                        this.syncActiveIncidentStatus();
+                        await this.restoreChatHistory();
+                        this.transitionAppState("chat");
+                    };
+
+                    document.getElementById("modal-btn-cancel").onclick = () => {
+                        document.body.removeChild(modalOverlay);
+                    };
+
+                    document.getElementById("modal-btn-startnew").onclick = async () => {
+                        if (confirm("Are you sure you want to create a new emergency report?")) {
+                            document.body.removeChild(modalOverlay);
+                            await this.createNewDraftAndEnterChat(true);
+                        }
+                    };
+                    return; // exit the flow
                 }
 
-                if (res.status === 400) {
-                    alert(data.error || "Bad Request");
-                    return;
-                }
+                // If no active report, proceed directly to creation
+                await this.createNewDraftAndEnterChat(false);
 
-                if (!res.ok || !data.success) {
-                    throw new Error(data.error || "Failed to initialize emergency session.");
-                }
-
-                // Successful Draft Creation (ID will be DRAFT-userId)
-                this.activeIncident = data.incident;
-
-                this.transitionAppState("chat");
-
-                // Clear dynamic chat feed (preserving the category selection grid)
-                if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
-
-                // Reset category UI
-                this.selectedCategory = null;
-                const catGrid = document.querySelector(".emergency-categories-grid");
-                if (catGrid) catGrid.classList.remove("has-selection");
-                const categoryButtons = document.querySelectorAll(".chat-category-btn");
-                categoryButtons.forEach(b => b.classList.remove("active"));
-
-                this.chatDetailsInput.disabled = false;
-                this.chatSendBtn.disabled = false;
-                this.btnAttachMedia.disabled = false;
-
-                this.chatIncidentId.textContent = "ALR-DRAFT";
-                this.chatIncidentTime.textContent = "Not Sent";
-                this.reportStatusBadge.textContent = "Draft";
-                this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
-                this.reportStatusBadge.style.color = "var(--text-secondary)";
-
-                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-
-            } catch (err) {
-                console.warn("Could not connect to ALERTO-POZ Command Center. Falling back to local offline draft.", err);
-
-                // Offline fallback
-                this.activeIncident = {
-                    id: 'draft',
-                    status: 'draft',
-                    reporterId: this.activeUser.id,
-                    reporterPhone: this.activeUser.phone,
-                    reporter: this.activeUser.name,
-                    lat: this.gps.lat,
-                    lng: this.gps.lng,
-                    category: null,
-                    details: "",
-                    media: [],
-                    createdAt: Date.now(),
-                    has_sent_messages: false
-                };
-
-                this.transitionAppState("chat");
-
-                // Clear dynamic chat feed (preserving the category selection grid)
-                if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
-
-                // Reset category UI
-                this.selectedCategory = null;
-                const catGrid = document.querySelector(".emergency-categories-grid");
-                if (catGrid) catGrid.classList.remove("has-selection");
-                const categoryButtons = document.querySelectorAll(".chat-category-btn");
-                categoryButtons.forEach(b => b.classList.remove("active"));
-
-                this.chatDetailsInput.disabled = false;
-                this.chatSendBtn.disabled = false;
-                this.btnAttachMedia.disabled = false;
-
-                this.chatIncidentId.textContent = "ALR-DRAFT";
-                this.chatIncidentTime.textContent = "Not Sent";
-                this.reportStatusBadge.textContent = "Draft";
-                this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
-                this.reportStatusBadge.style.color = "var(--text-secondary)";
-
-                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            } catch (e) {
+                console.error("SOS Trigger Error", e);
+                alert("Network error: Could not verify emergency status. Proceeding to offline mode if possible.");
+                await this.createNewDraftAndEnterChat(false);
             }
 
         }, 800);
+    }
+
+    async createNewDraftAndEnterChat(forceNew) {
+        try {
+            const res = await fetch(`${SERVER_URL}/api/incidents/draft`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    reporterId: this.activeUser.id,
+                    reporterPhone: this.activeUser.phone,
+                    lat: this.gps.lat,
+                    lng: this.gps.lng,
+                    reporter: this.activeUser.name,
+                    createdAt: Date.now(),
+                    forceNew: forceNew
+                })
+            });
+
+            const data = await res.json();
+
+            if (res.status === 409 && !forceNew) {
+                // Conflict: Existing emergency found (fallback)
+                this.activeIncident = data.incident;
+                this.syncActiveIncidentStatus();
+                await this.restoreChatHistory();
+                this.transitionAppState("chat");
+                return;
+            }
+
+            if (res.status === 400) {
+                alert(data.error || "Bad Request");
+                return;
+            }
+
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || "Failed to initialize emergency session.");
+            }
+
+            // Successful Draft Creation
+            this.activeIncident = data.incident;
+
+            this.transitionAppState("chat");
+
+            // Clear dynamic chat feed
+            if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
+
+            // Reset category UI
+            this.selectedCategory = null;
+            const catGrid = document.querySelector(".emergency-categories-grid");
+            if (catGrid) catGrid.classList.remove("has-selection");
+            const categoryButtons = document.querySelectorAll(".chat-category-btn");
+            categoryButtons.forEach(b => b.classList.remove("active"));
+            
+            this.chatDetailsInput.disabled = false;
+            this.chatSendBtn.disabled = false;
+            this.btnAttachMedia.disabled = false;
+
+            this.chatIncidentId.textContent = "ALR-DRAFT";
+            this.chatIncidentTime.textContent = "Not Sent";
+            this.reportStatusBadge.textContent = "Draft";
+            this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
+            this.reportStatusBadge.style.color = "var(--text-secondary)";
+
+            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            
+        } catch (err) {
+            console.warn("Could not connect to ALERTO-POZ Command Center. Falling back to local offline draft.", err);
+            
+            // Generate temporary ticket since network is down
+            const tempDraftId = `DRAFT-${this.activeUser.id}`;
+            this.activeIncident = {
+                id: tempDraftId,
+                category: 'draft',
+                details: `Emergency report prepared by ${this.activeUser.name}`,
+                lat: this.gps.lat || 16.1086,
+                lng: this.gps.lng || 120.5424,
+                reporter: this.activeUser.name || 'Unknown Citizen',
+                reporterPhone: this.activeUser.phone,
+                media: [],
+                createdAt: Date.now(),
+                networkReceivedAt: Date.now(),
+                status: 'draft',
+                assignedUnit: null,
+                reporterId: this.activeUser.id,
+                responseProgress: null,
+                has_sent_messages: false
+            };
+
+            this.transitionAppState("chat");
+            if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
+            this.selectedCategory = null;
+            const catGrid = document.querySelector(".emergency-categories-grid");
+            if (catGrid) catGrid.classList.remove("has-selection");
+            const categoryButtons = document.querySelectorAll(".chat-category-btn");
+            categoryButtons.forEach(b => b.classList.remove("active"));
+
+            this.chatDetailsInput.disabled = false;
+            this.chatSendBtn.disabled = false;
+            this.btnAttachMedia.disabled = false;
+
+            this.chatIncidentId.textContent = "ALR-DRAFT";
+            this.chatIncidentTime.textContent = "Not Sent";
+            this.reportStatusBadge.textContent = "Draft";
+            this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
+            this.reportStatusBadge.style.color = "var(--text-secondary)";
+
+            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            
+            this.appendChatMessage("System", "You are currently offline. Working in offline mode. Your report will be sent automatically once network is restored.", "incoming-bubble");
+        }
     }
 
     handleMediaUpload(e) {
@@ -2856,7 +2920,20 @@ Stay calm and provide clear updates.`;
             this.activeIncident.has_sent_messages = true;
 
             if (this.socket && this.socket.connected && this.isOnline) {
+                let callbackFired = false;
+                const timeoutId = setTimeout(async () => {
+                    if (!callbackFired) {
+                        callbackFired = true;
+                        console.warn("Socket activation timed out. Falling back to offline mode.");
+                        await handleOfflineFallback();
+                    }
+                }, 5000);
+
                 this.socket.emit('citizen-sos-report', this.activeIncident, async (response) => {
+                    if (callbackFired) return;
+                    callbackFired = true;
+                    clearTimeout(timeoutId);
+
                     if (response && response.success) {
                         await handleActivationSuccess(response.incident);
                     } else {

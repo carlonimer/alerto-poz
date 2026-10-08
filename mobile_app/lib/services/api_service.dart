@@ -236,7 +236,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> checkActiveIncident(String userId) async {
     final res = await http.get(
-      Uri.parse('$baseUrl/api/incidents/active/$userId'),
+      Uri.parse('$baseUrl/api/incidents/active?userId=$userId'),
       headers: await _getHeaders(auth: true),
     );
     return jsonDecode(res.body) as Map<String, dynamic>;

@@ -1739,7 +1739,7 @@ app.get('/api/incidents/active/:userId', async (req, res) => {
 // Draft Creation endpoint (Creates a temporary draft record)
 app.post('/api/incidents/draft', async (req, res) => {
     try {
-        const { reporterId, reporterPhone, lat, lng, reporter, createdAt } = req.body;
+        const { reporterId, reporterPhone, lat, lng, reporter, createdAt, forceNew } = req.body;
         let phone = reporterPhone;
         
         if (useMySQL && !phone && reporterId) {
@@ -1754,18 +1754,20 @@ app.post('/api/incidents/draft', async (req, res) => {
         const draftId = `DRAFT-${reporterId}`;
         
         if (useMySQL) {
-            // Check if active incident exists (including any existing draft)
-            const [existing] = await pool.query(
-                "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed')",
-                [reporterId, reporterPhone]
-            );
-            
-            if (existing.length > 0) {
-                // Already has an active emergency or draft
-                const inc = existing[0];
-                const [events] = await pool.query("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY timestamp ASC", [inc.id]);
-                inc.events = events;
-                return res.status(409).json({ error: "Existing emergency found.", incident: inc });
+            if (!forceNew) {
+                // Check if active incident exists (including any existing draft)
+                const [existing] = await pool.query(
+                    "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed')",
+                    [reporterId, reporterPhone]
+                );
+                
+                if (existing.length > 0) {
+                    // Already has an active emergency or draft
+                    const inc = existing[0];
+                    const [events] = await pool.query("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY timestamp ASC", [inc.id]);
+                    inc.events = events;
+                    return res.status(409).json({ error: "Existing emergency found.", incident: inc });
+                }
             }
             
             // Explicitly delete any old cancelled/resolved draft data to ensure a fresh session
@@ -1819,6 +1821,33 @@ app.delete('/api/incidents/draft/:userId', async (req, res) => {
     } catch(e) {
         console.error("Draft deletion error:", e);
         res.status(500).json({ error: e.message });
+    }
+});
+
+// Check for active incident for a user
+app.get('/api/incidents/active', async (req, res) => {
+    try {
+        const { userId, phone } = req.query;
+        if (!userId && !phone) {
+            return res.status(400).json({ error: "Missing userId or phone" });
+        }
+        
+        const state = await getDBState();
+        const activeIncident = (state.incidents || []).find(i => {
+            const matchUser = (userId && String(i.reporterId) === String(userId)) || (phone && i.reporterPhone === phone);
+            const status = i.status ? i.status.toLowerCase() : "";
+            const isActive = status !== 'resolved' && status !== 'closed' && status !== 'cancelled' && status !== 'draft';
+            return matchUser && isActive;
+        });
+
+        if (activeIncident) {
+            res.json({ success: true, hasActive: true, incident: activeIncident });
+        } else {
+            res.json({ success: true, hasActive: false });
+        }
+    } catch (e) {
+        console.error("Check active incident error:", e);
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 
