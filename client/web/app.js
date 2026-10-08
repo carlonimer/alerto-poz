@@ -1313,17 +1313,9 @@ class CitizenMobileClient {
                         }
                     }
 
+                    // Always force the user to the homepage on reload
                     let lastState = "homepage";
-                    
-                    if (this.activeIncident && this.activeIncident.status && this.activeIncident.status !== 'draft' && this.activeIncident.status !== 'cancelled') {
-                        lastState = "chat";
-                    }
-
-                    if (lastState && ["homepage", "home", "chat", "profile"].includes(lastState)) {
-                        this.transitionAppState(lastState);
-                    } else {
-                        this.transitionAppState("homepage");
-                    }
+                    this.transitionAppState(lastState);
 
                     const lastModal = sessionStorage.getItem("alerto-last-modal");
                     if (lastModal === "history") {
