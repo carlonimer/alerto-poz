@@ -221,52 +221,9 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
 
 
-  Future<void> _restoreDraftFromPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final draftStr = prefs.getString('draft_incident_payload');
-    if (draftStr != null) {
-      try {
-        final draft = jsonDecode(draftStr) as Map<String, dynamic>;
-        if (mounted) {
-          setState(() {
-            _selectedCategory = draft['category'];
-            if (draft['lat'] != null && draft['lng'] != null) {
-              _selectedPos = LatLng(draft['lat'], draft['lng']);
-              _currentAddress = 'Draft Location';
-            }
-            if (draft['details'] != null) _commentCtrl.text = draft['details'];
-            if (draft['media'] != null) _attachedImages = List<String>.from(draft['media']);
-          });
-        }
-      } catch (_) {}
-    }
-  }
+  Future<void> _restoreDraftFromPrefs() async {}
 
-  void _saveDraftToPrefs() {
-    // Only save a draft if it hasn't been sent and isn't cancelled
-    if (_sent || _cancelled) {
-        SharedPreferences.getInstance().then((prefs) {
-            prefs.remove('draft_incident_payload');
-        });
-        return;
-    }
-
-    final payload = {
-      'reporterId': widget.user?.id ?? 0,
-      'reporterPhone': widget.user?.phone ?? '',
-      'reporter': widget.user?.name ?? 'Citizen',
-      'category': _selectedCategory,
-      'lat': _selectedPos?.latitude ?? _defaultCenter.latitude,
-      'lng': _selectedPos?.longitude ?? _defaultCenter.longitude,
-      'details': _commentCtrl.text.trim(),
-      'media': _attachedImages,
-      'createdAt': DateTime.now().toIso8601String(),
-    };
-    
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setString('draft_incident_payload', jsonEncode(payload));
-    });
-  }
+  void _saveDraftToPrefs() {}
 
   void _queueOfflineAction(Map<String, dynamic> action) async {
     final prefs = await SharedPreferences.getInstance();
@@ -276,98 +233,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     prefs.setString('offline_queue', jsonEncode(queue));
   }
 
-  Future<void> _flushOfflineQueue() async {
-    if (!SocketService.isConnected) return;
-    final prefs = await SharedPreferences.getInstance();
-    final queueStr = prefs.getString('offline_queue');
-    if (queueStr == null) return;
-    
-    final queue = jsonDecode(queueStr) as List<dynamic>;
-    if (queue.isEmpty) return;
-
-    final List<dynamic> failed = [];
-    bool hasFailed = false;
-
-    for (var act in queue) {
-      if (hasFailed) {
-        failed.add(act);
-        continue;
-      }
-      try {
-        if (act['type'] == 'message') {
-          await ApiService.sendMessage(act['incidentId'], act['payload']);
-        } else if (act['type'] == 'attachment') {
-          await ApiService.sendMessage(act['incidentId'], act['payload'], mediaPath: act['mediaPath']);
-        } else if (act['type'] == 'status') {
-          final c = Completer();
-          SocketService.emitSosReportWithAck(act['payload'], (res) {
-            if (!c.isCompleted) c.complete(res);
-          });
-          final res = await c.future.timeout(const Duration(seconds: 8));
-          if (res is List && res.isNotEmpty) {
-             if (res.first['success'] == true && res.first['ticketNumber'] != null) {
-               final realTicket = res.first['ticketNumber'].toString();
-               final oldId = act['payload']['id'];
-               if (mounted && _incidentId == oldId) {
-                  setState(() {
-                     _incidentId = realTicket;
-                     _ticketCode = realTicket;
-                     _queued = false;
-                     _chatFeed.add({
-                       'role': 'bot',
-                       'type': 'activated',
-                       'content': '',
-                       'timestamp': DateTime.now().toIso8601String(),
-                     });
-                  });
-                  SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload'));
-               }
-               for (var nextAct in queue) {
-                 if (nextAct['incidentId'] == oldId) {
-                   nextAct['incidentId'] = realTicket;
-                 }
-               }
-             } else {
-               throw Exception('Server rejected queued status');
-             }
-          } else if (res != null && res is Map && res['success'] == true && res['ticketNumber'] != null) {
-               final realTicket = res['ticketNumber'].toString();
-               final oldId = act['payload']['id'];
-               if (mounted && _incidentId == oldId) {
-                  setState(() {
-                     _incidentId = realTicket;
-                     _ticketCode = realTicket;
-                     _queued = false;
-                     _chatFeed.add({
-                       'role': 'bot',
-                       'type': 'activated',
-                       'content': '',
-                       'timestamp': DateTime.now().toIso8601String(),
-                     });
-                  });
-                  SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload'));
-               }
-               for (var nextAct in queue) {
-                 if (nextAct['incidentId'] == oldId) {
-                   nextAct['incidentId'] = realTicket;
-                 }
-               }
-          } else {
-             throw Exception('Failed to send queued status');
-          }
-        }
-      } catch (_) {
-        hasFailed = true;
-        failed.add(act);
-      }
-    }
-    
-    if (failed.isEmpty) {
-      prefs.remove('offline_queue');
-    } else {
-      prefs.setString('offline_queue', jsonEncode(failed));
-    }
-  }
+  Future<void> _flushOfflineQueue() async {}
 
 
   Future<void> _initLocation() async {
@@ -573,12 +439,9 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           mediaPath: path,
         );
       } catch (e) {
-        _queueOfflineAction({
-           'type': 'attachment',
-           'incidentId': _incidentId,
-           'payload': payload,
-           'mediaPath': path,
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to send attachment due to network error.')),
+        );
       }
     }
   }
@@ -634,18 +497,9 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         });
         SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload')); // Clear draft once sent
       } else {
-        _incidentId ??= 'ALERTOPOZ-26-${DateTime.now().microsecondsSinceEpoch.toString().substring(8)}';
-        _ticketCode = _incidentId;
-        _queued = true;
-        _sent = true; // Mark as sent locally so user can continue chatting
-        _chatFeed.add({
-          'role': 'bot',
-          'type': 'system',
-          'content': 'No internet connection. Your emergency report is QUEUED and will be sent automatically once the connection is restored.',
-          'timestamp': DateTime.now().toIso8601String(),
-        });
-        payload['id'] = _incidentId;
-        _queueOfflineAction({'type': 'status', 'payload': payload});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Network error: Could not connect to Command Center. Please try again.')),
+        );
       }
     });
     _scrollToBottom();
@@ -677,7 +531,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'senderId': widget.user?.id,
           'content': txt,
         });
-      } catch (e) {/* best-effort: ignore network errors */}
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to send message due to network error.')),
+          );
+        }
+      }
     }
   }
 
