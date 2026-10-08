@@ -25,6 +25,7 @@ dependencies:
 
   # Media
   image_picker: ^1.1.2
+  video_compress: ^3.1.2
 
   # Local Storage
   shared_preferences: ^2.3.3

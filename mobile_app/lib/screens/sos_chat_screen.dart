@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:video_compress/video_compress.dart';
 
 import '../models/user.dart';
 import '../services/socket_service.dart';
@@ -465,6 +466,84 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     final XFile? file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
     if (file != null) {
       await _handleImageTaken(file.path);
+    }
+  }
+
+  Future<void> _recordVideoDirectly() async {
+    final picker = ImagePicker();
+    final file = await picker.pickVideo(
+      source: ImageSource.camera,
+      maxDuration: const Duration(seconds: 30),
+    );
+    if (file != null) {
+      _handleVideoTaken(file.path);
+    }
+  }
+
+  Future<void> _handleVideoTaken(String path) async {
+    if (!mounted) return;
+    
+    // Check duration to strictly enforce 30 seconds
+    try {
+      final info = await VideoCompress.getMediaInfo(path);
+      if (info.duration != null && info.duration! > 32000) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Video cannot exceed 30 seconds.')),
+          );
+        }
+        return;
+      }
+    } catch (_) {}
+
+    setState(() => _sending = true);
+    
+    try {
+      final info = await VideoCompress.compressVideo(
+        path,
+        quality: VideoQuality.DefaultQuality,
+        deleteOrigin: false,
+      );
+      
+      final compressedPath = info?.path ?? path;
+      
+      final thumbnailFile = await VideoCompress.getFileThumbnail(path);
+      final thumbBytes = await thumbnailFile.readAsBytes();
+      final b64 = base64Encode(thumbBytes);
+      
+      if (!mounted) return;
+      setState(() {
+        _attachedImages.add(b64);
+        _chatFeed.add({
+          'role': 'user',
+          'type': 'image', // Show thumbnail locally using image type
+          'content': b64,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+      });
+      _scrollToBottom();
+      
+      if (!_sent) {
+        _selectedCategory = 'other';
+        await _doTransmit();
+      }
+      
+      if (_sent && _incidentId != null) {
+        final payload = {'senderId': widget.user?.id, 'messageContent': 'Video Attachment', 'messageType': 'video'};
+        await ApiService.sendMessage(
+          _incidentId!,
+          payload,
+          mediaPath: compressedPath,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to process and send video.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -1577,6 +1656,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
                   onPressed: _openCameraDirectly,
+                ),
+                IconButton(
+                  key: const ValueKey('btn_video'),
+                  tooltip: 'Record video',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.videocam_rounded, color: _C.muted, size: 24),
+                  onPressed: _recordVideoDirectly,
                 ),
                 const SizedBox(width: 4),
                 Expanded(
