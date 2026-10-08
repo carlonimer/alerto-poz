@@ -307,6 +307,9 @@ async function initDatabase(pool) {
         `);
     }
 
+    // Ensure the old 'admin' account is removed so it no longer works and doesn't block the new account insertion
+    await pool.query("DELETE FROM users WHERE email = 'admin'");
+
     // Check if the specific admin accounts exist
     const [adminCount] = await pool.query("SELECT COUNT(*) as count FROM users WHERE email IN ('mdrrmo@pozorrubio.gov.ph', 'bfp@pozorrubio.gov.ph', 'pnp@pozorrubio.gov.ph', 'buneg@pozorrubio.gov.ph')");
     
@@ -324,9 +327,6 @@ async function initDatabase(pool) {
 
     // Force update MDRRMO Command Center name
     await pool.query("UPDATE users SET name = 'MDRRMO Command Center' WHERE email = 'mdrrmo@pozorrubio.gov.ph'");
-
-    // Ensure the old 'admin' account is removed so it no longer works
-    await pool.query("DELETE FROM users WHERE email = 'admin'");
 
 
     // Backward compatibility: upgrade old 'authority' type to 'mdrrmo_admin'
