@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
@@ -1322,7 +1321,7 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   const Icon(Icons.warning_rounded, color: Colors.orange),
                   const SizedBox(width: 8),
-                  Text('Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
+                  Text('⚠️ Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -1332,35 +1331,65 @@ class _HomeScreenState extends State<HomeScreen>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              Row(
                 children: [
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _navigateToChat(null, activeIncident); // Continue
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF05023),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        if (!_isTriggeringSos) {
+                            if (mounted) setState(() => _isTriggeringSos = true);
+                        } else return;
+                        
+                        try {
+                          final pos = await LocationService.getCurrentPosition();
+                          final payload = {
+                            'reporterId': _user?.id,
+                            'reporterPhone': _user?.phone,
+                            'lat': pos?.latitude ?? 16.1086,
+                            'lng': pos?.longitude ?? 120.5424,
+                            'reporter': _user?.name,
+                            'createdAt': DateTime.now().toIso8601String(),
+                            'forceNew': true
+                          };
+                          
+                          final res = await ApiService.createDraftIncident(payload);
+                          if (res['success'] == true && res['incident'] != null) {
+                              if (mounted) setState(() => _isTriggeringSos = false);
+                              Navigator.pop(ctx);
+                              _navigateToChat(null, res['incident']);
+                          } else {
+                              if (mounted) setState(() => _isTriggeringSos = false);
+                              Navigator.pop(ctx);
+                          }
+                        } catch (e) {
+                            if (mounted) setState(() => _isTriggeringSos = false);
+                            Navigator.pop(ctx);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey[300],
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        elevation: 0,
+                      ),
+                      child: Text('START NEW', style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 14)),
                     ),
-                    child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                   ),
-                  // START NEW button removed to prevent duplicate emergency reports
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      if (mounted) setState(() => _isTriggeringSos = false);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey[300],
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _navigateToChat(null, activeIncident);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF05023),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        elevation: 0,
+                      ),
+                      child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                     ),
-                    child: Text('CANCEL', style: GoogleFonts.outfit(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 14)),
                   ),
                 ],
               ),

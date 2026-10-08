@@ -2621,15 +2621,32 @@ class CitizenMobileClient {
                     modalBox.style.textAlign = "center";
                     
                     modalBox.innerHTML = `
-                        <h3 style="margin-top:0; color:var(--text-color);">Active Emergency Report Found</h3>
+                        <h3 style="margin-top:0; color:var(--text-color);">⚠️ Active Emergency Report Found</h3>
                         <p style="color:var(--text-color); margin-bottom: 20px;">You already have an active emergency report. What would you like to do?</p>
-                        <button id="modal-btn-continue" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 8px; background-color: var(--primary); color: white; font-weight: bold; font-size: 16px; cursor: pointer;">CONTINUE</button>
-                        <button id="modal-btn-cancel" style="width: 100%; padding: 12px; border: none; border-radius: 8px; background-color: var(--surface-color-light); color: var(--text-color); font-weight: bold; font-size: 16px; cursor: pointer;">CANCEL</button>
+                        <div style="display: flex; justify-content: space-between; gap: 10px;">
+                            <button id="modal-btn-start-new" style="flex: 1; padding: 12px; border: none; border-radius: 8px; background-color: var(--surface-color-light); color: var(--text-color); font-weight: bold; font-size: 16px; cursor: pointer;">START NEW</button>
+                            <button id="modal-btn-continue" style="flex: 1; padding: 12px; border: none; border-radius: 8px; background-color: var(--primary); color: white; font-weight: bold; font-size: 16px; cursor: pointer;">CONTINUE</button>
+                        </div>
                     `;
                     modalOverlay.appendChild(modalBox);
                     document.body.appendChild(modalOverlay);
 
+                    document.getElementById("modal-btn-start-new").onclick = async () => {
+                        const startBtn = document.getElementById("modal-btn-start-new");
+                        const continueBtn = document.getElementById("modal-btn-continue");
+                        startBtn.disabled = true;
+                        continueBtn.disabled = true;
+                        startBtn.textContent = "PLEASE WAIT...";
+                        await this.createNewDraftAndEnterChat(true);
+                        document.body.removeChild(modalOverlay);
+                        this.isTriggeringSos = false;
+                    };
+
                     document.getElementById("modal-btn-continue").onclick = async () => {
+                        const startBtn = document.getElementById("modal-btn-start-new");
+                        const continueBtn = document.getElementById("modal-btn-continue");
+                        startBtn.disabled = true;
+                        continueBtn.disabled = true;
                         document.body.removeChild(modalOverlay);
                         this.activeIncident = checkData.incident;
                         this.syncActiveIncidentStatus();
@@ -2638,12 +2655,6 @@ class CitizenMobileClient {
                         this.isTriggeringSos = false;
                     };
 
-                    document.getElementById("modal-btn-cancel").onclick = () => {
-                        document.body.removeChild(modalOverlay);
-                        this.isTriggeringSos = false;
-                    };
-
-                    // Start new button removed to prevent duplicate emergency reports
                     return; // exit the flow
                 }
 

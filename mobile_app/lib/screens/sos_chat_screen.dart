@@ -70,7 +70,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   bool _hasText = false;
   DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
-  List<String> _attachedImages = []; // base64 strings
+  final List<String> _attachedImages = []; // base64 strings
 
   bool _isMapExpanded = true;
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain

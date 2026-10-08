@@ -1744,14 +1744,21 @@ app.post('/api/incidents/draft', async (req, res) => {
         const draftId = `DRAFT-${reporterId}`;
         
         if (useMySQL) {
-            if (!forceNew) {
-                // Check if active incident exists (including any existing draft)
-                const [existing] = await pool.query(
-                    "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed')",
-                    [reporterId, reporterPhone]
-                );
-                
-                if (existing.length > 0) {
+            // Check if active incident exists (including any existing draft)
+            const [existing] = await pool.query(
+                "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed')",
+                [reporterId, phone]
+            );
+            
+            if (existing.length > 0) {
+                if (forceNew) {
+                    for (let inc of existing) {
+                        await pool.query("UPDATE incidents SET status='cancelled' WHERE id=?", [inc.id]);
+                        await recordIncidentEvent(inc.id, inc.ticketCode || inc.id, 'Cancelled', inc.status, 'cancelled', 'Citizen App');
+                        io.emit('incident-cancelled', { id: inc.id });
+                        io.emit('incident-updated', { id: inc.id, status: 'cancelled' });
+                    }
+                } else {
                     // Already has an active emergency or draft
                     const inc = existing[0];
                     const [events] = await pool.query("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY timestamp ASC", [inc.id]);
