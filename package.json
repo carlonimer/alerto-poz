@@ -5,7 +5,7 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "dev": "nodemon server/server.js",
+    "dev": "nodemon --ignore server/db.json server/server.js",
     "cap:sync": "npx cap sync",
     "cap:open": "npx cap open android"
   },
