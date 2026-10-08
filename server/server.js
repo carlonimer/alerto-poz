@@ -322,7 +322,9 @@ async function getDBState() {
         return { users, incidents: parsedIncidents, responders, broadcasts, rescue_vehicles, water_devices };
     } else {
         const data = fs.readFileSync(JSON_DB_FILE, 'utf8');
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        if (!parsed.incidents) parsed.incidents = parsed.emergencies || [];
+        return parsed;
     }
 }
 
@@ -396,6 +398,7 @@ async function addIncident(report) {
         );
     } else {
         const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+        if (!db.incidents) db.incidents = db.emergencies || [];
         const index = db.incidents.findIndex(i => i.id === report.id);
         if (index > -1) {
             db.incidents[index] = report;
@@ -2296,7 +2299,7 @@ async function generateUniqueTicketNumber() {
         const candidate = `ALERTOPOZ-${year}-${randomCode}`;
         
         const state = await getDBState();
-        const exists = state.incidents.find(i => i.id === candidate);
+        const exists = (state.incidents || []).find(i => i.id === candidate);
         if (!exists) {
             return candidate;
         }
@@ -2348,6 +2351,14 @@ io.on('connection', async (socket) => {
                         isNewEmergency = true;
                     }
                 }
+            }
+
+            // Ensure timestamps are BIGINT (epoch ms) to match database schema
+            if (typeof report.createdAt === 'string') {
+                report.createdAt = new Date(report.createdAt).getTime();
+            }
+            if (!report.networkReceivedAt) {
+                report.networkReceivedAt = Date.now();
             }
 
             const isActivation = isNewEmergency || (previousStatus && previousStatus.toLowerCase() === 'draft' && report.status.toLowerCase() !== 'draft');

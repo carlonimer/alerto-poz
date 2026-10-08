@@ -2783,6 +2783,7 @@ class CitizenMobileClient {
         }
 
         this.chatDetailsInput.value = "";
+        this.chatSendBtn.disabled = true;
 
         // Append user comment bubble in conversation log immediately for responsiveness
         if (text) {
@@ -2800,34 +2801,28 @@ class CitizenMobileClient {
         if (text) this.activeIncident.details += ` | Notes: ${text}`;
         if (attachmentsToSend.length > 0) this.activeIncident.details += ` | Files Attached: ${attachmentsToSend.length} media logs`;
 
-        // If this is the first message, ACTIVATE the incident via socket to get the real ticket ID
-        if (this.activeIncident.status.toLowerCase() === "draft" && !this.activeIncident.has_sent_messages) {
-            this.activeIncident.status = "pending"; // Activating
-            this.activeIncident.has_sent_messages = true;
+        const handleActivationSuccess = async (incident) => {
+            this.activeIncident = incident;
 
-            if (this.socket && this.socket.connected && this.isOnline) {
-                this.socket.emit('citizen-sos-report', this.activeIncident, async (response) => {
-                    if (response && response.success) {
-                        this.activeIncident = response.incident;
+            const timeString = new Date().toLocaleString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: 'numeric', minute: 'numeric', hour12: true
+            });
 
-                        const timeString = new Date().toLocaleString('en-US', {
-                            month: 'short', day: 'numeric', year: 'numeric',
-                            hour: 'numeric', minute: 'numeric', hour12: true
-                        });
+            // Update UI with generated info from backend
+            this.chatIncidentId.textContent = this.activeIncident.id;
+            this.chatIncidentTime.textContent = timeString;
+            this.reportStatusBadge.textContent = "Pending";
+            this.reportStatusBadge.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
+            this.reportStatusBadge.style.color = "var(--danger)";
 
-                        // Update UI with generated info from backend
-                        this.chatIncidentId.textContent = this.activeIncident.id;
-                        this.chatIncidentTime.textContent = timeString;
-                        this.reportStatusBadge.textContent = "Pending";
-                        this.reportStatusBadge.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
-                        this.reportStatusBadge.style.color = "var(--danger)";
+            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
 
-                        localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            // Now that we have the real ID, POST messages and media
+            await this.postMessagesAndMedia(text, attachmentsToSend);
+            this.chatSendBtn.disabled = false;
 
-                        // Now that we have the real ID, POST messages and media
-                        await this.postMessagesAndMedia(text, attachmentsToSend);
-
-                        const sosMessage = `🚨 INCIDENT ACTIVATED<br>
+            const sosMessage = `🚨 INCIDENT ACTIVATED<br>
 Ticket Code: <b>${this.activeIncident.id}</b><br>
 Your emergency request has been received.<br>
 Keep this ticket number for reference.<br><br>
@@ -2836,16 +2831,54 @@ For emergency validation, please provide:<br>
 📸 Validation picture of the incident<br>
 🎥 Validation video, if available<br>
 Stay calm and provide clear updates.`;
-                        setTimeout(() => {
-                            this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble");
-                        }, 500);
+            setTimeout(() => {
+                this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble");
+            }, 500);
+        };
+
+        const handleOfflineFallback = async () => {
+            this.chatSendBtn.disabled = false;
+            if (!this.activeIncident.id || this.activeIncident.id === 'draft') {
+                this.activeIncident.id = `ALERTOPOZ-26-${String(Date.now()).substring(5)}`;
+            }
+            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            
+            const queue = JSON.parse(localStorage.getItem("poz_offline_queue")) || [];
+            queue.push(this.activeIncident);
+            localStorage.setItem("poz_offline_queue", JSON.stringify(queue));
+            
+            this.appendChatMessage("System", "You are offline. Report queued and will sync automatically when network is restored.", "incoming-bubble");
+        };
+
+        // If this is the first message, ACTIVATE the incident via socket to get the real ticket ID
+        if (this.activeIncident.status.toLowerCase() === "draft" && !this.activeIncident.has_sent_messages) {
+            this.activeIncident.status = "pending"; // Activating
+            this.activeIncident.has_sent_messages = true;
+
+            if (this.socket && this.socket.connected && this.isOnline) {
+                this.socket.emit('citizen-sos-report', this.activeIncident, async (response) => {
+                    if (response && response.success) {
+                        await handleActivationSuccess(response.incident);
                     } else {
                         alert("Error activating emergency: " + (response ? response.error : "Unknown error"));
+                        await handleOfflineFallback();
                     }
                 });
+            } else if (this.isOnline) {
+                // HTTP fallback
+                fetch(`${SERVER_URL}/api/incidents`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.activeIncident)
+                }).then(r => r.json()).then(async (response) => {
+                    if (response && response.success) {
+                        await handleActivationSuccess(response.incident);
+                    } else {
+                        await handleOfflineFallback();
+                    }
+                }).catch(async () => await handleOfflineFallback());
             } else {
-                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-                this.appendChatMessage("System", "You are offline. Trying to send SMS fallback...", "incoming-bubble");
+                await handleOfflineFallback();
             }
         } else {
             // It's already active
@@ -2859,6 +2892,7 @@ Stay calm and provide clear updates.`;
 
             // POST messages and media
             await this.postMessagesAndMedia(text, attachmentsToSend);
+            this.chatSendBtn.disabled = false;
         }
     }
 
