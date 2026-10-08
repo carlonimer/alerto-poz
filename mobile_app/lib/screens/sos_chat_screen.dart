@@ -1122,8 +1122,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                       markers: [
                         Marker(
                           point: marker, 
-                          width: 64, 
-                          height: 64, 
+                          width: 100, 
+                          height: 100, 
                           child: GestureDetector(
                             onPanUpdate: (details) {
                               if (_sent) return;
@@ -1192,25 +1192,84 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         final t = _pulseCtrl.value;
         return Stack(
           alignment: Alignment.center,
+          clipBehavior: Clip.none,
           children: [
-            Container(
-              width: 18 + 44 * t,
-              height: 18 + 44 * t,
-              decoration: BoxDecoration(
-                color: _C.red.withValues(alpha: 0.35 * (1 - t)),
-                shape: BoxShape.circle,
+            if (!_sent)
+              Container(
+                width: 40 + (60 * t),
+                height: 40 + (60 * t),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _C.red.withValues(alpha: 1.0 - t),
+                    width: 2,
+                  ),
+                  color: _C.red.withValues(alpha: (1.0 - t) * 0.1),
+                ),
               ),
-            ),
-            Container(
-              width: 18,
-              height: 18,
-              decoration: BoxDecoration(
-                color: _C.red,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 6, offset: const Offset(0, 2))],
+            Positioned(
+              bottom: 50, // Anchor the bottom of the pin to the center of the marker
+              child: SizedBox(
+                width: 64,
+                height: 72,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    Positioned(
+                      bottom: 2,
+                      child: Transform.rotate(
+                        angle: 3.14159 / 4,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: _C.red,
+                            borderRadius: BorderRadius.circular(2),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 2, offset: Offset(1, 1)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: _C.red, width: 3),
+                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                        image: DecorationImage(
+                          image: widget.user != null && widget.user!.profileImage.isNotEmpty
+                              ? (widget.user!.profileImage.startsWith('data:image')
+                                  ? MemoryImage(base64Decode(widget.user!.profileImage.split(',').last)) as ImageProvider
+                                  : NetworkImage(
+                                      widget.user!.profileImage.startsWith('http') 
+                                          ? widget.user!.profileImage 
+                                          : '${ApiService.baseUrl}${widget.user!.profileImage.startsWith('/') ? '' : '/'}${widget.user!.profileImage}'))
+                              : const AssetImage('assets/logo.png'),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      child: !_sent
+                          ? Align(
+                              alignment: Alignment.topRight,
+                              child: Container(
+                                margin: const EdgeInsets.all(4),
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.open_with_rounded, size: 12, color: Colors.white),
+                              ),
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
               ),
-              child: !_sent ? const Icon(Icons.open_with_rounded, size: 10, color: Colors.white) : null,
             ),
           ],
         );
