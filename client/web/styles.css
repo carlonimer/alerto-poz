@@ -1044,6 +1044,10 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.2);
 }
 
+.emergency-categories-grid.has-selection .chat-category-btn:not(.active) {
+    opacity: 0.45;
+}
+
 /* Chat countdown overlay card inside feed */
 .chat-countdown-overlay {
     align-self: center;

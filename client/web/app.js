@@ -771,8 +771,13 @@ class CitizenMobileClient {
         const categoryButtons = document.querySelectorAll(".chat-category-btn");
         categoryButtons.forEach(btn => {
             btn.addEventListener("click", () => {
+                if (this.activeIncident && (this.activeIncident.has_sent_messages || (this.activeIncident.status && this.activeIncident.status !== 'draft'))) {
+                    return; // Prevent changing category after submission
+                }
                 categoryButtons.forEach(b => b.classList.remove("active"));
                 btn.classList.add("active");
+                const catGrid = btn.closest(".emergency-categories-grid");
+                if(catGrid) catGrid.classList.add("has-selection");
                 this.selectedCategory = btn.getAttribute("data-cat");
                 this.updateSOSCategory(this.selectedCategory);
             });
@@ -1277,19 +1282,25 @@ class CitizenMobileClient {
 
                                 // Only hide the selection grid if the user has ALREADY sent the emergency
                                 if (this.activeIncident.has_sent_messages || this.activeIncident.status !== 'draft') {
-                                    // Hide category selection grid
+                                    // User requirement: Do NOT remove or hide the other emergency types.
+                                    // Just ensure the grid is shown and styled correctly.
                                     const catGrid = document.querySelector(".emergency-categories-grid");
                                     if (catGrid) {
-                                        catGrid.closest(".chat-message-bubble").style.display = "none";
+                                        catGrid.closest(".chat-message-bubble").style.display = "";
+                                        catGrid.classList.add("has-selection");
                                     }
-                                } else {
-                                    // Make sure the previously selected category button looks active
-                                    const categoryButtons = document.querySelectorAll(".chat-category-btn");
-                                    categoryButtons.forEach(b => {
-                                        if (b.getAttribute("data-cat") === this.selectedCategory) {
-                                            b.classList.add("active");
-                                        }
-                                    });
+                                }
+                                
+                                // Make sure the previously selected category button looks active
+                                const categoryButtons = document.querySelectorAll(".chat-category-btn");
+                                categoryButtons.forEach(b => {
+                                    if (b.getAttribute("data-cat") === this.selectedCategory) {
+                                        b.classList.add("active");
+                                    }
+                                });
+                                const catGrid = document.querySelector(".emergency-categories-grid");
+                                if (catGrid) {
+                                    catGrid.classList.add("has-selection");
                                 }
                             }
 
@@ -2633,6 +2644,8 @@ class CitizenMobileClient {
 
                 // Reset category UI
                 this.selectedCategory = null;
+                const catGrid = document.querySelector(".emergency-categories-grid");
+                if (catGrid) catGrid.classList.remove("has-selection");
                 const categoryButtons = document.querySelectorAll(".chat-category-btn");
                 categoryButtons.forEach(b => b.classList.remove("active"));
 
@@ -2674,6 +2687,8 @@ class CitizenMobileClient {
 
                 // Reset category UI
                 this.selectedCategory = null;
+                const catGrid = document.querySelector(".emergency-categories-grid");
+                if (catGrid) catGrid.classList.remove("has-selection");
                 const categoryButtons = document.querySelectorAll(".chat-category-btn");
                 categoryButtons.forEach(b => b.classList.remove("active"));
 
@@ -3752,7 +3767,7 @@ Stay calm and provide clear updates.`;
             // Type Match
             let typeMatch = (t === "all");
             if (!typeMatch) {
-                if (t === "other" && !["fire", "medical", "accident", "crime", "flood", "rescue"].includes(inc.category.toLowerCase())) {
+                if (t === "other" && !["fire", "medical", "road_crash", "police", "flood", "rescue"].includes(inc.category.toLowerCase())) {
                     typeMatch = true;
                 } else if (inc.category.toLowerCase() === t) {
                     typeMatch = true;
@@ -3799,7 +3814,7 @@ Stay calm and provide clear updates.`;
             let vehicle = "Unknown Vehicle";
             if (inc.category.toLowerCase() === 'fire') { agency = "BFP"; vehicle = "Fire Truck"; }
             else if (inc.category.toLowerCase() === 'medical') { agency = "Medical/EMS"; vehicle = "Ambulance"; }
-            else if (inc.category.toLowerCase() === 'crime') { agency = "PNP"; vehicle = "Police Patrol"; }
+            else if (inc.category.toLowerCase() === 'police' || inc.category.toLowerCase() === 'road_crash') { agency = "PNP"; vehicle = "Police Patrol"; }
             else if (inc.category.toLowerCase() === 'flood' || inc.category.toLowerCase() === 'rescue') { agency = "MDRRMO"; vehicle = "Rescue Vehicle"; }
 
             // Check if there's an explicit assignedUnit
@@ -3846,7 +3861,7 @@ Stay calm and provide clear updates.`;
         if (['verified', 'dispatching', 'enroute', 'onscene', 'inprogress', 'resolved', 'closed'].includes(inc.status.toLowerCase())) {
             if (inc.category.toLowerCase() === 'fire') { agency = "BFP"; vehicle = inc.assignedUnit || "Fire Truck"; responders = "Fire Responders"; }
             else if (inc.category.toLowerCase() === 'medical') { agency = "Medical/EMS"; vehicle = inc.assignedUnit || "Ambulance"; responders = "Medical Responders"; }
-            else if (inc.category.toLowerCase() === 'crime') { agency = "PNP"; vehicle = inc.assignedUnit || "Police Patrol"; responders = "Police Responders"; }
+            else if (inc.category.toLowerCase() === 'police' || inc.category.toLowerCase() === 'road_crash') { agency = "PNP"; vehicle = inc.assignedUnit || "Police Patrol"; responders = "Police Responders"; }
             else if (inc.category.toLowerCase() === 'flood' || inc.category.toLowerCase() === 'rescue') { agency = "MDRRMO"; vehicle = inc.assignedUnit || "Rescue Vehicle"; responders = "Rescue Team"; }
         }
 
@@ -3951,7 +3966,6 @@ Stay calm and provide clear updates.`;
         // Clear dynamic chat feed
         if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
 
-        // Restore category UI selection
         this.selectedCategory = this.activeIncident.category || null;
         const categoryButtons = document.querySelectorAll(".chat-category-btn");
         categoryButtons.forEach(b => {
@@ -3960,6 +3974,11 @@ Stay calm and provide clear updates.`;
                 b.classList.add("active");
             }
         });
+        const catGrid = document.querySelector(".emergency-categories-grid");
+        if (catGrid) {
+            if (this.selectedCategory) catGrid.classList.add("has-selection");
+            else catGrid.classList.remove("has-selection");
+        }
 
 
         this.chatDetailsInput.disabled = false;

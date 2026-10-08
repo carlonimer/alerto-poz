@@ -1526,11 +1526,17 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Widget _buildCategoryTile(Map<String, dynamic> cat, double width) {
     final color = cat['color'] as Color;
     final selected = _selectedCategory == cat['key'];
-    final enabled = !_sending && !_sent;
+    final hasSelection = _selectedCategory != null && _selectedCategory!.isNotEmpty;
+    final enabled = !_sending && !_sent && !_cancelled;
+    
+    // If a category is selected, or if the form is submitted/sent/cancelled, unselected categories are greyed out.
+    // Otherwise, all are fully visible.
+    final double opacity = (selected || (!hasSelection && enabled)) ? 1.0 : 0.45;
+
     return SizedBox(
       width: width,
       child: Opacity(
-        opacity: enabled || selected ? 1 : 0.45,
+        opacity: opacity,
         child: Material(
           color: selected ? color.withValues(alpha: 0.08) : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
@@ -1725,7 +1731,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               children: [
                 ..._chatFeed.map((msg) => _buildChatBubble(msg)),
                 if (_sending) _buildSendingIndicator(),
-                if (!_sent && !_cancelled) _buildCategoryGrid(),
+                _buildCategoryGrid(),
               ],
             ),
           ),
