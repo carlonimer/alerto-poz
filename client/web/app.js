@@ -2915,6 +2915,11 @@ class CitizenMobileClient {
                     modalBox.style.textAlign = "center";
                     modalBox.style.fontFamily = "inherit";
                     
+                    const activeCat = (checkData.incident && checkData.incident.category && checkData.incident.category !== 'draft') ? checkData.incident.category.toUpperCase() : '';
+                    const promptMsg = activeCat
+                        ? `You have an active <b>${activeCat}</b> emergency report in progress. What would you like to do?`
+                        : `You already have an active emergency report. What would you like to do?`;
+
                     modalBox.innerHTML = `
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                             <span style="font-size: 22px;">⚠️</span>
@@ -2922,7 +2927,7 @@ class CitizenMobileClient {
                             <span id="modal-btn-close-active" style="font-size: 20px; color: #888; cursor: pointer; line-height: 1; font-weight: 400;">✕</span>
                         </div>
                         <hr style="border: 0; border-top: 2px solid #F05628; margin: 10px 0 20px 0;" />
-                        <p style="color: #333; margin-bottom: 25px; font-size: 15px;">You already have an active emergency report. What would you like to do?</p>
+                        <p style="color: #333; margin-bottom: 25px; font-size: 15px;">${promptMsg}</p>
                         <div style="display: flex; justify-content: space-between; gap: 10px;">
                             <button id="modal-btn-start-new" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #E5E7EB; color: #222; font-weight: 700; font-size: 14px; cursor: pointer;">START NEW</button>
                             <button id="modal-btn-continue" style="flex: 1; padding: 14px; border: none; border-radius: 8px; background-color: #F05628; color: white; font-weight: 700; font-size: 14px; cursor: pointer;">CONTINUE</button>
@@ -2967,6 +2972,7 @@ class CitizenMobileClient {
                             document.body.removeChild(modalOverlay);
                         }
                         this.activeIncident = checkData.incident;
+                        this.selectedCategory = (this.activeIncident && this.activeIncident.category && this.activeIncident.category !== 'draft') ? this.activeIncident.category : null;
                         this.syncActiveIncidentStatus();
                         await this.restoreChatHistory();
                         this.transitionAppState("chat");
@@ -3083,6 +3089,7 @@ class CitizenMobileClient {
             if (res.status === 409 && !forceNew && data && data.incident) {
                 // Conflict: Existing emergency found (fallback)
                 this.activeIncident = data.incident;
+                this.selectedCategory = (this.activeIncident && this.activeIncident.category && this.activeIncident.category !== 'draft') ? this.activeIncident.category : null;
                 this.syncActiveIncidentStatus();
                 await this.restoreChatHistory();
                 this.transitionAppState("chat");
@@ -3354,7 +3361,7 @@ Stay calm and provide clear updates.`;
     updateSOSCategory(cat) {
         if (!this.activeIncident) return;
         this.activeIncident.category = cat;
-        this.appendChatMessage("You", `Selected Category: ${cat.toUpperCase()}`, "outgoing-bubble", Date.now(), this.activeUser?.profile_image, this.activeUser?.gender);
+        this.appendChatMessage("You", `Selected Emergency: ${cat.toUpperCase()}`, "outgoing-bubble", Date.now(), this.activeUser?.profile_image, this.activeUser?.gender);
 
         localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
 
@@ -3668,13 +3675,52 @@ Stay calm and provide clear updates.`;
                 banner.classList.remove("hidden");
                 const bannerText = banner.querySelector(".banner-text span");
                 if (bannerText) {
-                    bannerText.textContent = this.activeIncident.status === "draft" ? "Draft Emergency Exists" : "Emergency Session Active";
+                    const cat = (this.activeIncident.category && this.activeIncident.category !== 'draft') ? ` (${this.activeIncident.category.toUpperCase()})` : '';
+                    bannerText.textContent = this.activeIncident.status === "draft" ? `Draft Emergency Exists${cat}` : `Emergency Session Active${cat}`;
                 }
             }
         }
         
         if (!this.activeIncident) return;
         this.reportStatusBadge.textContent = this.activeIncident.status;
+
+        // Display category badge next to ticket ID
+        const catBadge = document.getElementById("chat-incident-category-badge");
+        if (catBadge) {
+            const cat = (this.activeIncident.category && this.activeIncident.category !== 'draft') ? this.activeIncident.category : this.selectedCategory;
+            if (cat && this.activeIncident.status !== 'draft') {
+                catBadge.style.display = "inline-flex";
+                catBadge.textContent = cat.toUpperCase();
+                const catLower = cat.toLowerCase();
+                if (catLower === 'police') {
+                    catBadge.style.background = '#dbeafe';
+                    catBadge.style.color = '#1d4ed8';
+                    catBadge.style.border = '1px solid #93c5fd';
+                } else if (catLower === 'medical') {
+                    catBadge.style.background = '#fee2e2';
+                    catBadge.style.color = '#dc2626';
+                    catBadge.style.border = '1px solid #fca5a5';
+                } else if (catLower === 'fire') {
+                    catBadge.style.background = '#ffedd5';
+                    catBadge.style.color = '#c2410c';
+                    catBadge.style.border = '1px solid #fdba74';
+                } else if (catLower === 'barangay') {
+                    catBadge.style.background = '#d1fae5';
+                    catBadge.style.color = '#047857';
+                    catBadge.style.border = '1px solid #6ee7b7';
+                } else if (catLower === 'road_crash') {
+                    catBadge.style.background = '#fef3c7';
+                    catBadge.style.color = '#b45309';
+                    catBadge.style.border = '1px solid #fcd34d';
+                } else {
+                    catBadge.style.background = '#f1f5f9';
+                    catBadge.style.color = '#334155';
+                    catBadge.style.border = '1px solid #cbd5e1';
+                }
+            } else {
+                catBadge.style.display = "none";
+            }
+        }
 
         // Hide SOS trigger button and categories if already dispatched
         const sosGrid = document.querySelector(".chat-category-grid");
@@ -4509,21 +4555,17 @@ Stay calm and provide clear updates.`;
     async restoreChatHistory() {
         if (!this.activeIncident) return;
         
+        // Recover selectedCategory from active incident if not set
+        if (!this.selectedCategory && this.activeIncident.category && this.activeIncident.category !== 'draft') {
+            this.selectedCategory = this.activeIncident.category;
+        }
+
         // Clear chat first to avoid duplication
         this.dynamicChatFeed.innerHTML = "";
         
-        // Re-append selected category if it exists and isn't just a draft
-        if (this.selectedCategory && (this.activeIncident.has_sent_messages || this.activeIncident.status !== 'draft')) {
-             this.appendChatMessage("You", `Selected Category: ${this.selectedCategory.toUpperCase()}`, "outgoing-bubble", this.activeIncident.createdAt, this.activeUser?.profile_image, this.activeUser?.gender);
-        }
-        
-        let hasNewMessages = false;
-        
-        // 1. Fetch new messages from the database
-        if (this.activeIncident.id && !String(this.activeIncident.id).startsWith("DRAFT-")) {
-            // Inject the auto-reply activation message
-            if (this.activeIncident.status && this.activeIncident.status !== 'draft') {
-                const sosMessage = `🚨 INCIDENT ACTIVATED<br>
+        // Inject the auto-reply activation message
+        if (this.activeIncident.status && this.activeIncident.status !== 'draft') {
+            const sosMessage = `🚨 INCIDENT ACTIVATED<br>
 Ticket Code: <b>${this.activeIncident.id}</b><br>
 Your emergency request has been received.<br>
 Keep this ticket number for reference.<br><br>
@@ -4532,18 +4574,40 @@ For emergency validation, please provide:<br>
 📸 Validation picture of the incident<br>
 🎥 Validation video, if available<br>
 Stay calm and provide clear updates.`;
-                this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble", this.activeIncident.createdAt);
-            }
-
+            this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble", this.activeIncident.createdAt);
+        }
+        
+        let hasNewMessages = false;
+        let serverHasCatMsg = false;
+        
+        // 1. Fetch new messages from the database
+        if (this.activeIncident.id && !String(this.activeIncident.id).startsWith("DRAFT-")) {
             try {
                 const response = await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`);
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success && data.messages && data.messages.length > 0) {
                         hasNewMessages = true;
+                        
+                        // Check if server messages already have Selected Emergency
+                        for (let msg of data.messages) {
+                            const c = (msg.message_content || '').toUpperCase();
+                            if (c.startsWith('SELECTED EMERGENCY:') || c.startsWith('SELECTED CATEGORY:')) {
+                                serverHasCatMsg = true;
+                                if (!this.selectedCategory) {
+                                    const parts = msg.message_content.split(':');
+                                    if (parts.length > 1) {
+                                        this.selectedCategory = parts[1].trim().toLowerCase();
+                                    }
+                                }
+                                break;
+                            }
+                        }
+
                         data.messages.forEach(msg => {
-                            const senderName = msg.sender_role === 'Citizen App' ? (String(msg.sender_id) === String(this.activeUser.id) ? 'You' : 'Citizen') : 'Command Center';
-                            const bubbleClass = String(msg.sender_id) === String(this.activeUser.id) ? 'outgoing-bubble' : 'incoming-bubble';
+                            const isMe = this.activeUser && (String(msg.sender_id) === String(this.activeUser.id) || String(msg.sender_id) === String(this.activeIncident?.reporterId));
+                            const senderName = msg.sender_role === 'Citizen App' ? (isMe ? 'You' : 'Citizen') : 'Command Center';
+                            const bubbleClass = (isMe || msg.sender_role === 'Citizen App') ? 'outgoing-bubble' : 'incoming-bubble';
                             
                             if (msg.message_type === 'text' && msg.message_content) {
                                 this.appendChatMessage(senderName, msg.message_content, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
@@ -4560,6 +4624,11 @@ Stay calm and provide clear updates.`;
             } catch (e) {
                 console.error("Failed to restore message history", e);
             }
+        }
+
+        // If server messages did not contain the Selected Emergency bubble, but this report has a category, append it now
+        if (!serverHasCatMsg && this.selectedCategory && (this.activeIncident.has_sent_messages || this.activeIncident.status !== 'draft')) {
+            this.appendChatMessage("You", `Selected Emergency: ${this.selectedCategory.toUpperCase()}`, "outgoing-bubble", this.activeIncident.createdAt, this.activeUser?.profile_image, this.activeUser?.gender);
         }
 
         // 2. Reconstruct legacy chat history from details ONLY if no new messages exist

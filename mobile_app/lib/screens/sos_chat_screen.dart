@@ -102,6 +102,15 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     'Terrain': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
   };
 
+  static Color getCategoryColor(String? key) {
+    if (key == null) return const Color(0xFF1D4ED8);
+    final match = _categories.firstWhere(
+      (c) => c['key'].toString().toLowerCase() == key.toLowerCase(),
+      orElse: () => const {'color': Color(0xFF1D4ED8)},
+    );
+    return match['color'] as Color;
+  }
+
   // ───────────────────────── Lifecycle ─────────────────────────
 
   @override
@@ -120,7 +129,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (widget.activeIncident != null) {
       final inc = widget.activeIncident!;
       _incidentId = inc['_id']?.toString() ?? inc['id']?.toString();
-      _selectedCategory = (inc['category'] == 'draft' || inc['category'] == null) ? null : inc['category'];
+      final rawCat = inc['category']?.toString();
+      _selectedCategory = (rawCat != null && rawCat.isNotEmpty && rawCat != 'draft')
+          ? rawCat
+          : ((widget.initialCategory != null && widget.initialCategory != 'draft') ? widget.initialCategory : null);
       _ticketCode = inc['ticketCode']?.toString() ?? inc['id']?.toString() ?? _incidentId;
       _assignedUnit = inc['assignedUnit']?.toString();
       // Incident timestamps may arrive as int ms, numeric strings (MySQL BIGINT) or ISO strings.
@@ -467,9 +479,40 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
             final mType = msg['message_type']?.toString();
             final isVideo = mType == 'video';
             final isImage = mType == 'image' || msg['isMedia'] == true;
-            final isUser = msg['sender_id']?.toString() == widget.user?.id.toString();
+            final isUser = msg['sender_id']?.toString() == widget.user?.id.toString() ||
+                msg['sender_role'] == 'Citizen App';
             final content = msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '';
             final parsedTime = _parseTs(rawTs).toIso8601String();
+
+            // Detect Selected Emergency message
+            final rawContentStr = (msg['message_content']?.toString() ?? msg['content']?.toString() ?? '').trim();
+            final isCatMsg = rawContentStr.toUpperCase().startsWith('SELECTED EMERGENCY:') ||
+                rawContentStr.toUpperCase().startsWith('SELECTED CATEGORY:');
+
+            if (isCatMsg) {
+              final catPart = rawContentStr.split(':').last.trim();
+              if (catPart.isNotEmpty) {
+                if (_selectedCategory == null || _selectedCategory!.isEmpty || _selectedCategory == 'draft') {
+                  _selectedCategory = catPart.toLowerCase();
+                }
+              }
+
+              // Check if a category bubble already exists in _chatFeed
+              final existingCatIdx = _chatFeed.indexWhere((m) {
+                final c = (m['content']?.toString() ?? '').toUpperCase();
+                return c.startsWith('SELECTED EMERGENCY:') || c.startsWith('SELECTED CATEGORY:');
+              });
+
+              if (existingCatIdx != -1) {
+                _chatFeed[existingCatIdx]['id'] = msgId;
+                _chatFeed[existingCatIdx]['timestamp'] = parsedTime;
+                _chatFeed[existingCatIdx]['content'] = 'Selected Emergency: ${catPart.toUpperCase()}';
+                if (msgId != null && msgId.isNotEmpty) {
+                  _seenMessageIds.add(msgId);
+                }
+                continue;
+              }
+            }
 
             // Reconcile optimistic message if already in feed
             final optIdx = _chatFeed.indexWhere((m) =>
@@ -495,7 +538,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 'id': msgId,
                 'role': isUser ? 'user' : 'bot',
                 'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
-                'content': content,
+                'content': isCatMsg ? 'Selected Emergency: ${rawContentStr.split(':').last.trim().toUpperCase()}' : content,
                 'videoPath': isVideo ? (msg['media_url'] ?? msg['message_content'] ?? msg['content']) : null,
                 'timestamp': parsedTime,
               });
@@ -813,6 +856,15 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'content': '',
           'timestamp': DateTime.now().toIso8601String(),
         });
+        if (_selectedCategory != null && _selectedCategory!.isNotEmpty && _selectedCategory != 'draft') {
+          _chatFeed.add({
+            'role': 'user',
+            'type': 'text',
+            'content': 'Selected Emergency: ${_selectedCategory!.toUpperCase()}',
+            'timestamp': DateTime.now().add(const Duration(milliseconds: 50)).toIso8601String(),
+          });
+        }
+        _sortFeed();
         SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload')); // Clear draft once sent
         _flushPendingMediaUploads();
       } else if (res is Map && res['_statusCode'] == 409) {
@@ -1125,6 +1177,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               ),
               const SizedBox(width: 6),
               _buildStatusLabel(),
+              if (_selectedCategory != null && _selectedCategory!.isNotEmpty && _selectedCategory != 'draft') ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: getCategoryColor(_selectedCategory).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: getCategoryColor(_selectedCategory).withValues(alpha: 0.35), width: 1),
+                  ),
+                  child: Text(
+                    _selectedCategory!.toUpperCase(),
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 10,
+                      color: getCategoryColor(_selectedCategory),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 2),
@@ -1556,6 +1627,26 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 style: GoogleFonts.outfit(color: _C.inkSoft, fontSize: 13, fontWeight: FontWeight.w600)),
           ),
           const SizedBox(width: 8),
+          if (_selectedCategory != null && _selectedCategory!.isNotEmpty && _selectedCategory != 'draft') ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: getCategoryColor(_selectedCategory).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: getCategoryColor(_selectedCategory).withValues(alpha: 0.35), width: 1),
+              ),
+              child: Text(
+                _selectedCategory!.toUpperCase(),
+                style: GoogleFonts.outfit(
+                  color: getCategoryColor(_selectedCategory),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           Material(
             color: _C.chip,
             borderRadius: BorderRadius.circular(8),

@@ -2255,6 +2255,29 @@ app.post('/api/incidents', async (req, res) => {
             await recordIncidentEvent(report.id, report.id, 'Emergency Details Updated', null, report.status, 'Citizen App');
         }
 
+        // Persist Selected Emergency message in messages table so all devices see it
+        if (report.category && report.category.toLowerCase() !== 'draft') {
+            const catUpper = report.category.toUpperCase();
+            if (useMySQL) {
+                try {
+                    const [existingCat] = await pool.query(
+                        "SELECT id FROM messages WHERE incident_id = ? AND (message_content LIKE 'Selected Emergency:%' OR message_content LIKE 'Selected Category:%')",
+                        [report.id]
+                    );
+                    if (existingCat.length === 0) {
+                        const rawCreated = report.createdAt;
+                        const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                        await pool.query(
+                            "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, 'Citizen App', 'text', ?, NULL, ?)",
+                            [report.id, report.reporterId ? String(report.reporterId) : '0', `Selected Emergency: ${catUpper}`, incTs]
+                        );
+                    }
+                } catch (msgErr) {
+                    console.error("Failed to insert Selected Emergency message:", msgErr);
+                }
+            }
+        }
+
         res.json({ success: true, ticketNumber: report.id, incident: report });
     } catch (e) {
         console.error("SOS HTTP POST save error:", e);
@@ -2313,6 +2336,44 @@ app.get('/api/incidents/:id/messages', async (req, res) => {
             WHERE m.incident_id = ?
             ORDER BY m.timestamp ASC
         `, [req.params.id]);
+
+        // Ensure the initial Selected Emergency category is present in messages so all devices see it
+        const [incRows] = await pool.query("SELECT id, category, reporterId, createdAt FROM incidents WHERE id = ?", [req.params.id]);
+        if (incRows.length > 0 && incRows[0].category && incRows[0].category !== 'draft') {
+            const catUpper = incRows[0].category.toUpperCase();
+            const hasCatMsg = rows.some(m => {
+                const c = (m.message_content || '').toUpperCase();
+                return c.includes(`SELECTED EMERGENCY: ${catUpper}`) || c.includes(`SELECTED CATEGORY: ${catUpper}`);
+            });
+            if (!hasCatMsg) {
+                let repProfile = null;
+                let repGender = null;
+                if (incRows[0].reporterId) {
+                    const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [incRows[0].reporterId]);
+                    if (userRows && userRows.length > 0) {
+                        repProfile = userRows[0].profile_image;
+                        repGender = userRows[0].gender;
+                    }
+                }
+                const rawCreated = incRows[0].createdAt;
+                const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                const catMsg = {
+                    id: `cat-${incRows[0].id}`,
+                    incident_id: incRows[0].id,
+                    sender_id: incRows[0].reporterId ? String(incRows[0].reporterId) : '0',
+                    sender_role: 'Citizen App',
+                    message_type: 'text',
+                    message_content: `Selected Emergency: ${catUpper}`,
+                    media_url: null,
+                    timestamp: incTs,
+                    sender_profile_image: repProfile,
+                    sender_gender: repGender
+                };
+                rows.unshift(catMsg);
+                rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+            }
+        }
+
         res.json({ success: true, messages: rows });
     } catch(e) {
         console.error("Fetch messages error:", e);
@@ -2823,6 +2884,29 @@ io.on('connection', async (socket) => {
                 io.emit('incident_status_changed', report);
             } else {
                 await recordIncidentEvent(report.id, report.id, 'Emergency Details Updated', null, report.status, 'Citizen App');
+            }
+
+            // Persist Selected Emergency message in messages table so all devices see it
+            if (report.category && report.category.toLowerCase() !== 'draft') {
+                const catUpper = report.category.toUpperCase();
+                if (useMySQL) {
+                    try {
+                        const [existingCat] = await pool.query(
+                            "SELECT id FROM messages WHERE incident_id = ? AND (message_content LIKE 'Selected Emergency:%' OR message_content LIKE 'Selected Category:%')",
+                            [report.id]
+                        );
+                        if (existingCat.length === 0) {
+                            const rawCreated = report.createdAt;
+                            const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                            await pool.query(
+                                "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, 'Citizen App', 'text', ?, NULL, ?)",
+                                [report.id, report.reporterId ? String(report.reporterId) : '0', `Selected Emergency: ${catUpper}`, incTs]
+                            );
+                        }
+                    } catch (msgErr) {
+                        console.error("Failed to insert Selected Emergency message via socket:", msgErr);
+                    }
+                }
             }
 
             if (typeof callback === 'function') {

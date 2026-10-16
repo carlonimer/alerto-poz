@@ -1357,10 +1357,20 @@ class _HomeScreenState extends State<HomeScreen>
                   color: const Color(0xFFF05628),
                   margin: const EdgeInsets.only(top: 10, bottom: 20),
                 ),
-                Text(
-                  'You already have an active emergency report. What would you like to do?',
-                  style: GoogleFonts.outfit(fontSize: 14, color: Colors.black87),
-                  textAlign: TextAlign.center,
+                Builder(
+                  builder: (_) {
+                    final cat = activeIncident?['category']?.toString();
+                    final hasCat = cat != null && cat.isNotEmpty && cat.toLowerCase() != 'draft';
+                    final ticket = activeIncident?['ticketCode'] ?? activeIncident?['id'];
+                    final promptText = hasCat
+                        ? 'You have an active ${cat.toUpperCase()} emergency report${ticket != null ? ' ($ticket)' : ''} in progress. What would you like to do?'
+                        : 'You already have an active emergency report. What would you like to do?';
+                    return Text(
+                      promptText,
+                      style: GoogleFonts.outfit(fontSize: 14, color: Colors.black87),
+                      textAlign: TextAlign.center,
+                    );
+                  },
                 ),
                 const SizedBox(height: 25),
                 Row(
@@ -1447,8 +1457,10 @@ class _HomeScreenState extends State<HomeScreen>
 
                                 _isConflictDialogOpen = false;
                                 setState(() => _isTriggeringSos = false);
+                                final cat = activeIncident?['category']?.toString();
+                                final hasCat = cat != null && cat.isNotEmpty && cat.toLowerCase() != 'draft';
                                 Navigator.pop(ctx);
-                                _navigateToChat(null, activeIncident);
+                                _navigateToChat(hasCat ? cat : null, activeIncident);
                               },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFF05628),

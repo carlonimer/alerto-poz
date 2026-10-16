@@ -414,6 +414,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                                 MaterialPageRoute(
                                                   builder: (_) => SosChatScreen(
                                                     user: widget.user,
+                                                    initialCategory: (inc['category'] != null && inc['category'] != 'draft') ? inc['category'].toString() : null,
                                                     activeIncident: inc,
                                                   ),
                                                 ),
