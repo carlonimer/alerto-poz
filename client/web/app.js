@@ -214,6 +214,10 @@ class CitizenMobileClient {
         this.chatNotesForm = document.getElementById("chat-notes-form");
         this.chatDetailsInput = document.getElementById("chat-details-input");
         this.chatSendBtn = document.getElementById("btn-chat-send");
+        this.seenMessageIds = new Set();
+        this.pendingUploadRetries = {};
+        this.isActivatingIncident = false;
+        this.previewVideoObjectUrl = null;
 
 
 
@@ -835,7 +839,12 @@ class CitizenMobileClient {
         
         const closeCameraModal = () => {
             if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
-                try { this.cameraMediaRecorder.stop(); } catch (_) {}
+                try {
+                    if (typeof this.cameraMediaRecorder.requestData === 'function') {
+                        this.cameraMediaRecorder.requestData();
+                    }
+                    this.cameraMediaRecorder.stop();
+                } catch (_) {}
             }
             if (this.cameraRecordTimer) {
                 clearInterval(this.cameraRecordTimer);
@@ -859,6 +868,11 @@ class CitizenMobileClient {
             const btnCapture = document.getElementById("btn-camera-capture");
             const errBox = document.getElementById("camera-error-message");
 
+            if (this.previewVideoObjectUrl) {
+                try { URL.revokeObjectURL(this.previewVideoObjectUrl); } catch (_) {}
+                this.previewVideoObjectUrl = null;
+            }
+
             if (video) video.style.display = "";
             if (previewImg) { previewImg.style.display = "none"; previewImg.src = ""; }
             if (previewVideo) {
@@ -871,6 +885,7 @@ class CitizenMobileClient {
             if (btnCapture) {
                 btnCapture.textContent = this.cameraMode === 'video' ? "Record Video" : "Capture Photo";
                 btnCapture.style.background = this.cameraMode === 'video' ? "#ef4444" : "#3b82f6";
+                btnCapture.disabled = false;
             }
             if (errBox) errBox.style.display = "none";
             this.capturedCameraBlob = null;
@@ -917,25 +932,42 @@ class CitizenMobileClient {
                 } else {
                     // Video Mode: Start or Stop recording
                     if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
-                        // Stop recording
-                        this.cameraMediaRecorder.stop();
+                        // Stop recording safely
+                        try {
+                            if (typeof this.cameraMediaRecorder.requestData === 'function') {
+                                this.cameraMediaRecorder.requestData();
+                            }
+                            this.cameraMediaRecorder.stop();
+                        } catch (err) {
+                            console.error("Error stopping recorder:", err);
+                        }
                     } else {
                         // Start recording
                         if (!this.cameraStream) return;
                         this.cameraRecordedChunks = [];
-                        let mimeType = 'video/webm;codecs=vp8,opus';
-                        if (!MediaRecorder.isTypeSupported(mimeType)) {
-                            mimeType = 'video/webm';
-                            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                                mimeType = '';
+                        
+                        const candidateTypes = [
+                            'video/webm;codecs=vp8,opus',
+                            'video/webm;codecs=vp9,opus',
+                            'video/webm',
+                            'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+                            'video/mp4'
+                        ];
+                        let chosenMime = '';
+                        if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+                            for (const cType of candidateTypes) {
+                                if (MediaRecorder.isTypeSupported(cType)) {
+                                    chosenMime = cType;
+                                    break;
+                                }
                             }
                         }
 
                         try {
-                            const options = mimeType ? { mimeType } : undefined;
-                            this.cameraMediaRecorder = new MediaRecorder(this.cameraStream, options);
+                            const options = chosenMime ? { mimeType: chosenMime } : undefined;
+                            this.cameraMediaRecorder = options ? new MediaRecorder(this.cameraStream, options) : new MediaRecorder(this.cameraStream);
                         } catch (recErr) {
-                            console.warn("Could not create MediaRecorder with options, fallback", recErr);
+                            console.warn("Could not create MediaRecorder with options, fallback:", recErr);
                             this.cameraMediaRecorder = new MediaRecorder(this.cameraStream);
                         }
 
@@ -952,14 +984,21 @@ class CitizenMobileClient {
                             }
                             if (recIndicator) recIndicator.style.display = "none";
 
-                            const finalType = this.cameraMediaRecorder.mimeType || 'video/webm';
+                            const finalType = (this.cameraMediaRecorder && this.cameraMediaRecorder.mimeType) || chosenMime || 'video/webm';
                             const videoBlob = new Blob(this.cameraRecordedChunks, { type: finalType });
                             this.capturedCameraBlob = videoBlob;
                             this.capturedCameraType = 'video';
 
-                            const videoUrl = URL.createObjectURL(videoBlob);
+                            if (this.previewVideoObjectUrl) {
+                                try { URL.revokeObjectURL(this.previewVideoObjectUrl); } catch (_) {}
+                            }
+                            this.previewVideoObjectUrl = URL.createObjectURL(videoBlob);
+
                             if (previewVideo) {
-                                previewVideo.src = videoUrl;
+                                previewVideo.src = this.previewVideoObjectUrl;
+                                previewVideo.controls = true;
+                                previewVideo.playsInline = true;
+                                previewVideo.preload = "metadata";
                                 previewVideo.style.display = "block";
                             }
                             if (previewImg) previewImg.style.display = "none";
@@ -968,7 +1007,13 @@ class CitizenMobileClient {
                             if (actionsPreview) actionsPreview.style.display = "flex";
                         };
 
-                        this.cameraMediaRecorder.start();
+                        try {
+                            this.cameraMediaRecorder.start(1000);
+                        } catch (startErr) {
+                            console.warn("Failed starting recorder with timeslice, fallback to start():", startErr);
+                            this.cameraMediaRecorder.start();
+                        }
+
                         btnCameraCapture.textContent = "Stop Recording";
                         btnCameraCapture.style.background = "#dc2626";
 
@@ -983,7 +1028,12 @@ class CitizenMobileClient {
                             if (recordTime) recordTime.textContent = `${mins}:${secs} / 00:30`;
                             if (this.cameraRecordSeconds >= 30) {
                                 if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
-                                    this.cameraMediaRecorder.stop();
+                                    try {
+                                        if (typeof this.cameraMediaRecorder.requestData === 'function') {
+                                            this.cameraMediaRecorder.requestData();
+                                        }
+                                        this.cameraMediaRecorder.stop();
+                                    } catch (_) {}
                                 }
                             }
                         }, 1000);
@@ -1003,6 +1053,10 @@ class CitizenMobileClient {
                 const actionsPreview = document.getElementById("camera-actions-preview");
                 const btnCapture = document.getElementById("btn-camera-capture");
 
+                if (this.previewVideoObjectUrl) {
+                    try { URL.revokeObjectURL(this.previewVideoObjectUrl); } catch (_) {}
+                    this.previewVideoObjectUrl = null;
+                }
                 if (video) video.style.display = "";
                 if (previewImg) { previewImg.style.display = "none"; previewImg.src = ""; }
                 if (previewVideo) {
@@ -1015,6 +1069,7 @@ class CitizenMobileClient {
                 if (btnCapture) {
                     btnCapture.textContent = this.cameraMode === 'video' ? "Record Video" : "Capture Photo";
                     btnCapture.style.background = this.cameraMode === 'video' ? "#ef4444" : "#3b82f6";
+                    btnCapture.disabled = false;
                 }
                 this.capturedCameraBlob = null;
                 this.cameraRecordedChunks = [];
@@ -1024,23 +1079,31 @@ class CitizenMobileClient {
         // Confirm button — send the captured photo or recorded video
         const btnCameraConfirm = document.getElementById("btn-camera-confirm");
         if (btnCameraConfirm) {
-            btnCameraConfirm.addEventListener("click", () => {
-                if (this.capturedCameraBlob) {
-                    let file;
-                    if (this.capturedCameraType === 'video') {
-                        file = new File([this.capturedCameraBlob], "camera-video-" + Date.now() + ".webm", { type: this.capturedCameraBlob.type || "video/webm" });
-                    } else {
-                        file = new File([this.capturedCameraBlob], "camera-capture.jpg", { type: "image/jpeg" });
-                    }
-                    const fakeEvent = {
-                        target: {
-                            files: [file],
-                            value: ""
-                        }
-                    };
-                    this.handleMediaUpload(fakeEvent);
+            btnCameraConfirm.addEventListener("click", async () => {
+                if (btnCameraConfirm.disabled) return;
+                if (!this.capturedCameraBlob) {
+                    closeCameraModal();
+                    return;
                 }
+                btnCameraConfirm.disabled = true;
+                const blobToUpload = this.capturedCameraBlob;
+                const typeToUpload = this.capturedCameraType;
+
+                let file;
+                if (typeToUpload === 'video') {
+                    const mime = blobToUpload.type || 'video/webm';
+                    let ext = 'webm';
+                    if (mime.includes('mp4')) ext = 'mp4';
+                    else if (mime.includes('quicktime') || mime.includes('mov')) ext = 'mov';
+                    file = new File([blobToUpload], `camera-video-${Date.now()}.${ext}`, { type: mime });
+                } else {
+                    file = new File([blobToUpload], `camera-capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+                }
+
                 closeCameraModal();
+                btnCameraConfirm.disabled = false;
+
+                await this.uploadMediaAttachment(file, typeToUpload);
             });
         }
 
@@ -1408,20 +1471,57 @@ class CitizenMobileClient {
 
         this.socket.on('chat-message-receive', (msg) => {
             if (this.activeIncident && String(this.activeIncident.id) === String(msg.incident_id)) {
-                // If it's not from us, append it
-                if (String(msg.sender_id) !== String(this.activeUser.id)) {
-                    const senderName = msg.sender_role === 'Citizen App' ? 'Citizen' : 'Command Center';
-                    const bubbleClass = 'incoming-bubble';
+                if (msg.client_message_id && this.seenMessageIds && this.seenMessageIds.has(String(msg.client_message_id))) {
+                    if (msg.id) this.seenMessageIds.add(String(msg.id));
+                    return;
+                }
+                if (msg.id && this.seenMessageIds && this.seenMessageIds.has(String(msg.id))) return;
+                if (msg.id && this.seenMessageIds) this.seenMessageIds.add(String(msg.id));
+                if (msg.client_message_id && this.seenMessageIds) this.seenMessageIds.add(String(msg.client_message_id));
 
-                    if (msg.message_type === 'text' && msg.message_content) {
-                        this.appendChatMessage(senderName, msg.message_content, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
-                    } else if ((msg.message_type === 'image' || msg.message_type === 'video') && msg.media_url) {
-                        const attObj = {
-                            type: msg.message_type,
-                            data: `${SERVER_URL}${msg.media_url}`
-                        };
-                        this.appendMediaMessageBubble(attObj, senderName, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
+                const contentUpper = (msg.message_content || '').toUpperCase();
+                if (contentUpper.startsWith('SELECTED EMERGENCY:') || contentUpper.startsWith('SELECTED CATEGORY:')) {
+                    const existingBubbles = this.dynamicChatFeed ? this.dynamicChatFeed.querySelectorAll('.chat-message-bubble') : [];
+                    let alreadyHasCatBubble = false;
+                    for (let b of existingBubbles) {
+                        if (b.textContent && (b.textContent.toUpperCase().includes('SELECTED EMERGENCY:') || b.textContent.toUpperCase().includes('SELECTED CATEGORY:'))) {
+                            alreadyHasCatBubble = true;
+                            break;
+                        }
                     }
+                    if (alreadyHasCatBubble) return;
+                }
+
+                const isMe = this.activeUser && (String(msg.sender_id) === String(this.activeUser.id) || String(msg.sender_id) === String(this.activeIncident?.reporterId));
+                let senderName = 'Citizen';
+                let bubbleClass = 'incoming-bubble';
+
+                if (isMe) {
+                    senderName = 'You';
+                    bubbleClass = 'outgoing-bubble';
+                } else if (msg.sender_role === 'Command Center' || msg.sender_role === 'ADMIN' || msg.sender_id === 'ADMIN') {
+                    senderName = 'Command Center';
+                    bubbleClass = 'incoming-bubble';
+                } else if (msg.sender_role && String(msg.sender_role).startsWith('Barangay')) {
+                    senderName = msg.sender_role;
+                    bubbleClass = 'incoming-bubble';
+                } else if (msg.sender_role === 'Citizen App') {
+                    senderName = 'Citizen';
+                    bubbleClass = 'incoming-bubble';
+                } else {
+                    senderName = msg.sender_role || 'Command Center';
+                    bubbleClass = 'incoming-bubble';
+                }
+
+                if (msg.message_type === 'text' && msg.message_content) {
+                    this.appendChatMessage(senderName, msg.message_content, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
+                } else if ((msg.message_type === 'image' || msg.message_type === 'video') && msg.media_url) {
+                    const mediaSrc = msg.media_url.startsWith('http') ? msg.media_url : `${SERVER_URL}${msg.media_url}`;
+                    const attObj = {
+                        type: msg.message_type,
+                        data: mediaSrc
+                    };
+                    this.appendMediaMessageBubble(attObj, senderName, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
                 }
             }
         });
@@ -3118,33 +3218,287 @@ class CitizenMobileClient {
         }
     }
 
+    formatManilaTimestamp(timestampMs) {
+        const d = new Date(Number(timestampMs) || Date.now());
+        const optionsDate = { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: '2-digit' };
+        const optionsTime = { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true };
+        const dateStr = new Intl.DateTimeFormat('en-US', optionsDate).format(d);
+        const timeStr = new Intl.DateTimeFormat('en-US', optionsTime).format(d);
+        return `${dateStr} • ${timeStr}`;
+    }
+
+    async ensureIncidentActivated() {
+        if (!this.activeIncident) return false;
+        if (this.activeIncident.status !== "draft" && this.activeIncident.id && !String(this.activeIncident.id).startsWith("DRAFT-")) {
+            return true;
+        }
+
+        if (this.isActivatingIncident) {
+            return new Promise((resolve) => {
+                const interval = setInterval(() => {
+                    if (!this.isActivatingIncident) {
+                        clearInterval(interval);
+                        resolve(this.activeIncident && this.activeIncident.status !== "draft" && !String(this.activeIncident.id).startsWith("DRAFT-"));
+                    }
+                }, 200);
+            });
+        }
+
+        this.isActivatingIncident = true;
+        this.activeIncident.status = "pending";
+        this.activeIncident.has_sent_messages = true;
+
+        return new Promise((resolve) => {
+            const onActivationComplete = (incident) => {
+                this.isActivatingIncident = false;
+                this.activeIncident = incident;
+
+                const timeString = new Date().toLocaleString('en-US', {
+                    month: 'short', day: 'numeric', year: 'numeric',
+                    hour: 'numeric', minute: 'numeric', hour12: true
+                });
+
+                if (this.chatIncidentId) this.chatIncidentId.textContent = this.activeIncident.id;
+                if (this.chatIncidentTime) this.chatIncidentTime.textContent = timeString;
+                if (this.reportStatusBadge) {
+                    this.reportStatusBadge.textContent = "Pending";
+                    this.reportStatusBadge.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
+                    this.reportStatusBadge.style.color = "var(--danger)";
+                }
+
+                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+
+                const catGrid = document.querySelector(".emergency-categories-grid");
+                if (catGrid) catGrid.classList.add("has-selection");
+
+                const sosMessage = `🚨 INCIDENT ACTIVATED<br>
+Ticket Code: <b>${this.activeIncident.id}</b><br>
+Your emergency request has been received.<br>
+Keep this ticket number for reference.<br><br>
+Your emergency location and details have been sent to the Command Center.<br>
+For emergency validation, please provide:<br>
+📸 Validation picture of the incident<br>
+🎥 Validation video, if available<br>
+Stay calm and provide clear updates.`;
+                setTimeout(() => {
+                    this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble");
+                }, 300);
+
+                resolve(true);
+            };
+
+            const onActivationFail = () => {
+                this.isActivatingIncident = false;
+                this.activeIncident.status = "draft";
+                this.activeIncident.has_sent_messages = false;
+                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+                resolve(false);
+            };
+
+            if (this.socket && this.socket.connected && this.isOnline) {
+                let fired = false;
+                const timer = setTimeout(() => {
+                    if (!fired) {
+                        fired = true;
+                        onActivationFail();
+                    }
+                }, 20000);
+
+                this.socket.emit('citizen-sos-report', this.activeIncident, (response) => {
+                    if (fired) return;
+                    fired = true;
+                    clearTimeout(timer);
+                    if (response && response.success && response.incident) {
+                        onActivationComplete(response.incident);
+                    } else {
+                        onActivationFail();
+                    }
+                });
+            } else if (this.isOnline) {
+                fetch(`${SERVER_URL}/api/incidents`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.activeIncident)
+                }).then(r => r.json()).then(res => {
+                    if (res && res.success && res.incident) {
+                        onActivationComplete(res.incident);
+                    } else {
+                        onActivationFail();
+                    }
+                }).catch(() => onActivationFail());
+            } else {
+                onActivationFail();
+            }
+        });
+    }
+
+    async uploadMediaAttachment(file, mediaType = 'image', retryClientMsgId = null) {
+        if (!this.activeIncident || !file) return;
+
+        // Ensure draft emergency is selected and activated
+        if (this.activeIncident.status === "draft" && !this.activeIncident.has_sent_messages) {
+            if (!this.activeIncident.category || this.activeIncident.category === 'draft') {
+                this.appendChatMessage("System", "⚠️ Please select an emergency type first.", "incoming-bubble");
+                return;
+            }
+        }
+
+        const activated = await this.ensureIncidentActivated();
+        if (!activated) {
+            this.appendChatMessage("System", "Failed to activate emergency report. Please check your connection and retry.", "incoming-bubble");
+            return;
+        }
+
+        const clientMessageId = retryClientMsgId || ('upload-' + Date.now() + '-' + Math.random().toString(36).substr(2, 8));
+        this.seenMessageIds.add(clientMessageId);
+        this.pendingUploadRetries[clientMessageId] = { file, mediaType };
+
+        let bubbleWrap = retryClientMsgId ? document.getElementById(`msg-bubble-${clientMessageId}`) : null;
+        const isVideo = mediaType === 'video';
+        const localBlobUrl = URL.createObjectURL(file);
+        const timestampMs = Date.now();
+
+        if (!bubbleWrap) {
+            bubbleWrap = document.createElement("div");
+            bubbleWrap.id = `msg-bubble-${clientMessageId}`;
+            bubbleWrap.className = "chat-message-bubble outgoing-bubble animate-bubble";
+
+            const mediaTag = isVideo
+                ? `<video id="video-${clientMessageId}" src="${localBlobUrl}" controls playsinline preload="metadata" style="max-width:280px; max-height:250px; border-radius:8px; display:block; background:#000;"></video>`
+                : `<img id="img-${clientMessageId}" src="${localBlobUrl}" style="max-width:280px; max-height:250px; border-radius:8px; display:block;">`;
+
+            bubbleWrap.innerHTML = `
+                <div class="bubble-content no-padding" style="margin-right: 8px; min-width: 220px; max-width: 280px;">
+                    ${mediaTag}
+                    <div id="prog-box-${clientMessageId}" style="margin-top: 6px; padding: 6px 10px; background: rgba(15, 23, 42, 0.85); border-radius: 6px; font-size: 11px; color: #fff;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <span id="prog-txt-${clientMessageId}" style="display:flex; align-items:center; gap:6px;">
+                                <i class="fa-solid fa-spinner fa-spin" style="color: #60a5fa;"></i> Uploading ${isVideo ? 'video' : 'photo'}...
+                            </span>
+                            <span id="prog-pct-${clientMessageId}" style="font-weight: bold; color: #60a5fa;">0%</span>
+                        </div>
+                        <div style="width: 100%; height: 5px; background: rgba(255,255,255,0.2); border-radius: 3px; overflow: hidden;">
+                            <div id="prog-bar-${clientMessageId}" style="width: 0%; height: 100%; background: #10b981; transition: width 0.15s ease;"></div>
+                        </div>
+                    </div>
+                    <div id="err-box-${clientMessageId}" style="display: none; margin-top: 6px; padding: 6px 10px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 6px; font-size: 11px; color: #fca5a5; justify-content: space-between; align-items: center;">
+                        <span><i class="fa-solid fa-circle-exclamation"></i> Upload failed</span>
+                        <button type="button" id="retry-btn-${clientMessageId}" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">Retry</button>
+                    </div>
+                    <div class="chat-timestamp" style="font-size: 10px; color: #94a3b8; text-align: right; margin-top: 5px;">
+                        ${this.formatManilaTimestamp(timestampMs)}
+                    </div>
+                </div>
+            `;
+            this.dynamicChatFeed.appendChild(bubbleWrap);
+            this.chatMessagesContainer.scrollTo({ top: this.chatMessagesContainer.scrollHeight, behavior: 'smooth' });
+        } else {
+            const progBox = document.getElementById(`prog-box-${clientMessageId}`);
+            const errBox = document.getElementById(`err-box-${clientMessageId}`);
+            const progBar = document.getElementById(`prog-bar-${clientMessageId}`);
+            const progPct = document.getElementById(`prog-pct-${clientMessageId}`);
+            if (progBox) progBox.style.display = 'block';
+            if (errBox) errBox.style.display = 'none';
+            if (progBar) progBar.style.width = '0%';
+            if (progPct) progPct.textContent = '0%';
+        }
+
+        const xhr = new XMLHttpRequest();
+        const fd = new FormData();
+        fd.append('senderId', this.activeUser?.id || '0');
+        fd.append('senderRole', 'Citizen App');
+        fd.append('messageType', mediaType);
+        fd.append('media', file);
+        fd.append('clientMessageId', clientMessageId);
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+                const bar = document.getElementById(`prog-bar-${clientMessageId}`);
+                const pct = document.getElementById(`prog-pct-${clientMessageId}`);
+                if (bar) bar.style.width = `${percent}%`;
+                if (pct) pct.textContent = `${percent}%`;
+            }
+        };
+
+        const onFail = () => {
+            const progBox = document.getElementById(`prog-box-${clientMessageId}`);
+            const errBox = document.getElementById(`err-box-${clientMessageId}`);
+            if (progBox) progBox.style.display = 'none';
+            if (errBox) {
+                errBox.style.display = 'flex';
+                const retryBtn = document.getElementById(`retry-btn-${clientMessageId}`);
+                if (retryBtn) {
+                    retryBtn.onclick = (e) => {
+                        e.preventDefault();
+                        this.uploadMediaAttachment(file, mediaType, clientMessageId);
+                    };
+                }
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const res = JSON.parse(xhr.responseText);
+                    if (res.success && res.message) {
+                        const bar = document.getElementById(`prog-bar-${clientMessageId}`);
+                        const pct = document.getElementById(`prog-pct-${clientMessageId}`);
+                        const progBox = document.getElementById(`prog-box-${clientMessageId}`);
+                        if (bar) bar.style.width = '100%';
+                        if (pct) pct.textContent = '100%';
+
+                        if (res.message.id) {
+                            this.seenMessageIds.add(String(res.message.id));
+                        }
+                        delete this.pendingUploadRetries[clientMessageId];
+
+                        const finalUrl = res.message.media_url ? (res.message.media_url.startsWith('http') ? res.message.media_url : `${SERVER_URL}${res.message.media_url}`) : null;
+                        if (finalUrl) {
+                            if (isVideo) {
+                                const v = document.getElementById(`video-${clientMessageId}`);
+                                if (v) {
+                                    v.src = finalUrl;
+                                    v.controls = true;
+                                    v.playsInline = true;
+                                    v.preload = "metadata";
+                                }
+                            } else {
+                                const im = document.getElementById(`img-${clientMessageId}`);
+                                if (im) im.src = finalUrl;
+                            }
+                        }
+
+                        setTimeout(() => {
+                            if (progBox) progBox.style.display = 'none';
+                        }, 500);
+                        return;
+                    }
+                } catch (parseErr) {
+                    console.error("Upload response parse error:", parseErr);
+                }
+            }
+            onFail();
+        };
+
+        xhr.onerror = () => onFail();
+        xhr.ontimeout = () => onFail();
+
+        xhr.open('POST', `${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`);
+        xhr.send(fd);
+    }
+
     handleMediaUpload(e) {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
 
         files.forEach(file => {
             const type = file.type.startsWith("image/") ? "image" : "video";
-            const attObj = {
-                name: file.name,
-                type: type,
-                file: file // Store the actual file object for FormData
-            };
-            this.attachments.push(attObj);
-
-            // Create a temporary object URL for preview purposes
-            const objectUrl = URL.createObjectURL(file);
-            attObj.previewUrl = objectUrl;
-
-            this.renderMediaPreviews();
+            this.uploadMediaAttachment(file, type);
         });
 
-        // Automatically send the media immediately
-        this.sendChatNotes();
-
-        // Reset the file input value so the same file can be selected again
         e.target.value = "";
     }
-
 
     renderMediaPreviews() {
         if (this.attachments.length === 0) {
@@ -3195,141 +3549,63 @@ class CitizenMobileClient {
         this.chatDetailsInput.value = "";
         this.chatSendBtn.disabled = true;
 
-        // Append user comment bubble in conversation log immediately for responsiveness
-        if (text) {
-            this.appendChatMessage("You", text, "outgoing-bubble", Date.now(), this.activeUser?.profile_image, this.activeUser?.gender);
-        }
-
-        // Copy attachments for processing and clear UI
         const attachmentsToSend = [...this.attachments];
         if (attachmentsToSend.length > 0) {
             this.attachments = [];
             this.renderMediaPreviews();
         }
 
-        // Keep the old details appending for backward compatibility
-        if (text) this.activeIncident.details += ` | Notes: ${text}`;
-        if (attachmentsToSend.length > 0) this.activeIncident.details += ` | Files Attached: ${attachmentsToSend.length} media logs`;
-
-        const handleActivationSuccess = async (incident) => {
-            this.activeIncident = incident;
-
-            const timeString = new Date().toLocaleString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-                hour: 'numeric', minute: 'numeric', hour12: true
-            });
-
-            // Update UI with generated info from backend
-            this.chatIncidentId.textContent = this.activeIncident.id;
-            this.chatIncidentTime.textContent = timeString;
-            this.reportStatusBadge.textContent = "Pending";
-            this.reportStatusBadge.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
-            this.reportStatusBadge.style.color = "var(--danger)";
-
-            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-
-            // Now that we have the real ID, POST messages and media
-            const catGrid = document.querySelector(".emergency-categories-grid");
-            if (catGrid) catGrid.classList.add("has-selection");
-            await this.postMessagesAndMedia(text, attachmentsToSend);
+        const activated = await this.ensureIncidentActivated();
+        if (!activated) {
             this.chatSendBtn.disabled = false;
-
-            const sosMessage = `🚨 INCIDENT ACTIVATED<br>
-Ticket Code: <b>${this.activeIncident.id}</b><br>
-Your emergency request has been received.<br>
-Keep this ticket number for reference.<br><br>
-Your emergency location and details have been sent to the Command Center.<br>
-For emergency validation, please provide:<br>
-📸 Validation picture of the incident<br>
-🎥 Validation video, if available<br>
-Stay calm and provide clear updates.`;
-            setTimeout(() => {
-                this.appendChatMessage("Command Center (Auto)", sosMessage, "incoming-bubble");
-            }, 500);
-        };
-
-        const handleNetworkError = async () => {
-            this.chatSendBtn.disabled = false;
-            // Ensure status remains draft if it failed to activate
-            if (!this.activeIncident.id || this.activeIncident.id === 'draft' || String(this.activeIncident.id).startsWith("DRAFT-") || String(this.activeIncident.id).startsWith("ALERTOPOZ-26")) {
-                this.activeIncident.status = "draft";
-                this.activeIncident.has_sent_messages = false;
-                if (!String(this.activeIncident.id).startsWith("DRAFT-")) {
-                    this.activeIncident.id = 'draft';
-                }
-                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-            }
             this.appendChatMessage("System", "Message failed to send. Network error. Please try again.", "incoming-bubble");
-        };
-
-        // If this is the first message, ACTIVATE the incident via socket to get the real ticket ID
-        if (this.activeIncident.status.toLowerCase() === "draft" && !this.activeIncident.has_sent_messages) {
-            this.activeIncident.status = "pending"; // Activating
-            this.activeIncident.has_sent_messages = true;
-
-            if (this.socket && this.socket.connected && this.isOnline) {
-                let callbackFired = false;
-                const timeoutId = setTimeout(async () => {
-                    if (!callbackFired) {
-                        callbackFired = true;
-                        console.warn("Socket activation timed out. Falling back to offline mode.");
-                        await handleNetworkError();
-                    }
-                }, 30000);
-
-                this.socket.emit('citizen-sos-report', this.activeIncident, async (response) => {
-                    if (callbackFired) return;
-                    callbackFired = true;
-                    clearTimeout(timeoutId);
-
-                    if (response && response.success) {
-                        await handleActivationSuccess(response.incident);
-                    } else {
-                        alert("Error activating emergency: " + (response ? response.error : "Unknown error"));
-                        await handleNetworkError();
-                    }
-                });
-            } else if (this.isOnline) {
-                // HTTP fallback
-                fetch(`${SERVER_URL}/api/incidents`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(this.activeIncident)
-                }).then(r => r.json()).then(async (response) => {
-                    if (response && response.success) {
-                        await handleActivationSuccess(response.incident);
-                    } else {
-                        await handleNetworkError();
-                    }
-                }).catch(async () => await handleNetworkError());
-            } else {
-                await handleNetworkError();
-            }
-        } else {
-            // It's already active
-            this.activeIncident.has_sent_messages = true;
-            localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-
-            // Send updated details via socket
-            if (this.activeIncident.status !== "requesting_id" && this.socket && this.socket.connected && this.isOnline) {
-                this.socket.emit('citizen-sos-report', this.activeIncident);
-            }
-
-            // POST messages and media
-            await this.postMessagesAndMedia(text, attachmentsToSend);
-            this.chatSendBtn.disabled = false;
+            return;
         }
+
+        // Send text message
+        if (text) {
+            const clientMsgId = 'txt-' + Date.now() + '-' + Math.random().toString(36).substr(2, 7);
+            this.seenMessageIds.add(clientMsgId);
+            this.appendChatMessage("You", text, "outgoing-bubble", Date.now(), this.activeUser?.profile_image, this.activeUser?.gender);
+
+            const fd = new FormData();
+            fd.append('senderId', this.activeUser?.id || '0');
+            fd.append('senderRole', 'Citizen App');
+            fd.append('messageType', 'text');
+            fd.append('messageContent', text);
+            fd.append('clientMessageId', clientMsgId);
+
+            try {
+                await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`, {
+                    method: 'POST',
+                    body: fd
+                });
+            } catch (e) {
+                console.error("Text message send error", e);
+            }
+        }
+
+        // Upload any queued attachments
+        for (const att of attachmentsToSend) {
+            if (att.file) {
+                await this.uploadMediaAttachment(att.file, att.type || 'image');
+            }
+        }
+
+        this.chatSendBtn.disabled = false;
     }
 
     async postMessagesAndMedia(text, attachments) {
         if (!this.activeIncident || !this.activeIncident.id) return;
-
         if (text) {
+            const clientMsgId = 'txt-' + Date.now() + '-' + Math.random().toString(36).substr(2, 7);
+            this.seenMessageIds.add(clientMsgId);
             const fd = new FormData();
-            fd.append('senderId', this.activeUser.id);
+            fd.append('senderId', this.activeUser?.id || '0');
             fd.append('senderRole', 'Citizen App');
             fd.append('messageType', 'text');
             fd.append('messageContent', text);
+            fd.append('clientMessageId', clientMsgId);
             try {
                 await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`, {
                     method: 'POST',
@@ -3337,24 +3613,9 @@ Stay calm and provide clear updates.`;
                 });
             } catch (e) { console.error("Message send error", e); }
         }
-
         for (const att of attachments) {
             if (!att.file) continue;
-            const fd = new FormData();
-            fd.append('senderId', this.activeUser.id);
-            fd.append('senderRole', 'Citizen App');
-            fd.append('messageType', att.type);
-            fd.append('media', att.file);
-            try {
-                const response = await fetch(`${SERVER_URL}/api/incidents/${this.activeIncident.id}/messages`, {
-                    method: 'POST',
-                    body: fd
-                });
-                const data = await response.json();
-                if (data.success && data.message && data.message.media_url) {
-                     this.appendMediaMessageBubble({ type: att.type, data: `${SERVER_URL}${data.message.media_url}` }, "You", "outgoing-bubble", data.message.timestamp, this.activeUser?.profile_image, this.activeUser?.gender);
-                }
-            } catch (e) { console.error("Media upload error", e); }
+            await this.uploadMediaAttachment(att.file, att.type || 'image');
         }
     }
 
@@ -3450,15 +3711,16 @@ Stay calm and provide clear updates.`;
         const timeStr = new Intl.DateTimeFormat('en-US', optionsTime).format(d);
         const formattedTimestamp = `${dateStr} • ${timeStr}`;
 
-        const mediaTag = att.type === "image"
-            ? `<img src="${att.data}" style="max-width:280px; max-height:250px; border-radius:8px; display:block;">`
-            : `<video src="${att.data}" controls style="max-width:280px; max-height:250px; border-radius:8px; display:block;"></video>`;
+        const isVideo = att.type === "video";
+        const mediaTag = isVideo
+            ? `<video src="${att.data}" controls playsinline preload="metadata" style="max-width:280px; max-height:250px; border-radius:8px; display:block; background:#000;"></video>`
+            : `<img src="${att.data}" style="max-width:280px; max-height:250px; border-radius:8px; display:block;">`;
 
-        if (sender === "System" || sender === "Command Center" || sender === "Command Center (Auto)" || sender === "Admin" || sender === "Administrator" || sender === "Admin User") {
-            sender = "ALERTOPOZ";
-        }
+        const isBarangay = String(sender).startsWith('Barangay');
+        const isOfficial = isBarangay || (sender === "System" || sender === "Command Center" || sender === "Command Center (Auto)" || sender === "Admin" || sender === "Administrator" || sender === "Admin User" || sender === "ALERTOPOZ");
+        const displayTitle = isBarangay ? sender : "alertopoz";
 
-        if (sender === "ALERTOPOZ") {
+        if (isOfficial && bubbleClass !== 'outgoing-bubble') {
             // Apply special ALERTOPOZ UI layout
             wrap.innerHTML = `
                 <div style="display: flex; gap: 10px; align-items: flex-start; max-width: 90%;">
@@ -3467,7 +3729,7 @@ Stay calm and provide clear updates.`;
                         <span style="font-size: 9px; font-weight: 900; position: absolute; margin-top: -3px; color: white; background: #e11d48; padding: 0 4px; border-radius: 4px;">SOS</span>
                     </div>
                     <div style="display: flex; flex-direction: column;">
-                        <span style="font-weight: 800; font-size: 15px; margin-bottom: 0px; color: #000; letter-spacing: -0.5px;">alertopoz</span>
+                        <span style="font-weight: 800; font-size: 14px; margin-bottom: 2px; color: #000; letter-spacing: -0.3px;">${displayTitle}</span>
                         <div class="bubble-content no-padding" style="border-radius: 0 16px 16px 16px; word-break: break-word; min-width: 250px; max-width: 100%;">
                             ${mediaTag}
                             <div class="chat-timestamp" style="font-size: 10px; color: #64748b; text-align: left; margin-top: 5px;">
@@ -3513,11 +3775,6 @@ Stay calm and provide clear updates.`;
         const wrap = document.createElement("div");
         wrap.className = `chat-message-bubble ${bubbleClass} animate-bubble`;
 
-        // Enforce ALERTOPOZ naming rules
-        if (sender === "System" || sender === "Command Center" || sender === "Command Center (Auto)" || sender === "Admin" || sender === "Administrator" || sender === "Admin User") {
-            sender = "ALERTOPOZ";
-        }
-
         // Format timestamp in Asia/Manila
         const optionsDate = { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: '2-digit' };
         const optionsTime = { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true };
@@ -3526,7 +3783,11 @@ Stay calm and provide clear updates.`;
         const timeStr = new Intl.DateTimeFormat('en-US', optionsTime).format(d);
         const formattedTimestamp = `${dateStr} • ${timeStr}`;
 
-        if (sender === "ALERTOPOZ") {
+        const isBarangay = String(sender).startsWith('Barangay');
+        const isOfficial = isBarangay || (sender === "System" || sender === "Command Center" || sender === "Command Center (Auto)" || sender === "Admin" || sender === "Administrator" || sender === "Admin User" || sender === "ALERTOPOZ");
+        const displayTitle = isBarangay ? sender : "alertopoz";
+
+        if (isOfficial && bubbleClass !== 'outgoing-bubble') {
             // Apply special ALERTOPOZ UI layout
             wrap.innerHTML = `
                 <div style="display: flex; gap: 10px; align-items: flex-start; max-width: 90%;">
@@ -3535,7 +3796,7 @@ Stay calm and provide clear updates.`;
                         <span style="font-size: 9px; font-weight: 900; position: absolute; margin-top: -3px; color: white; background: #e11d48; padding: 0 4px; border-radius: 4px;">SOS</span>
                     </div>
                     <div style="display: flex; flex-direction: column;">
-                        <span style="font-weight: 800; font-size: 15px; margin-bottom: 0px; color: #000; letter-spacing: -0.5px;">alertopoz</span>
+                        <span style="font-weight: 800; font-size: 14px; margin-bottom: 2px; color: #000; letter-spacing: -0.3px;">${displayTitle}</span>
                         <div class="bubble-content" style="background-color: #a4b9c9; color: #1e293b; border-radius: 0 16px 16px 16px; padding: 12px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); word-break: break-word; min-width: 250px; max-width: 100%;">
                             <p style="margin: 0;">${text}</p>
                             <div class="chat-timestamp" style="font-size: 10px; color: #64748b; text-align: left; margin-top: 5px;">
@@ -4555,6 +4816,9 @@ Stay calm and provide clear updates.`;
     async restoreChatHistory() {
         if (!this.activeIncident) return;
         
+        // Reset seen server message IDs
+        this.seenMessageIds = new Set();
+
         // Recover selectedCategory from active incident if not set
         if (!this.selectedCategory && this.activeIncident.category && this.activeIncident.category !== 'draft') {
             this.selectedCategory = this.activeIncident.category;
@@ -4605,16 +4869,37 @@ Stay calm and provide clear updates.`;
                         }
 
                         data.messages.forEach(msg => {
+                            if (msg.id) this.seenMessageIds.add(String(msg.id));
+                            if (msg.client_message_id) this.seenMessageIds.add(String(msg.client_message_id));
+
                             const isMe = this.activeUser && (String(msg.sender_id) === String(this.activeUser.id) || String(msg.sender_id) === String(this.activeIncident?.reporterId));
-                            const senderName = msg.sender_role === 'Citizen App' ? (isMe ? 'You' : 'Citizen') : 'Command Center';
-                            const bubbleClass = (isMe || msg.sender_role === 'Citizen App') ? 'outgoing-bubble' : 'incoming-bubble';
+                            let senderName = 'Citizen';
+                            let bubbleClass = 'incoming-bubble';
+
+                            if (isMe) {
+                                senderName = 'You';
+                                bubbleClass = 'outgoing-bubble';
+                            } else if (msg.sender_role === 'Command Center' || msg.sender_role === 'ADMIN' || msg.sender_id === 'ADMIN') {
+                                senderName = 'Command Center';
+                                bubbleClass = 'incoming-bubble';
+                            } else if (msg.sender_role && String(msg.sender_role).startsWith('Barangay')) {
+                                senderName = msg.sender_role;
+                                bubbleClass = 'incoming-bubble';
+                            } else if (msg.sender_role === 'Citizen App') {
+                                senderName = 'Citizen';
+                                bubbleClass = 'incoming-bubble';
+                            } else {
+                                senderName = msg.sender_role || 'Command Center';
+                                bubbleClass = 'incoming-bubble';
+                            }
                             
                             if (msg.message_type === 'text' && msg.message_content) {
                                 this.appendChatMessage(senderName, msg.message_content, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
                             } else if ((msg.message_type === 'image' || msg.message_type === 'video') && msg.media_url) {
+                                const mediaSrc = msg.media_url.startsWith('http') ? msg.media_url : `${SERVER_URL}${msg.media_url}`;
                                 const attObj = {
                                     type: msg.message_type,
-                                    data: `${SERVER_URL}${msg.media_url}`
+                                    data: mediaSrc
                                 };
                                 this.appendMediaMessageBubble(attObj, senderName, bubbleClass, msg.timestamp, msg.sender_profile_image, msg.sender_gender);
                             }

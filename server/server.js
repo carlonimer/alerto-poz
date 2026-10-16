@@ -2271,12 +2271,20 @@ app.post('/api/incidents', async (req, res) => {
         // This is an update (or new insert) to an existing incident
         await addIncident(report);
         
-        // Delete the old draft record if one existed
+        // Migrate messages and delete old draft record if one existed
         if (oldDraftId) {
-            if (useMySQL) {
+            if (useMySQL && pool) {
+                await pool.query("UPDATE messages SET incident_id = ? WHERE incident_id = ?", [report.id, oldDraftId]);
                 await pool.query("DELETE FROM incidents WHERE id = ?", [oldDraftId]);
             } else {
                 const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                if (db.messages) {
+                    db.messages.forEach(m => {
+                        if (String(m.incident_id) === String(oldDraftId)) {
+                            m.incident_id = report.id;
+                        }
+                    });
+                }
                 db.incidents = db.incidents.filter(i => i.id !== oldDraftId);
                 fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
             }
@@ -2300,22 +2308,65 @@ app.post('/api/incidents', async (req, res) => {
         // Persist Selected Emergency message in messages table so all devices see it
         if (report.category && report.category.toLowerCase() !== 'draft') {
             const catUpper = report.category.toUpperCase();
-            if (useMySQL) {
+            const rawCreated = report.createdAt;
+            const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+            let repProfile = null;
+            let repGender = null;
+
+            if (useMySQL && pool) {
                 try {
                     const [existingCat] = await pool.query(
                         "SELECT id FROM messages WHERE incident_id = ? AND (message_content LIKE 'Selected Emergency:%' OR message_content LIKE 'Selected Category:%')",
                         [report.id]
                     );
                     if (existingCat.length === 0) {
-                        const rawCreated = report.createdAt;
-                        const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
-                        await pool.query(
+                        if (report.reporterId) {
+                            const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [report.reporterId]);
+                            if (userRows && userRows.length > 0) {
+                                repProfile = userRows[0].profile_image;
+                                repGender = userRows[0].gender;
+                            }
+                        }
+                        const [insResult] = await pool.query(
                             "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, 'Citizen App', 'text', ?, NULL, ?)",
                             [report.id, report.reporterId ? String(report.reporterId) : '0', `Selected Emergency: ${catUpper}`, incTs]
                         );
+                        io.emit('chat-message-receive', {
+                            id: insResult.insertId,
+                            incident_id: report.id,
+                            sender_id: report.reporterId ? String(report.reporterId) : '0',
+                            sender_role: 'Citizen App',
+                            message_type: 'text',
+                            message_content: `Selected Emergency: ${catUpper}`,
+                            media_url: null,
+                            timestamp: incTs,
+                            sender_profile_image: repProfile,
+                            sender_gender: repGender
+                        });
                     }
                 } catch (msgErr) {
                     console.error("Failed to insert Selected Emergency message:", msgErr);
+                }
+            } else {
+                const dbState = await getDBState();
+                dbState.messages = dbState.messages || [];
+                const hasCat = dbState.messages.some(m => String(m.incident_id) === String(report.id) && (m.message_content || '').toUpperCase().includes(`SELECTED EMERGENCY: ${catUpper}`));
+                if (!hasCat) {
+                    const catMsg = {
+                        id: `cat-${report.id}-${Date.now()}`,
+                        incident_id: report.id,
+                        sender_id: report.reporterId ? String(report.reporterId) : '0',
+                        sender_role: 'Citizen App',
+                        message_type: 'text',
+                        message_content: `Selected Emergency: ${catUpper}`,
+                        media_url: null,
+                        timestamp: incTs,
+                        sender_profile_image: null,
+                        sender_gender: null
+                    };
+                    dbState.messages.push(catMsg);
+                    await saveDBState(dbState);
+                    io.emit('chat-message-receive', catMsg);
                 }
             }
         }
@@ -2367,53 +2418,64 @@ app.post('/api/hardware/trigger', async (req, res) => {
     }
 });
 
-// --- NEW MESSAGE ENDPOINTS ---
+// --- MESSAGE ENDPOINTS (HYBRID MYSQL & FALLBACK) ---
 app.get('/api/incidents/:id/messages', async (req, res) => {
     try {
-        if (!useMySQL) return res.status(501).json({ error: "Only supported on MySQL" });
-        const [rows] = await pool.query(`
-            SELECT m.*, u.profile_image as sender_profile_image, u.gender as sender_gender
-            FROM messages m
-            LEFT JOIN users u ON BINARY m.sender_id = BINARY CAST(u.id AS CHAR)
-            WHERE m.incident_id = ?
-            ORDER BY m.timestamp ASC
-        `, [req.params.id]);
+        const incidentId = req.params.id;
+        let rows = [];
 
-        // Ensure the initial Selected Emergency category is present in messages so all devices see it
-        const [incRows] = await pool.query("SELECT id, category, reporterId, createdAt FROM incidents WHERE id = ?", [req.params.id]);
-        if (incRows.length > 0 && incRows[0].category && incRows[0].category !== 'draft') {
-            const catUpper = incRows[0].category.toUpperCase();
-            const hasCatMsg = rows.some(m => {
-                const c = (m.message_content || '').toUpperCase();
-                return c.includes(`SELECTED EMERGENCY: ${catUpper}`) || c.includes(`SELECTED CATEGORY: ${catUpper}`);
-            });
-            if (!hasCatMsg) {
-                let repProfile = null;
-                let repGender = null;
-                if (incRows[0].reporterId) {
-                    const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [incRows[0].reporterId]);
-                    if (userRows && userRows.length > 0) {
-                        repProfile = userRows[0].profile_image;
-                        repGender = userRows[0].gender;
+        if (useMySQL && pool) {
+            const [dbRows] = await pool.query(`
+                SELECT m.*, u.profile_image as sender_profile_image, u.gender as sender_gender
+                FROM messages m
+                LEFT JOIN users u ON BINARY m.sender_id = BINARY CAST(u.id AS CHAR)
+                WHERE m.incident_id = ?
+                ORDER BY m.timestamp ASC
+            `, [incidentId]);
+            rows = dbRows || [];
+
+            // Ensure the initial Selected Emergency category is present in messages so all devices see it
+            const [incRows] = await pool.query("SELECT id, category, reporterId, createdAt FROM incidents WHERE id = ?", [incidentId]);
+            if (incRows.length > 0 && incRows[0].category && incRows[0].category !== 'draft') {
+                const catUpper = incRows[0].category.toUpperCase();
+                const hasCatMsg = rows.some(m => {
+                    const c = (m.message_content || '').toUpperCase();
+                    return c.includes(`SELECTED EMERGENCY: ${catUpper}`) || c.includes(`SELECTED CATEGORY: ${catUpper}`);
+                });
+                if (!hasCatMsg) {
+                    let repProfile = null;
+                    let repGender = null;
+                    if (incRows[0].reporterId) {
+                        const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [incRows[0].reporterId]);
+                        if (userRows && userRows.length > 0) {
+                            repProfile = userRows[0].profile_image;
+                            repGender = userRows[0].gender;
+                        }
                     }
+                    const rawCreated = incRows[0].createdAt;
+                    const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                    const catMsg = {
+                        id: `cat-${incRows[0].id}`,
+                        incident_id: incRows[0].id,
+                        sender_id: incRows[0].reporterId ? String(incRows[0].reporterId) : '0',
+                        sender_role: 'Citizen App',
+                        message_type: 'text',
+                        message_content: `Selected Emergency: ${catUpper}`,
+                        media_url: null,
+                        timestamp: incTs,
+                        sender_profile_image: repProfile,
+                        sender_gender: repGender
+                    };
+                    rows.unshift(catMsg);
+                    rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
                 }
-                const rawCreated = incRows[0].createdAt;
-                const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
-                const catMsg = {
-                    id: `cat-${incRows[0].id}`,
-                    incident_id: incRows[0].id,
-                    sender_id: incRows[0].reporterId ? String(incRows[0].reporterId) : '0',
-                    sender_role: 'Citizen App',
-                    message_type: 'text',
-                    message_content: `Selected Emergency: ${catUpper}`,
-                    media_url: null,
-                    timestamp: incTs,
-                    sender_profile_image: repProfile,
-                    sender_gender: repGender
-                };
-                rows.unshift(catMsg);
-                rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
             }
+        } else {
+            // Local JSON DB fallback
+            const dbState = await getDBState();
+            const allMsgs = dbState.messages || [];
+            rows = allMsgs.filter(m => String(m.incident_id) === String(incidentId));
+            rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
         }
 
         res.json({ success: true, messages: rows });
@@ -2433,8 +2495,7 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
     });
 }, async (req, res) => {
     try {
-        if (!useMySQL) return res.status(501).json({ error: "Only supported on MySQL" });
-        const { senderId, senderRole, messageType, messageContent } = req.body;
+        const { senderId, senderRole, messageType, messageContent, clientMessageId } = req.body;
         const incidentId = req.params.id;
         
         let mediaUrl = null;
@@ -2452,39 +2513,64 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
         }
         
         const timestamp = Date.now();
-        
-        const [result] = await pool.query(
-            "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [incidentId, senderId, senderRole, messageType || 'text', finalContent || null, mediaUrl, timestamp]
-        );
-        
+        let messageId = null;
         let userProfile = null;
         let userGender = null;
-        if (senderRole !== 'Command Center' && senderId !== 'ADMIN') {
-            const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [senderId]);
-            if (userRows && userRows.length > 0) {
-                userProfile = userRows[0].profile_image;
-                userGender = userRows[0].gender;
+
+        if (useMySQL && pool) {
+            const [result] = await pool.query(
+                "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [incidentId, senderId || '0', senderRole || 'Citizen App', messageType || 'text', finalContent || null, mediaUrl, timestamp]
+            );
+            messageId = result.insertId;
+
+            if (senderRole !== 'Command Center' && !String(senderRole).startsWith('Barangay') && senderId !== 'ADMIN') {
+                const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [senderId]);
+                if (userRows && userRows.length > 0) {
+                    userProfile = userRows[0].profile_image;
+                    userGender = userRows[0].gender;
+                }
             }
+
+            // Update has_sent_messages flag if this is the first message
+            await pool.query("UPDATE incidents SET has_sent_messages = 1 WHERE id = ?", [incidentId]);
+        } else {
+            // Local JSON DB fallback
+            messageId = Date.now();
+            const dbState = await getDBState();
+            dbState.messages = dbState.messages || [];
+            const msgObj = {
+                id: messageId,
+                incident_id: incidentId,
+                sender_id: senderId || '0',
+                sender_role: senderRole || 'Citizen App',
+                message_type: messageType || 'text',
+                message_content: finalContent || null,
+                media_url: mediaUrl,
+                timestamp: timestamp
+            };
+            dbState.messages.push(msgObj);
+            
+            const inc = dbState.incidents.find(i => String(i.id) === String(incidentId));
+            if (inc) inc.has_sent_messages = true;
+            await saveDBState(dbState);
         }
 
         const newMessage = {
-            id: result.insertId,
+            id: messageId,
             incident_id: incidentId,
             sender_id: senderId,
-            sender_role: senderRole,
+            sender_role: senderRole || 'Citizen App',
             message_type: messageType || 'text',
             message_content: finalContent || null,
             media_url: mediaUrl,
             timestamp: timestamp,
             sender_profile_image: userProfile,
-            sender_gender: userGender
+            sender_gender: userGender,
+            client_message_id: clientMessageId || null
         };
         
-        // Update has_sent_messages flag if this is the first message
-        await pool.query("UPDATE incidents SET has_sent_messages = 1 WHERE id = ?", [incidentId]);
-        
-        // Broadcast the new message via WebSocket
+        // Broadcast the new message via WebSocket to all clients in real time
         io.emit('chat-message-receive', newMessage);
         
         res.json({ success: true, message: newMessage });
@@ -2902,12 +2988,20 @@ io.on('connection', async (socket) => {
             // This is an update (or new insert) to an existing incident
             await addIncident(report);
             
-            // Delete the old draft record if one existed
+            // Migrate messages and delete old draft record if one existed
             if (oldDraftId) {
-                if (useMySQL) {
+                if (useMySQL && pool) {
+                    await pool.query("UPDATE messages SET incident_id = ? WHERE incident_id = ?", [report.id, oldDraftId]);
                     await pool.query("DELETE FROM incidents WHERE id = ?", [oldDraftId]);
                 } else {
                     const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                    if (db.messages) {
+                        db.messages.forEach(m => {
+                            if (String(m.incident_id) === String(oldDraftId)) {
+                                m.incident_id = report.id;
+                            }
+                        });
+                    }
                     db.incidents = db.incidents.filter(i => i.id !== oldDraftId);
                     fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
                 }
@@ -2931,22 +3025,65 @@ io.on('connection', async (socket) => {
             // Persist Selected Emergency message in messages table so all devices see it
             if (report.category && report.category.toLowerCase() !== 'draft') {
                 const catUpper = report.category.toUpperCase();
-                if (useMySQL) {
+                const rawCreated = report.createdAt;
+                const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                let repProfile = null;
+                let repGender = null;
+
+                if (useMySQL && pool) {
                     try {
                         const [existingCat] = await pool.query(
                             "SELECT id FROM messages WHERE incident_id = ? AND (message_content LIKE 'Selected Emergency:%' OR message_content LIKE 'Selected Category:%')",
                             [report.id]
                         );
                         if (existingCat.length === 0) {
-                            const rawCreated = report.createdAt;
-                            const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
-                            await pool.query(
+                            if (report.reporterId) {
+                                const [userRows] = await pool.query("SELECT profile_image, gender FROM users WHERE id = ?", [report.reporterId]);
+                                if (userRows && userRows.length > 0) {
+                                    repProfile = userRows[0].profile_image;
+                                    repGender = userRows[0].gender;
+                                }
+                            }
+                            const [insResult] = await pool.query(
                                 "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, 'Citizen App', 'text', ?, NULL, ?)",
                                 [report.id, report.reporterId ? String(report.reporterId) : '0', `Selected Emergency: ${catUpper}`, incTs]
                             );
+                            io.emit('chat-message-receive', {
+                                id: insResult.insertId,
+                                incident_id: report.id,
+                                sender_id: report.reporterId ? String(report.reporterId) : '0',
+                                sender_role: 'Citizen App',
+                                message_type: 'text',
+                                message_content: `Selected Emergency: ${catUpper}`,
+                                media_url: null,
+                                timestamp: incTs,
+                                sender_profile_image: repProfile,
+                                sender_gender: repGender
+                            });
                         }
                     } catch (msgErr) {
                         console.error("Failed to insert Selected Emergency message via socket:", msgErr);
+                    }
+                } else {
+                    const dbState = await getDBState();
+                    dbState.messages = dbState.messages || [];
+                    const hasCat = dbState.messages.some(m => String(m.incident_id) === String(report.id) && (m.message_content || '').toUpperCase().includes(`SELECTED EMERGENCY: ${catUpper}`));
+                    if (!hasCat) {
+                        const catMsg = {
+                            id: `cat-${report.id}-${Date.now()}`,
+                            incident_id: report.id,
+                            sender_id: report.reporterId ? String(report.reporterId) : '0',
+                            sender_role: 'Citizen App',
+                            message_type: 'text',
+                            message_content: `Selected Emergency: ${catUpper}`,
+                            media_url: null,
+                            timestamp: incTs,
+                            sender_profile_image: null,
+                            sender_gender: null
+                        };
+                        dbState.messages.push(catMsg);
+                        await saveDBState(dbState);
+                        io.emit('chat-message-receive', catMsg);
                     }
                 }
             }
@@ -2961,24 +3098,61 @@ io.on('connection', async (socket) => {
             }
         }
     });
-    // Admin chat message
+
+    // Admin / Dispatcher chat message
     socket.on('dispatcher-chat-message', async (data) => {
         try {
-            const { incidentId, message, media } = data;
-            const dbState = await getDBState();
-            let incident = dbState.incidents.find(i => i.id === incidentId);
-            if (incident) {
-                if (message) {
-                    incident.details += ` | Dispatcher: ${message}`;
-                }
-                if (media) {
-                    incident.media = incident.media || [];
-                    incident.media.push(media);
-                    incident.details += ` | Dispatcher attached a file.`;
-                }
-                await addIncident(incident);
-                io.emit('incident-updated', incident);
+            const { incidentId, message, media, senderId, senderRole } = data;
+            const finalSenderId = senderId || 'ADMIN';
+            const finalSenderRole = senderRole || 'Command Center';
+            const timestamp = Date.now();
+            let mediaUrl = null;
+            let msgType = 'text';
+
+            if (media) {
+                mediaUrl = typeof media === 'string' ? media : (media.url || null);
+                msgType = mediaUrl && mediaUrl.match(/\.(mp4|webm|mov|3gp|mkv)$/i) ? 'video' : 'image';
             }
+
+            let insertedId = `disp-${timestamp}`;
+            if (useMySQL && pool) {
+                const [result] = await pool.query(
+                    "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [incidentId, finalSenderId, finalSenderRole, msgType, message || (mediaUrl ? `${msgType === 'video' ? 'Video' : 'Image'} Attachment` : null), mediaUrl, timestamp]
+                );
+                insertedId = result.insertId;
+                await pool.query("UPDATE incidents SET has_sent_messages = 1 WHERE id = ?", [incidentId]);
+            } else {
+                const dbState = await getDBState();
+                dbState.messages = dbState.messages || [];
+                dbState.messages.push({
+                    id: insertedId,
+                    incident_id: incidentId,
+                    sender_id: finalSenderId,
+                    sender_role: finalSenderRole,
+                    message_type: msgType,
+                    message_content: message || null,
+                    media_url: mediaUrl,
+                    timestamp: timestamp
+                });
+                const inc = dbState.incidents.find(i => String(i.id) === String(incidentId));
+                if (inc) inc.has_sent_messages = true;
+                await saveDBState(dbState);
+            }
+
+            const newMsg = {
+                id: insertedId,
+                incident_id: incidentId,
+                sender_id: finalSenderId,
+                sender_role: finalSenderRole,
+                message_type: msgType,
+                message_content: message || null,
+                media_url: mediaUrl,
+                timestamp: timestamp,
+                sender_profile_image: null,
+                sender_gender: null
+            };
+            io.emit('chat-message-receive', newMsg);
         } catch (e) {
             console.error("Dispatcher chat error:", e);
         }

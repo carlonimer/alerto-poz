@@ -234,8 +234,10 @@ class CommandDashboard {
             
             const type = file.type.startsWith("image/") ? "image" : "video";
             const fd = new FormData();
-            fd.append('senderId', this.activeUser ? this.activeUser.id : 'ADMIN');
-            fd.append('senderRole', 'Command Center');
+            const senderId = this.user ? (this.user.username || this.user.id || 'ADMIN') : 'ADMIN';
+            const senderRole = this.user && this.user.type === 'barangay_admin' ? `Barangay ${this.user.barangay || 'Official'}` : 'Command Center';
+            fd.append('senderId', senderId);
+            fd.append('senderRole', senderRole);
             fd.append('messageType', type);
             fd.append('media', file);
             
@@ -404,20 +406,23 @@ class CommandDashboard {
 
         this.socket.on('chat-message-receive', (msg) => {
             if (this.selectedIncident && String(this.selectedIncident.id) === String(msg.incident_id)) {
+                if (this.seenMessageIds && this.seenMessageIds.has(String(msg.id))) return;
+                if (this.seenMessageIds) this.seenMessageIds.add(String(msg.id));
+
                 const feed = document.getElementById("dispatcher-chat-feed");
                 if (feed) {
                     const firstName = this.selectedIncident.reporter ? this.selectedIncident.reporter.split(' ')[0] : 'Citizen';
-                    const isAdmin = msg.sender_role !== 'Citizen App';
-                    const senderName = isAdmin ? 'ALERTOPOZ' : firstName;
-                    const bubbleClass = isAdmin ? 'chat-outgoing' : 'chat-incoming';
+                    const isCitizen = msg.sender_role === 'Citizen App';
+                    const senderName = isCitizen ? firstName : (msg.sender_role || 'Command Center');
+                    const bubbleClass = isCitizen ? 'chat-incoming' : 'chat-outgoing';
                     
-                    const avatarHtml = isAdmin ? '' : this.getAvatarHtml(msg.sender_profile_image, msg.sender_gender);
+                    const avatarHtml = !isCitizen ? '' : this.getAvatarHtml(msg.sender_profile_image, msg.sender_gender);
 
                     let tsHtml = '';
                     if (msg.timestamp) {
                         const d = new Date(Number(msg.timestamp));
                         if (!isNaN(d)) {
-                            tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${isAdmin ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
+                            tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${!isCitizen ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
                         }
                     }
 
@@ -431,7 +436,7 @@ class CommandDashboard {
                     } else if (msg.message_type === 'video' && msg.media_url) {
                         const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
                         const mt = '0';
-                        msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block;" controls autoplay muted loop></video>${tsHtml}</div>`;
+                        msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block; background: #000;" controls playsinline preload="metadata"></video>${tsHtml}</div>`;
                     }
 
                     if (msgHtml) {
@@ -1000,6 +1005,7 @@ class CommandDashboard {
         }
         
         let chatMessages = [];
+        this.seenMessageIds = new Set();
         
         // Fetch new messages from API
         if (inc.id && !inc.id.startsWith("DRAFT-")) {
@@ -1010,17 +1016,18 @@ class CommandDashboard {
                     if (data.success && data.messages && data.messages.length > 0) {
                         chatMessages = data.messages;
                         data.messages.forEach(msg => {
-                            const isAdmin = msg.sender_role !== 'Citizen App';
-                            const senderName = isAdmin ? 'ALERTOPOZ' : firstName;
-                            const bubbleClass = isAdmin ? 'chat-outgoing' : 'chat-incoming';
+                            if (msg.id) this.seenMessageIds.add(String(msg.id));
+                            const isCitizen = msg.sender_role === 'Citizen App';
+                            const senderName = isCitizen ? firstName : (msg.sender_role || 'Command Center');
+                            const bubbleClass = isCitizen ? 'chat-incoming' : 'chat-outgoing';
                             
-                            const avatarHtml = isAdmin ? '' : this.getAvatarHtml(msg.sender_profile_image || inc.profile_image, msg.sender_gender || inc.gender, 32);
+                            const avatarHtml = !isCitizen ? '' : this.getAvatarHtml(msg.sender_profile_image || inc.profile_image, msg.sender_gender || inc.gender, 32);
 
                             let tsHtml = '';
                             if (msg.timestamp) {
                                 const d = new Date(Number(msg.timestamp));
                                 if (!isNaN(d)) {
-                                    tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${isAdmin ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
+                                    tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${!isCitizen ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
                                 }
                             }
 
@@ -1034,7 +1041,7 @@ class CommandDashboard {
                             } else if (msg.message_type === 'video' && msg.media_url) {
                                 const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
                                 const mt = '0';
-                                msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block;" controls autoplay muted loop></video>${tsHtml}</div>`;
+                                msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block; background: #000;" controls playsinline preload="metadata"></video>${tsHtml}</div>`;
                             }
 
                             if (msgHtml) {
@@ -1112,8 +1119,10 @@ class CommandDashboard {
         input.value = "";
         
         const fd = new FormData();
-        fd.append('senderId', this.activeUser ? this.activeUser.id : 'ADMIN');
-        fd.append('senderRole', 'Command Center');
+        const senderId = this.user ? (this.user.username || this.user.id || 'ADMIN') : 'ADMIN';
+        const senderRole = this.user && this.user.type === 'barangay_admin' ? `Barangay ${this.user.barangay || 'Official'}` : 'Command Center';
+        fd.append('senderId', senderId);
+        fd.append('senderRole', senderRole);
         fd.append('messageType', 'text');
         fd.append('messageContent', msg);
         

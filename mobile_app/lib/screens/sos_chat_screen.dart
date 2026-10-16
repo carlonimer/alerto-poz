@@ -261,14 +261,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   void _onChatMessage(dynamic data) {
     if (data is! Map || data['incident_id']?.toString() != _incidentId || !mounted) return;
     
-    // Ignore if it's our own message because we already appended it optimistically
-    if (data['sender_id']?.toString() == widget.user?.id.toString()) return;
-
     // Dedupe: never render the same server message twice
     final msgId = data['id']?.toString();
     if (msgId != null && msgId.isNotEmpty && _seenMessageIds.contains(msgId)) return;
     if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
 
+    final isUser = data['sender_role'] == 'Citizen App' || data['sender_id']?.toString() == widget.user?.id.toString();
     final msgType = data['message_type']?.toString();
     final isVideo = msgType == 'video';
     final isImage = msgType == 'image' || data['is_media'] == true;
@@ -277,7 +275,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     setState(() {
       _chatFeed.add({
         'id': msgId,
-        'role': 'bot',
+        'role': isUser ? 'user' : 'bot',
         'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
         'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
         'videoPath': isVideo ? (data['media_url'] ?? data['message_content'] ?? data['message']) : null,
