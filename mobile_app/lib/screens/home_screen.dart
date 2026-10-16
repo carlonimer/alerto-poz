@@ -95,25 +95,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _checkActiveIncident() async {
+    // Note: Never auto-navigate or auto-restore an active incident on startup or data load.
+    // Active emergency reports must only be continued when the user explicitly taps CONTINUE in the warning dialog.
     if (_user == null) return;
     try {
-      final res = await ApiService.checkActiveIncident(_user!.id.toString());
-      if (res['success'] == true && res['active'] == true && mounted) {
-        final inc = res['incident'];
-        if (inc != null && inc['status'] != 'draft' && inc['status'] != 'cancelled') {
-          // Navigate to SOSChatScreen automatically for active requested incident
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SosChatScreen(
-                user: _user,
-                activeIncident: inc,
-              ),
-            ),
-          );
-        }
-      }
-    } catch(e) {}
+      await ApiService.checkActiveIncident(_user!.id.toString());
+    } catch (_) {}
   }
 
   void _initSocket() {
@@ -850,9 +837,11 @@ class _HomeScreenState extends State<HomeScreen>
           child: Tooltip(
           message: 'Trigger Emergency SOS',
           child: GestureDetector(
-            onTap: () => _ensureAuthenticated(() {
-              _triggerSos();
-            }),
+            onTap: (_isTriggeringSos || _isConflictDialogOpen)
+                ? null
+                : () => _ensureAuthenticated(() {
+                    _triggerSos();
+                  }),
             child: AnimatedBuilder(
               animation: _pulseAnimation,
               builder: (context, child) {
@@ -1271,12 +1260,26 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   bool _isTriggeringSos = false;
+  bool _isConflictDialogOpen = false;
+  DateTime? _lastSosTapTime;
 
   void _triggerSos() async {
-    if (_isTriggeringSos) return;
+    final now = DateTime.now();
+    // 1. Debounce guard to prevent rapid repeated tap cascades
+    if (_lastSosTapTime != null && now.difference(_lastSosTapTime!).inMilliseconds < 1200) {
+      debugPrint('[SOS] Ignored tap: debouncing (< 1200ms)');
+      return;
+    }
+    _lastSosTapTime = now;
+
+    // 2. Lockout guard: ignore if already processing an SOS check or conflict dialog is open
+    if (_isTriggeringSos || _isConflictDialogOpen) {
+      debugPrint('[SOS] Ignored tap: SOS already processing or conflict dialog active');
+      return;
+    }
     setState(() => _isTriggeringSos = true);
 
-    // Check if there is already an active incident for this user
+    // 3. Check if there is already an active incident for this user
     if (_user != null) {
       try {
         final res = await ApiService.checkActiveIncident(_user!.id.toString());
@@ -1284,11 +1287,17 @@ class _HomeScreenState extends State<HomeScreen>
           _isTriggeringSos = false;
           return;
         }
-        if (res['success'] == true && (res['hasActive'] == true || res['active'] == true)) {
-          if (mounted) setState(() => _isTriggeringSos = false);
-          // Requirement: Show modal with CONTINUE, START NEW, CANCEL
-          _showConflictDialog(res['incident'] as Map<String, dynamic>?);
+
+        final hasActive = res['success'] == true && (res['hasActive'] == true || res['active'] == true);
+        final incident = res['incident'] as Map<String, dynamic>?;
+
+        if (hasActive && incident != null && incident['status'] != 'draft' && incident['status'] != 'cancelled') {
+          // Scenario B: Active emergency report found -> Show conflict dialog with explicit buttons
+          // Keep _isTriggeringSos locked so additional taps are ignored while dialog is displaying
+          _showConflictDialog(incident);
         } else {
+          // Scenario A: No active report -> Proceed to normal emergency reporting flow
+          setState(() => _isTriggeringSos = false);
           _navigateToChat(null);
         }
       } catch (e) {
@@ -1299,12 +1308,16 @@ class _HomeScreenState extends State<HomeScreen>
         );
       }
     } else {
+      setState(() => _isTriggeringSos = false);
       _navigateToChat(null);
     }
   }
 
   void _showConflictDialog(Map<String, dynamic>? activeIncident) {
+    _isConflictDialogOpen = true;
+    final dialogMountedAt = DateTime.now();
     bool isStartingNew = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1331,6 +1344,7 @@ class _HomeScreenState extends State<HomeScreen>
                       onTap: isStartingNew
                           ? null
                           : () {
+                              _isConflictDialogOpen = false;
                               Navigator.pop(ctx);
                               if (mounted) setState(() => _isTriggeringSos = false);
                             },
@@ -1351,11 +1365,18 @@ class _HomeScreenState extends State<HomeScreen>
                 const SizedBox(height: 25),
                 Row(
                   children: [
+                    // START NEW ACTION
                     Expanded(
                       child: ElevatedButton(
                         onPressed: isStartingNew
                             ? null
                             : () async {
+                                // Touch bleed-through guard: ignore taps within 500ms of dialog appearance
+                                if (DateTime.now().difference(dialogMountedAt).inMilliseconds < 500) {
+                                  debugPrint('[Dialog] Ignored tap bleed-through on START NEW (< 500ms)');
+                                  return;
+                                }
+
                                 setDialogState(() => isStartingNew = true);
                                 try {
                                   final pos = await LocationService.getCurrentPosition();
@@ -1376,6 +1397,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   final res = await ApiService.createDraftIncident(payload);
                                   if (!mounted) return;
                                   if (res['success'] == true && res['incident'] != null) {
+                                    _isConflictDialogOpen = false;
                                     setState(() => _isTriggeringSos = false);
                                     Navigator.pop(ctx);
                                     _loadData();
@@ -1411,11 +1433,20 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ),
                     const SizedBox(width: 10),
+                    // EXPLICIT CONTINUE ACTION
                     Expanded(
                       child: ElevatedButton(
                         onPressed: isStartingNew
                             ? null
                             : () {
+                                // Touch bleed-through guard: ignore taps within 500ms of dialog appearance
+                                if (DateTime.now().difference(dialogMountedAt).inMilliseconds < 500) {
+                                  debugPrint('[Dialog] Ignored tap bleed-through on CONTINUE (< 500ms)');
+                                  return;
+                                }
+
+                                _isConflictDialogOpen = false;
+                                setState(() => _isTriggeringSos = false);
                                 Navigator.pop(ctx);
                                 _navigateToChat(null, activeIncident);
                               },
@@ -1436,6 +1467,7 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     ).then((_) {
+      _isConflictDialogOpen = false;
       if (mounted) setState(() => _isTriggeringSos = false);
     });
   }

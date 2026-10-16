@@ -31,18 +31,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   // Settings Panel state (Opened via top-right gear icon)
   bool _showSettingsPanel = false;
   String _aspectRatio = '4:3'; // '1:1', '4:3', '16:9', 'Full'
-  int _timerOption = 0; // 0 (Off), 3, 5, 10
+  static const int _timerOption = 0;
   int _countdownRemaining = 0;
   Timer? _countdownTimer;
 
   // Viewfinder overlay toggles
-  bool _gridEnabled = true;
-  bool _levelEnabled = true;
-  bool _shakeReminder = false;
-  bool _watermark = false;
-  bool _motionAF = true;
-  bool _hdrEnabled = true;
-  bool _microphoneEnabled = true;
+  static const bool _gridEnabled = false;
+  static const bool _levelEnabled = false;
+  static const bool _microphoneEnabled = true;
 
   // Flashlight state
   FlashMode _flashMode = FlashMode.off;
@@ -558,35 +554,70 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
   }
 
+  double? get _selectedAspectRatio {
+    switch (_aspectRatio) {
+      case '1:1':
+        return 1.0;
+      case '4:3':
+        return 3 / 4;
+      case '16:9':
+        return 9 / 16;
+      case 'Full':
+      default:
+        return null;
+    }
+  }
+
   // ───────────────────────── Viewfinder Layout (Structured Sizing) ─────────────────────────
 
   Widget _buildCameraViewfinder() {
-    return Stack(
-      children: [
-        // Structured Layout: Top Bar -> Expanded Viewfinder -> Bottom Controls Area
-        Column(
-          children: [
-            // Top Control Bar (Clean: Flash on Left, Settings on Right; Circled elements removed)
-            _buildTopControlBar(),
+    final isFull = _aspectRatio == 'Full';
 
-            // Camera Viewfinder Preview Area (Scaled accurately without distortion or covering controls)
-            Expanded(
-              child: ClipRect(
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: _portraitAspectRatio,
-                    child: _buildViewfinderStack(),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1. Live Camera Preview Layer
+        if (isFull)
+          Positioned.fill(
+            child: ClipRect(
+              child: _buildViewfinderStack(),
+            ),
+          )
+        else
+          Column(
+            children: [
+              _buildTopControlBar(isOverlay: false),
+              Expanded(
+                child: ClipRect(
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: _selectedAspectRatio ?? _portraitAspectRatio,
+                      child: _buildViewfinderStack(),
+                    ),
                   ),
                 ),
               ),
-            ),
+              _buildBottomControlsArea(isOverlay: false),
+            ],
+          ),
 
-            // Bottom Controls Area (Zoom pill, PHOTO/VIDEO modes, Centered Shutter, Camera Switch)
-            _buildBottomControlsArea(),
-          ],
-        ),
+        // 2. Translucent floating overlay bars when in Full Screen mode
+        if (isFull) ...[
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildTopControlBar(isOverlay: true),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildBottomControlsArea(isOverlay: true),
+          ),
+        ],
 
-        // Pull-Down Settings Menu (Opened via Settings Gear icon)
+        // 3. Pull-Down Settings Menu (Opened via Settings Gear icon)
         if (_showSettingsPanel)
           Positioned(
             top: 0,
@@ -595,6 +626,34 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             child: _buildSettingsDropdownPanel(),
           ),
       ],
+    );
+  }
+
+  Widget _buildCameraPreviewCover(BoxConstraints constraints) {
+    if (_controller == null || !_controller!.value.isInitialized) {
+      return const SizedBox.shrink();
+    }
+
+    final sensorRatio = _portraitAspectRatio;
+    final containerRatio = constraints.maxWidth / constraints.maxHeight;
+
+    double previewWidth;
+    double previewHeight;
+
+    if (containerRatio > sensorRatio) {
+      previewWidth = constraints.maxWidth;
+      previewHeight = constraints.maxWidth / sensorRatio;
+    } else {
+      previewHeight = constraints.maxHeight;
+      previewWidth = constraints.maxHeight * sensorRatio;
+    }
+
+    return Center(
+      child: SizedBox(
+        width: previewWidth,
+        height: previewHeight,
+        child: CameraPreview(_controller!),
+      ),
     );
   }
 
@@ -645,8 +704,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Native Camera Preview
-              CameraPreview(_controller!),
+              // Native Camera Preview scaled to cover container geometry without stretching
+              _buildCameraPreviewCover(constraints),
 
               // 3x3 Grid Lines Overlay (Matches reference layout)
               if (_gridEnabled)
@@ -734,9 +793,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   // ───────────────────────── Top Control Bar ─────────────────────────
   // Note: All circled elements (< back arrow, rainbow cinema icon, and ( 00 . 00 )) removed!
 
-  Widget _buildTopControlBar() {
+  Widget _buildTopControlBar({bool isOverlay = false}) {
     return Container(
-      color: Colors.black,
+      decoration: BoxDecoration(
+        color: isOverlay ? Colors.transparent : Colors.black,
+        gradient: isOverlay
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.75),
+                  Colors.black.withValues(alpha: 0.35),
+                  Colors.transparent,
+                ],
+              )
+            : null,
+      ),
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 6,
         bottom: 8,
@@ -897,9 +969,22 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   // ───────────────────────── Bottom Controls Area ─────────────────────────
 
-  Widget _buildBottomControlsArea() {
+  Widget _buildBottomControlsArea({bool isOverlay = false}) {
     return Container(
-      color: Colors.black,
+      decoration: BoxDecoration(
+        color: isOverlay ? Colors.transparent : Colors.black,
+        gradient: isOverlay
+            ? LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.85),
+                  Colors.black.withValues(alpha: 0.5),
+                  Colors.transparent,
+                ],
+              )
+            : null,
+      ),
       padding: EdgeInsets.only(
         top: 10,
         bottom: MediaQuery.of(context).padding.bottom + 20,
@@ -1029,7 +1114,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Drawer Header
+          // Drawer Header with Close Button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1037,100 +1122,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 icon: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
                 onPressed: () => setState(() => _showSettingsPanel = false),
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('More settings', style: GoogleFonts.outfit(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 12),
-                ],
-              ),
             ],
           ),
           const SizedBox(height: 12),
 
-          // Aspect Ratio Selector
+          // Aspect Ratio Selector (Kept clean as requested)
           _buildSegmentedSettingRow(
             options: ['1:1', '4:3', '16:9', 'Full'],
             selected: _aspectRatio,
             onSelect: (val) {
               setState(() => _aspectRatio = val);
             },
-          ),
-          const SizedBox(height: 12),
-
-          // Countdown Timer Selector (Only active in Photo mode)
-          if (_currentMode == 1) ...[
-            _buildSegmentedSettingRow(
-              options: ['Off', '3s', '5s', '10s'],
-              selected: _timerOption == 0 ? 'Off' : '${_timerOption}s',
-              onSelect: (val) {
-                setState(() {
-                  if (val == '3s') {
-                    _timerOption = 3;
-                  } else if (val == '5s') {
-                    _timerOption = 5;
-                  } else if (val == '10s') {
-                    _timerOption = 10;
-                  } else {
-                    _timerOption = 0;
-                  }
-                });
-              },
-            ),
-            const SizedBox(height: 14),
-          ],
-
-          // Quick-Toggles Grid (Grid lines, Level, Shake, Watermark, HDR, etc.)
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _buildSettingPillButton(
-                label: 'Grid lines',
-                icon: Icons.grid_3x3_rounded,
-                active: _gridEnabled,
-                onTap: () => setState(() => _gridEnabled = !_gridEnabled),
-              ),
-              _buildSettingPillButton(
-                label: 'Level',
-                icon: Icons.remove_circle_outline_rounded,
-                active: _levelEnabled,
-                onTap: () => setState(() => _levelEnabled = !_levelEnabled),
-              ),
-              _buildSettingPillButton(
-                label: 'Shake reminder',
-                icon: Icons.camera_alt_outlined,
-                active: _shakeReminder,
-                onTap: () => setState(() => _shakeReminder = !_shakeReminder),
-              ),
-              _buildSettingPillButton(
-                label: 'Watermark',
-                icon: Icons.branding_watermark_outlined,
-                active: _watermark,
-                onTap: () => setState(() => _watermark = !_watermark),
-              ),
-              _buildSettingPillButton(
-                label: 'Motion AF',
-                icon: Icons.filter_center_focus_rounded,
-                active: _motionAF,
-                onTap: () => setState(() => _motionAF = !_motionAF),
-              ),
-              if (_currentMode == 1)
-                _buildSettingPillButton(
-                  label: 'HDR',
-                  icon: Icons.hdr_on_rounded,
-                  active: _hdrEnabled,
-                  onTap: () => setState(() => _hdrEnabled = !_hdrEnabled),
-                )
-              else
-                _buildSettingPillButton(
-                  label: 'Microphone',
-                  icon: Icons.mic_rounded,
-                  active: _microphoneEnabled,
-                  onTap: () => setState(() => _microphoneEnabled = !_microphoneEnabled),
-                ),
-            ],
           ),
         ],
       ),
@@ -1169,38 +1171,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
           );
         }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildSettingPillButton({required String label, required IconData icon, required bool active, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: (MediaQuery.of(context).size.width - 52) / 3,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFFFFCC00) : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.outfit(
-                  color: Colors.black,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            Icon(icon, color: Colors.black87, size: 16),
-          ],
-        ),
       ),
     );
   }

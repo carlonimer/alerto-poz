@@ -19,6 +19,7 @@ import '../services/socket_service.dart';
 import '../services/location_service.dart';
 import '../services/barangay_service.dart';
 import '../services/api_service.dart';
+import '../services/video_thumbnail_service.dart';
 import 'call_screen.dart';
 import 'camera_screen.dart';
 
@@ -71,6 +72,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   bool _hasText = false;
   DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
+  final Set<String> _seenMessageIds = {}; // Server message ids already rendered (dedupe)
+  bool _isFetchingHistory = false;
   final List<String> _attachedImages = []; // base64 strings
   final List<Map<String, String>> _pendingMediaUploads = []; // Queued media files: {'path': ..., 'type': 'video'|'image'}
 
@@ -120,12 +123,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       _selectedCategory = (inc['category'] == 'draft' || inc['category'] == null) ? null : inc['category'];
       _ticketCode = inc['ticketCode']?.toString() ?? inc['id']?.toString() ?? _incidentId;
       _assignedUnit = inc['assignedUnit']?.toString();
-      final cStamp = inc['timestamp'] ?? inc['createdAt'];
-      if (cStamp is int) {
-        _createdAt = DateTime.fromMillisecondsSinceEpoch(cStamp);
-      } else {
-        _createdAt = DateTime.tryParse(cStamp?.toString() ?? '')?.toLocal() ?? DateTime.now();
-      }
+      // Incident timestamps may arrive as int ms, numeric strings (MySQL BIGINT) or ISO strings.
+      // Previously numeric strings fell back to DateTime.now(), which pushed the
+      // "prepared/activated" bubbles BELOW the restored history on CONTINUE.
+      final parsedCreated = _parseTs(inc['timestamp'] ?? inc['createdAt'] ?? inc['created_at']);
+      _createdAt = parsedCreated.millisecondsSinceEpoch > 0 ? parsedCreated : DateTime.now();
       final lat = double.tryParse('${inc['lat'] ?? ''}');
       final lng = double.tryParse('${inc['lng'] ?? ''}');
       if (lat != null && lng != null) _incidentPos = LatLng(lat, lng);
@@ -147,6 +149,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'content': '',
           'timestamp': _createdAt.subtract(const Duration(seconds: 1)).toIso8601String(),
         });
+        if (_selectedCategory != null && _selectedCategory!.isNotEmpty) {
+          _chatFeed.add({
+            'role': 'user',
+            'type': 'text',
+            'content': 'Selected Emergency: ${_selectedCategory!.toUpperCase()}',
+            'timestamp': _createdAt.toIso8601String(),
+          });
+        }
         _fetchHistory();
       } else {
         _attachedImages.clear();
@@ -237,27 +247,83 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Socket handlers ─────────────────────────
 
   void _onChatMessage(dynamic data) {
-    if (data is! Map || data['incident_id'] != _incidentId || !mounted) return;
+    if (data is! Map || data['incident_id']?.toString() != _incidentId || !mounted) return;
     
     // Ignore if it's our own message because we already appended it optimistically
     if (data['sender_id']?.toString() == widget.user?.id.toString()) return;
 
+    // Dedupe: never render the same server message twice
+    final msgId = data['id']?.toString();
+    if (msgId != null && msgId.isNotEmpty && _seenMessageIds.contains(msgId)) return;
+    if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+
     final msgType = data['message_type']?.toString();
     final isVideo = msgType == 'video';
     final isImage = msgType == 'image' || data['is_media'] == true;
+    final ts = data['timestamp'] != null ? _parseTs(data['timestamp']) : DateTime.now();
 
     setState(() {
       _chatFeed.add({
-        'role': data['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
+        'id': msgId,
+        'role': 'bot',
         'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
         'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
         'videoPath': isVideo ? (data['media_url'] ?? data['message_content'] ?? data['message']) : null,
-        'timestamp': data['timestamp'] != null 
-            ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(data['timestamp'].toString()) ?? DateTime.now().millisecondsSinceEpoch).toIso8601String() 
-            : DateTime.now().toIso8601String(),
+        'timestamp': ts.toIso8601String(),
       });
+      _sortFeed();
     });
     _scrollToBottom();
+  }
+
+  // ───────────────────────── Ordering helpers ─────────────────────────
+
+  /// Parses any timestamp shape the backend/socket/local code may produce:
+  /// int/num epoch (s or ms), numeric strings (MySQL BIGINT), ISO-8601 or
+  /// MySQL DATETIME strings. Unknown values sort first (epoch 0).
+  static DateTime _parseTs(dynamic v) {
+    if (v == null) return DateTime.fromMillisecondsSinceEpoch(0);
+    if (v is DateTime) return v;
+    if (v is num) {
+      final n = v.toInt();
+      // Treat 10-digit values as seconds
+      return DateTime.fromMillisecondsSinceEpoch(n < 100000000000 ? n * 1000 : n);
+    }
+    final s = v.toString().trim();
+    if (s.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+    final asNum = num.tryParse(s);
+    if (asNum != null) return _parseTs(asNum);
+    return DateTime.tryParse(s)?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  /// Stable ascending sort (oldest first, newest last). Dart's List.sort is not
+  /// stable, so equal timestamps keep their insertion order via index tiebreak.
+  void _sortFeed() {
+    final indexed = _chatFeed.asMap().entries.toList();
+    indexed.sort((a, b) {
+      final c = _parseTs(a.value['timestamp']).compareTo(_parseTs(b.value['timestamp']));
+      return c != 0 ? c : a.key.compareTo(b.key);
+    });
+    final sorted = indexed.map((e) => e.value).toList();
+    _chatFeed
+      ..clear()
+      ..addAll(sorted);
+  }
+
+  /// Aligns an optimistic local message with the server's id/timestamp so it
+  /// sorts consistently with history (avoids device/server clock skew).
+  void _applyServerAck(Map<String, dynamic> entry, dynamic res) {
+    if (res is! Map || res['success'] != true || res['message'] is! Map) return;
+    final m = res['message'] as Map;
+    final id = m['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      _seenMessageIds.add(id);
+      entry['id'] = id;
+    }
+    if (m['timestamp'] != null) {
+      entry['timestamp'] = _parseTs(m['timestamp']).toIso8601String();
+    }
+    if (mounted) setState(_sortFeed);
   }
 
   void _onIncidentCancelled(dynamic data) {
@@ -382,38 +448,68 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Chat logic ─────────────────────────
 
   Future<void> _fetchHistory() async {
-    if (_incidentId == null) return;
+    if (_incidentId == null || _isFetchingHistory) return;
+    _isFetchingHistory = true;
     try {
       final res = await ApiService.fetchMessages(_incidentId!);
       if (res['success'] == true && mounted) {
-        final msgs = res['messages'] as List;
+        final msgs = (res['messages'] as List?) ?? const [];
         setState(() {
           for (var msg in msgs) {
-            String ts = msg['timestamp']?.toString() ?? msg['createdAt']?.toString() ?? DateTime.now().toIso8601String();
-            if (int.tryParse(ts) != null) {
-              ts = DateTime.fromMillisecondsSinceEpoch(int.parse(ts)).toIso8601String();
+            if (msg is! Map) continue;
+            final msgId = msg['id']?.toString();
+            // Dedupe by server id so refresh/restore never duplicates messages
+            if (msgId != null && msgId.isNotEmpty && _seenMessageIds.contains(msgId)) {
+              continue;
             }
+
+            final rawTs = msg['timestamp'] ?? msg['createdAt'] ?? msg['created_at'];
             final mType = msg['message_type']?.toString();
             final isVideo = mType == 'video';
             final isImage = mType == 'image' || msg['isMedia'] == true;
-            _chatFeed.add({
-              'role': msg['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
-              'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
-              'content': msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '',
-              'videoPath': isVideo ? (msg['media_url'] ?? msg['message_content'] ?? msg['content']) : null,
-              'timestamp': ts,
-            });
+            final isUser = msg['sender_id']?.toString() == widget.user?.id.toString();
+            final content = msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '';
+            final parsedTime = _parseTs(rawTs).toIso8601String();
+
+            // Reconcile optimistic message if already in feed
+            final optIdx = _chatFeed.indexWhere((m) =>
+                m['id'] == null &&
+                m['role'] == (isUser ? 'user' : 'bot') &&
+                m['type'] == (isVideo ? 'video' : (isImage ? 'image' : 'text')) &&
+                (m['content'] == content || m['content'] == msg['message_content']));
+
+            if (optIdx != -1) {
+              _chatFeed[optIdx]['id'] = msgId;
+              _chatFeed[optIdx]['timestamp'] = parsedTime;
+              if (isVideo && msg['media_url'] != null) {
+                _chatFeed[optIdx]['videoPath'] = msg['media_url'];
+              }
+              if (msgId != null && msgId.isNotEmpty) {
+                _seenMessageIds.add(msgId);
+              }
+            } else {
+              if (msgId != null && msgId.isNotEmpty) {
+                _seenMessageIds.add(msgId);
+              }
+              _chatFeed.add({
+                'id': msgId,
+                'role': isUser ? 'user' : 'bot',
+                'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
+                'content': content,
+                'videoPath': isVideo ? (msg['media_url'] ?? msg['message_content'] ?? msg['content']) : null,
+                'timestamp': parsedTime,
+              });
+            }
           }
-          
-          _chatFeed.sort((a, b) {
-            final tA = DateTime.tryParse(a['timestamp']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final tB = DateTime.tryParse(b['timestamp']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
-            return tA.compareTo(tB);
-          });
+          _sortFeed();
         });
         _scrollToBottom();
       }
-    } catch (e) {/* best-effort: ignore network errors */}
+    } catch (e) {
+      /* best-effort: ignore network errors */
+    } finally {
+      _isFetchingHistory = false;
+    }
   }
 
   void _scrollToBottom() {
@@ -481,11 +577,18 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'messageContent': '${mediaType == 'video' ? 'Video' : 'Image'} Attachment',
           'messageType': mediaType,
         };
-        await ApiService.sendMessage(
+        final res = await ApiService.sendMessage(
           _incidentId!,
           payload,
           mediaPath: mediaPath,
         );
+        if (mediaType == 'video' && res['success'] == true && res['message'] != null) {
+          final serverMediaUrl = res['message']['media_url']?.toString();
+          final cachedBytes = VideoThumbnailService.getCachedThumbnailSync(mediaPath);
+          if (serverMediaUrl != null && serverMediaUrl.isNotEmpty && cachedBytes != null) {
+            VideoThumbnailService.cacheThumbnail(serverMediaUrl, cachedBytes);
+          }
+        }
       } catch (e) {
         debugPrint("Error uploading queued pending media: $e");
       }
@@ -513,28 +616,41 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         debugPrint("Video compression skipped/fallback: $compErr");
       }
 
-      // 2. Extract thumbnail for local chat feed preview
+      // 2. Extract representative frame thumbnail from the actual finalized video file
+      Uint8List? rawThumbBytes;
       String b64Thumb = '';
       try {
-        final thumbnailFile = await VideoCompress.getFileThumbnail(path);
-        final thumbBytes = await thumbnailFile.readAsBytes();
-        b64Thumb = base64Encode(thumbBytes);
+        final thumbnailFile = await VideoCompress.getFileThumbnail(
+          uploadPath,
+          quality: 75,
+          position: -1,
+        );
+        if (await thumbnailFile.exists() && await thumbnailFile.length() > 0) {
+          rawThumbBytes = await thumbnailFile.readAsBytes();
+          b64Thumb = base64Encode(rawThumbBytes);
+          // Immediately cache under both original and compressed paths
+          VideoThumbnailService.cacheThumbnail(uploadPath, rawThumbBytes);
+          VideoThumbnailService.cacheThumbnail(path, rawThumbBytes);
+        }
       } catch (thumbErr) {
         debugPrint("Thumbnail extraction error: $thumbErr");
       }
 
       if (!mounted) return;
+      final videoEntry = <String, dynamic>{
+        'role': 'user',
+        'type': 'video',
+        'content': uploadPath,
+        'videoPath': uploadPath,
+        'thumbnail': rawThumbBytes,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
       setState(() {
         if (b64Thumb.isNotEmpty) {
           _attachedImages.add(b64Thumb);
         }
-        _chatFeed.add({
-          'role': 'user',
-          'type': 'video',
-          'content': b64Thumb.isNotEmpty ? b64Thumb : uploadPath,
-          'videoPath': uploadPath,
-          'timestamp': DateTime.now().toIso8601String(),
-        });
+        _chatFeed.add(videoEntry);
+        _sortFeed();
       });
       _scrollToBottom();
       
@@ -552,6 +668,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           payload,
           mediaPath: uploadPath,
         );
+        _applyServerAck(videoEntry, res);
+        if (res['success'] == true && res['message'] != null && rawThumbBytes != null) {
+          final serverMediaUrl = res['message']['media_url']?.toString();
+          if (serverMediaUrl != null && serverMediaUrl.isNotEmpty) {
+            // Pre-cache under server URL so when history or updates arrive, thumbnail is instant!
+            VideoThumbnailService.cacheThumbnail(serverMediaUrl, rawThumbBytes);
+          }
+        }
         if (res['error'] != null) {
           debugPrint("Video send warning: ${res['error']}");
         }
@@ -585,14 +709,16 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       final b64 = base64Encode(bytes);
 
       if (!mounted) return;
+      final imageEntry = <String, dynamic>{
+        'role': 'user',
+        'type': 'image',
+        'content': b64,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
       setState(() {
         _attachedImages.add(b64);
-        _chatFeed.add({
-          'role': 'user',
-          'type': 'image',
-          'content': b64,
-          'timestamp': DateTime.now().toIso8601String(),
-        });
+        _chatFeed.add(imageEntry);
+        _sortFeed();
       });
       _scrollToBottom();
 
@@ -609,6 +735,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           payload,
           mediaPath: path,
         );
+        _applyServerAck(imageEntry, res);
         if (res['error'] != null) {
           debugPrint("Image send warning: ${res['error']}");
         }
@@ -722,6 +849,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
             'content': txt,
             'timestamp': DateTime.now().toIso8601String(),
           });
+          _sortFeed();
         });
         _commentCtrl.clear();
         _scrollToBottom();
@@ -731,23 +859,26 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
     if (txt.isEmpty) return;
 
+    final entry = <String, dynamic>{
+      'role': 'user',
+      'type': 'text',
+      'content': txt,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
     setState(() {
-      _chatFeed.add({
-        'role': 'user',
-        'type': 'text',
-        'content': txt,
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      _chatFeed.add(entry);
+      _sortFeed();
     });
     _commentCtrl.clear();
     _scrollToBottom();
 
     if (_incidentId != null) {
       try {
-        await ApiService.sendMessage(_incidentId!, {
+        final res = await ApiService.sendMessage(_incidentId!, {
           'senderId': widget.user?.id,
           'messageContent': txt,
         });
+        _applyServerAck(entry, res);
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -949,12 +1080,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   String _formatStamp(dynamic val) {
     if (val == null) return '';
-    DateTime d;
-    if (val is int) {
-      d = DateTime.fromMillisecondsSinceEpoch(val);
-    } else {
-      d = DateTime.tryParse(val.toString())?.toLocal() ?? DateTime.now();
-    }
+    final parsed = _parseTs(val);
+    final d = parsed.millisecondsSinceEpoch > 0 ? parsed : DateTime.now();
     final now = DateTime.now();
     final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
     return DateFormat(sameDay ? 'hh:mm a' : 'MMM dd, hh:mm a').format(d);
@@ -1575,106 +1702,35 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
 
     if (type == 'video') {
-      final raw = msg['content']?.toString() ?? '';
-      final isUrl = raw.startsWith('http') || raw.startsWith('/uploads');
-      ImageProvider? provider;
-      if (isUrl) {
-        provider = null;
-      } else if (raw.isNotEmpty && !raw.startsWith('/')) {
-        try {
-          provider = MemoryImage(base64Decode(raw));
-        } catch (_) {}
+      final videoSrc = (msg['videoPath'] ?? msg['content'] ?? '').toString();
+      Uint8List? preThumb;
+      if (msg['thumbnail'] is Uint8List) {
+        preThumb = msg['thumbnail'] as Uint8List;
+      } else {
+        final raw = msg['content']?.toString() ?? '';
+        if (raw.isNotEmpty && !raw.startsWith('http') && !raw.startsWith('/') && !File(raw).existsSync()) {
+          try {
+            preThumb = base64Decode(raw);
+          } catch (_) {}
+        }
       }
 
-      final side = (maxW * 0.8).clamp(140.0, 240.0);
-      final videoBubble = Container(
-        width: side,
-        height: side,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 2))
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(13),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (provider != null)
-                Image(
-                  image: provider,
-                  fit: BoxFit.cover,
-                  errorBuilder: (c, e, s) => Container(
-                    color: Colors.black87,
-                    child: const Center(
-                      child: Icon(Icons.videocam_rounded, size: 44, color: Colors.white54),
-                    ),
-                  ),
-                )
-              else
-                Container(
-                  color: Colors.black87,
-                  child: const Center(
-                    child: Icon(Icons.videocam_rounded, size: 44, color: Colors.white54),
-                  ),
-                ),
-              // Play icon overlay in center
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 1.5),
-                  ),
-                  child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 28),
-                ),
-              ),
-              // Video label badge at bottom left
-              Positioned(
-                bottom: 8,
-                left: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.videocam, color: Colors.white, size: 12),
-                      const SizedBox(width: 4),
-                      Text(
-                        'VIDEO',
-                        style: GoogleFonts.outfit(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-
-      final clickableVideo = GestureDetector(
+      final bubbleWidth = (maxW * 0.8).clamp(180.0, 260.0);
+      final videoBubble = _ChatVideoThumbnailBubble(
+        videoSrc: videoSrc,
+        initialThumbBytes: preThumb,
+        width: bubbleWidth,
         onTap: () {
-          final videoSrc = (msg['videoPath'] ?? msg['content'] ?? '').toString();
           if (videoSrc.isNotEmpty) {
             _openVideoPlayer(videoSrc);
           }
         },
-        child: videoBubble,
       );
 
-      if (!isUser) return _botRow(child: clickableVideo);
+      if (!isUser) return _botRow(child: videoBubble);
       return Padding(
         padding: const EdgeInsets.only(bottom: 14),
-        child: Align(alignment: Alignment.centerRight, child: clickableVideo),
+        child: Align(alignment: Alignment.centerRight, child: videoBubble),
       );
     }
 
@@ -2042,9 +2098,13 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
               children: [
-                if (_chatFeed.isNotEmpty) _buildChatBubble(_chatFeed.first),
-                _buildCategoryGrid(),
-                ..._chatFeed.skip(1).map((msg) => _buildChatBubble(msg)),
+                if (!_sent) ...[
+                  if (_chatFeed.isNotEmpty) _buildChatBubble(_chatFeed.first),
+                  _buildCategoryGrid(),
+                  ..._chatFeed.skip(1).map((msg) => _buildChatBubble(msg)),
+                ] else ...[
+                  ..._chatFeed.map((msg) => _buildChatBubble(msg)),
+                ],
                 if (_sending) _buildSendingIndicator(),
                 if (_isUploadingMedia) _buildMediaUploadingIndicator(),
               ],
@@ -2291,4 +2351,184 @@ class _ChatVideoPlayerDialogState extends State<_ChatVideoPlayerDialog> {
     );
   }
 }
+
+/// Renders a real video frame thumbnail in chat bubbles with a play button overlay
+/// and "VIDEO" badge, respecting aspect ratio without distortion.
+class _ChatVideoThumbnailBubble extends StatefulWidget {
+  final String videoSrc;
+  final Uint8List? initialThumbBytes;
+  final double width;
+  final VoidCallback onTap;
+
+  const _ChatVideoThumbnailBubble({
+    required this.videoSrc,
+    this.initialThumbBytes,
+    required this.width,
+    required this.onTap,
+  });
+
+  @override
+  State<_ChatVideoThumbnailBubble> createState() => _ChatVideoThumbnailBubbleState();
+}
+
+class _ChatVideoThumbnailBubbleState extends State<_ChatVideoThumbnailBubble> {
+  Uint8List? _thumbBytes;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumbnail();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChatVideoThumbnailBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoSrc != widget.videoSrc || oldWidget.initialThumbBytes != widget.initialThumbBytes) {
+      _loadThumbnail();
+    }
+  }
+
+  void _loadThumbnail() {
+    if (widget.initialThumbBytes != null && widget.initialThumbBytes!.isNotEmpty) {
+      _thumbBytes = widget.initialThumbBytes;
+      return;
+    }
+
+    final cached = VideoThumbnailService.getCachedThumbnailSync(widget.videoSrc);
+    if (cached != null && cached.isNotEmpty) {
+      _thumbBytes = cached;
+      return;
+    }
+
+    if (widget.videoSrc.trim().isEmpty) return;
+
+    _isLoading = true;
+    VideoThumbnailService.getThumbnail(widget.videoSrc).then((bytes) {
+      if (mounted) {
+        setState(() {
+          _thumbBytes = bytes;
+          _isLoading = false;
+        });
+      }
+    }).catchError((_) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 16:9 aspect ratio standard for mobile video preview
+    final height = widget.width * 9 / 16;
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Container(
+        width: widget.width,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 1. Thumbnail Image or Loading / Fallback
+              if (_thumbBytes != null && _thumbBytes!.isNotEmpty)
+                Image.memory(
+                  _thumbBytes!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (c, e, s) => _buildFallback(),
+                )
+              else if (_isLoading)
+                Container(
+                  color: const Color(0xFF1E293B),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white54,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                _buildFallback(),
+
+              // 2. Play Button Overlay in center
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.85), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+
+              // 3. Video label badge at bottom left
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.videocam_rounded, color: Colors.white, size: 13),
+                      const SizedBox(width: 4),
+                      Text(
+                        'VIDEO',
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFallback() {
+    return Container(
+      color: const Color(0xFF111827),
+      child: const Center(
+        child: Icon(Icons.videocam_rounded, size: 40, color: Colors.white38),
+      ),
+    );
+  }
+}
+
 
