@@ -1400,7 +1400,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     'lng': detectedLng,
                                     'barangay': detectedBarangay,
                                     'reporter': _user?.name,
-                                    'createdAt': DateTime.now().toIso8601String(),
+                                    'createdAt': DateTime.now().millisecondsSinceEpoch,
                                     'forceNew': true
                                   };
                                   

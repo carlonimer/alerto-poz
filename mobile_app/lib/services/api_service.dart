@@ -242,12 +242,26 @@ class ApiService {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static int _normalizeCreatedAt(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is DateTime) return raw.millisecondsSinceEpoch;
+    if (raw is String) {
+      final parsedInt = int.tryParse(raw);
+      if (parsedInt != null && parsedInt > 0) return parsedInt;
+      final parsedDate = DateTime.tryParse(raw);
+      if (parsedDate != null) return parsedDate.millisecondsSinceEpoch;
+    }
+    return DateTime.now().millisecondsSinceEpoch;
+  }
+
   /// Web: fetch(`${SERVER_URL}/api/incidents/draft`, { method: 'POST', body: JSON.stringify({reporterId, reporterPhone, lat, lng, reporter, createdAt}) })
   static Future<Map<String, dynamic>> createDraftIncident(Map<String, dynamic> data) async {
+    final payload = Map<String, dynamic>.from(data);
+    payload['createdAt'] = _normalizeCreatedAt(payload['createdAt']);
     final res = await http.post(
       Uri.parse('$baseUrl/api/incidents/draft'),
       headers: await _getHeaders(auth: true),
-      body: jsonEncode(data),
+      body: jsonEncode(payload),
     );
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     body['_statusCode'] = res.statusCode;
@@ -255,10 +269,12 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> submitSosReport(Map<String, dynamic> data) async {
+    final payload = Map<String, dynamic>.from(data);
+    payload['createdAt'] = _normalizeCreatedAt(payload['createdAt']);
     final res = await http.post(
       Uri.parse('$baseUrl/api/incidents'),
       headers: await _getHeaders(auth: true),
-      body: jsonEncode(data),
+      body: jsonEncode(payload),
     );
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     body['_statusCode'] = res.statusCode;

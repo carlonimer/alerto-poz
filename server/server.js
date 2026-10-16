@@ -456,6 +456,22 @@ async function addIncident(report) {
         }
         report.assigned_agency = assigned_agency;
 
+        let safeCreatedAt = Date.now();
+        if (report.createdAt) {
+            if (typeof report.createdAt === 'number') {
+                safeCreatedAt = report.createdAt;
+            } else if (typeof report.createdAt === 'string') {
+                const parsed = Number(report.createdAt);
+                if (!isNaN(parsed) && parsed > 0) {
+                    safeCreatedAt = parsed;
+                } else {
+                    const dateParsed = Date.parse(report.createdAt);
+                    safeCreatedAt = !isNaN(dateParsed) ? dateParsed : Date.now();
+                }
+            }
+        }
+        report.createdAt = safeCreatedAt;
+
         await pool.query(
             "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
             [report.id, report.category || null, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null, report.assigned_agency]
@@ -1912,7 +1928,20 @@ app.post('/api/incidents/draft', async (req, res) => {
                     }
                 }
 
-                const ts = createdAt || Date.now();
+                let ts = Date.now();
+                if (createdAt) {
+                    if (typeof createdAt === 'number') {
+                        ts = createdAt;
+                    } else if (typeof createdAt === 'string') {
+                        const parsed = Number(createdAt);
+                        if (!isNaN(parsed) && parsed > 0) {
+                            ts = parsed;
+                        } else {
+                            const dateParsed = Date.parse(createdAt);
+                            ts = !isNaN(dateParsed) ? dateParsed : Date.now();
+                        }
+                    }
+                }
                 normalizedReport = {
                     id: draftId,
                     category: draftCategory,
@@ -2041,7 +2070,20 @@ app.post('/api/incidents/draft', async (req, res) => {
                 }
             }
 
-            const ts = createdAt || Date.now();
+            let ts = Date.now();
+            if (createdAt) {
+                if (typeof createdAt === 'number') {
+                    ts = createdAt;
+                } else if (typeof createdAt === 'string') {
+                    const parsed = Number(createdAt);
+                    if (!isNaN(parsed) && parsed > 0) {
+                        ts = parsed;
+                    } else {
+                        const dateParsed = Date.parse(createdAt);
+                        ts = !isNaN(dateParsed) ? dateParsed : Date.now();
+                    }
+                }
+            }
             const normalizedReport = {
                 id: draftId,
                 category: draftCategory,

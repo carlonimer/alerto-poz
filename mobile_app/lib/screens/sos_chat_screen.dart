@@ -830,7 +830,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       'category': _selectedCategory,
       'details': _commentCtrl.text.trim(),
       'media': _attachedImages,
-      'createdAt': DateTime.now().toIso8601String(),
+      'createdAt': DateTime.now().millisecondsSinceEpoch,
     };
 
     dynamic res;
