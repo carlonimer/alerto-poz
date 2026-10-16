@@ -1,32 +1,52 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:video_player/video_player.dart';
+import 'package:image_picker/image_picker.dart';
 
 class CameraScreen extends StatefulWidget {
-  final int initialMode;
+  final int initialMode; // 1: Photo, 2: Video
   const CameraScreen({super.key, this.initialMode = 1});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   List<CameraDescription> _cameras = [];
   CameraController? _controller;
   int _selectedCameraIdx = 0;
 
-  // 1: Photo, 2: Video
+  // Mode: 1 = Photo, 2 = Video
   int _currentMode = 1;
+  String _activeModeLabel = 'Photo';
+  final List<String> _modes = ['Snapshot', 'Night', 'Portrait', 'Photo', 'Video', 'Micro Movie', 'More'];
+
+  // Recording State
   bool _isRecording = false;
   int _recordSeconds = 0;
   Timer? _recordTimer;
 
-  // Loading & Error states
-  bool _isLoading = true;
-  String? _errorMessage;
-  bool _isPermissionDenied = false;
+  // Settings Panel state (Matches Screenshots 3 & 4)
+  bool _showSettingsPanel = false;
+  String _aspectRatio = '16:9'; // '1:1', '4:3', '16:9', 'Full'
+  int _timerOption = 0; // 0 (Off), 3, 5, 10
+  int _countdownRemaining = 0;
+  Timer? _countdownTimer;
+
+  // Feature Toggles (Matches Screenshots 3 & 4)
+  bool _gridEnabled = true;
+  bool _levelEnabled = true;
+  bool _shakeReminder = false;
+  bool _effectsMaster = false;
+  bool _watermark = false;
+  bool _motionAF = true;
+  bool _hdrEnabled = true;
+  bool _microphoneEnabled = true;
 
   // Flashlight state
   FlashMode _flashMode = FlashMode.off;
@@ -37,11 +57,57 @@ class _CameraScreenState extends State<CameraScreen> {
   double _currentZoom = 1.0;
   double _baseZoom = 1.0;
 
+  // Focus indicator
+  Offset? _focusPoint;
+  Timer? _focusTimer;
+
+  // Preview State (Photo or Video preview before sending)
+  bool _isPreviewing = false;
+  String? _capturedPath;
+  String? _capturedType; // 'image' or 'video'
+  VideoPlayerController? _videoPlayerController;
+  bool _isVideoPlaying = false;
+
+  // Loading & Error states
+  bool _isLoading = true;
+  String? _errorMessage;
+  bool _isPermissionDenied = false;
+
   @override
   void initState() {
     super.initState();
-    _currentMode = widget.initialMode;
+    WidgetsBinding.instance.addObserver(this);
+    _currentMode = widget.initialMode == 2 ? 2 : 1;
+    _activeModeLabel = _currentMode == 2 ? 'Video' : 'Photo';
+    _aspectRatio = _currentMode == 2 ? '16:9' : '4:3';
     _initCamera();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _stopRecordTimer();
+    _countdownTimer?.cancel();
+    _focusTimer?.cancel();
+    _controller?.dispose();
+    _videoPlayerController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      if (_isRecording) {
+        _onShutterPressed();
+      }
+      _controller?.dispose();
+      _controller = null;
+    } else if (state == AppLifecycleState.resumed) {
+      if (_cameras.isNotEmpty && !_isPreviewing) {
+        _setCamera(_cameras[_selectedCameraIdx]);
+      }
+    }
   }
 
   Future<void> _initCamera() async {
@@ -53,32 +119,28 @@ class _CameraScreenState extends State<CameraScreen> {
     });
 
     try {
-      // Check and request camera permission
       final cameraStatus = await Permission.camera.request();
       if (cameraStatus.isPermanentlyDenied || cameraStatus.isDenied || cameraStatus.isRestricted) {
         if (mounted) {
           setState(() {
             _isLoading = false;
             _isPermissionDenied = true;
-            _errorMessage = "Camera access is required to capture photos and report emergencies. Please enable camera permission in device settings.";
+            _errorMessage = "Camera access is required to take photos and record emergency evidence. Please allow camera permission in settings.";
           });
         }
         return;
       }
 
-      // Also request microphone permission for video recording mode
       try {
         await Permission.microphone.request();
-      } catch (_) {
-        // Microphone failure shouldn't block initialization
-      }
+      } catch (_) {}
 
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
         if (mounted) {
           setState(() {
             _isLoading = false;
-            _errorMessage = "No camera was detected on this device.";
+            _errorMessage = "No camera found on this device.";
           });
         }
         return;
@@ -89,21 +151,7 @@ class _CameraScreenState extends State<CameraScreen> {
       }
 
       await _setCamera(_cameras[_selectedCameraIdx]);
-    } on CameraException catch (e) {
-      debugPrint("CameraException in _initCamera: ${e.code} - ${e.description}");
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          if (e.code == 'CameraAccessDenied' || e.code == 'CameraAccessDeniedWithoutPrompt' || e.code == 'CameraAccessRestricted') {
-            _isPermissionDenied = true;
-            _errorMessage = "Camera access was denied. Please allow camera access in device settings.";
-          } else {
-            _errorMessage = "Camera error (${e.code}): ${e.description ?? 'Could not initialize camera'}";
-          }
-        });
-      }
     } catch (e) {
-      debugPrint("Camera initialization error: $e");
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -122,7 +170,8 @@ class _CameraScreenState extends State<CameraScreen> {
     final controller = CameraController(
       cameraDescription,
       ResolutionPreset.high,
-      enableAudio: true,
+      enableAudio: _microphoneEnabled,
+      imageFormatGroup: ImageFormatGroup.jpeg,
     );
     _controller = controller;
 
@@ -131,8 +180,9 @@ class _CameraScreenState extends State<CameraScreen> {
       if (!mounted) return;
       _maxZoom = await controller.getMaxZoomLevel();
       _minZoom = await controller.getMinZoomLevel();
-      _currentZoom = _minZoom;
-      _baseZoom = _minZoom;
+      _currentZoom = 1.0.clamp(_minZoom, _maxZoom);
+      _baseZoom = _currentZoom;
+
       try {
         await controller.setFlashMode(_flashMode);
       } catch (_) {}
@@ -141,32 +191,19 @@ class _CameraScreenState extends State<CameraScreen> {
         _isLoading = false;
         _errorMessage = null;
       });
-    } on CameraException catch (e) {
-      debugPrint("Error initializing camera controller: $e");
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          if (e.code == 'CameraAccessDenied' || e.code == 'CameraAccessDeniedWithoutPrompt' || e.code == 'CameraAccessRestricted') {
-            _isPermissionDenied = true;
-            _errorMessage = "Camera permission was denied. Please allow camera access in device settings.";
-          } else {
-            _errorMessage = "Camera error: ${e.description ?? e.code}";
-          }
-        });
-      }
     } catch (e) {
-      debugPrint("Error in _setCamera: $e");
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = "Failed to start camera feed: $e";
+          _errorMessage = "Failed to start camera: $e";
         });
       }
     }
   }
 
   void _switchCamera() {
-    if (_cameras.length > 1 && !_isRecording) {
+    if (_cameras.length > 1 && !_isRecording && !_isPreviewing) {
+      HapticFeedback.lightImpact();
       _selectedCameraIdx = (_selectedCameraIdx + 1) % _cameras.length;
       _setCamera(_cameras[_selectedCameraIdx]);
     }
@@ -174,6 +211,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
   void _toggleFlash() {
     if (_controller == null || !_controller!.value.isInitialized) return;
+    HapticFeedback.selectionClick();
     setState(() {
       if (_flashMode == FlashMode.off) {
         _flashMode = FlashMode.torch;
@@ -183,22 +221,50 @@ class _CameraScreenState extends State<CameraScreen> {
     });
     try {
       _controller!.setFlashMode(_flashMode);
-    } catch (e) {
-      debugPrint("Flash mode error: $e");
-    }
+    } catch (_) {}
   }
 
-  IconData _getFlashIcon() {
-    if (_flashMode == FlashMode.torch || _flashMode == FlashMode.always) return Icons.flash_on;
-    return Icons.flash_off;
-  }
-
-  void _switchMode(int mode) {
-    if (_isRecording) return;
-    if (_currentMode == mode) return;
+  void _switchMode(int mode, [String? label]) {
+    if (_isRecording || _isPreviewing) return;
+    HapticFeedback.selectionClick();
     setState(() {
       _currentMode = mode;
+      _activeModeLabel = label ?? (mode == 2 ? 'Video' : 'Photo');
+      if (mode == 2) {
+        _aspectRatio = '16:9';
+      }
     });
+  }
+
+  Future<void> _setZoom(double zoom) async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    final clamped = zoom.clamp(_minZoom, _maxZoom);
+    setState(() {
+      _currentZoom = clamped;
+      _baseZoom = clamped;
+    });
+    try {
+      await _controller!.setZoomLevel(clamped);
+    } catch (_) {}
+  }
+
+  void _onTapToFocus(TapDownDetails details, BoxConstraints constraints) {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    final offset = Offset(
+      details.localPosition.dx / constraints.maxWidth,
+      details.localPosition.dy / constraints.maxHeight,
+    );
+    setState(() {
+      _focusPoint = details.localPosition;
+    });
+    _focusTimer?.cancel();
+    _focusTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _focusPoint = null);
+    });
+    try {
+      _controller!.setFocusPoint(offset);
+      _controller!.setExposurePoint(offset);
+    } catch (_) {}
   }
 
   void _startRecordTimer() {
@@ -229,47 +295,44 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _onShutterPressed() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
+    HapticFeedback.heavyImpact();
 
     if (_currentMode == 1) {
-      // Take Photo immediately
-      try {
-        final XFile file = await _controller!.takePicture();
-        if (mounted) {
-          Navigator.pop(context, {'type': 'image', 'path': file.path});
-        }
-      } catch (e) {
-        debugPrint("Error taking picture: $e");
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to take photo: $e')),
-          );
-        }
+      // Photo Mode
+      if (_timerOption > 0) {
+        _startPhotoCountdown();
+      } else {
+        await _executeCapturePhoto();
       }
     } else if (_currentMode == 2) {
-      // Record Video: Start or Stop
+      // Video Mode
       if (_isRecording) {
+        // Stop recording
         try {
           final XFile file = await _controller!.stopVideoRecording();
           _stopRecordTimer();
           setState(() {
             _isRecording = false;
           });
-          if (mounted) {
-            Navigator.pop(context, {'type': 'video', 'path': file.path});
+          final recordedFile = File(file.path);
+          if (await recordedFile.exists() && await recordedFile.length() > 0) {
+            _showPreview(file.path, 'video');
+          } else {
+            throw Exception("Recorded video file is empty or corrupted.");
           }
         } catch (e) {
-          debugPrint("Error stopping video: $e");
           _stopRecordTimer();
           setState(() {
             _isRecording = false;
           });
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error saving video: $e')),
+              SnackBar(content: Text('Failed to save video: $e')),
             );
           }
         }
       } else {
+        // Start recording
         try {
           await _controller!.startVideoRecording();
           _startRecordTimer();
@@ -277,10 +340,9 @@ class _CameraScreenState extends State<CameraScreen> {
             _isRecording = true;
           });
         } catch (e) {
-          debugPrint("Error starting video: $e");
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error starting recording: $e')),
+              SnackBar(content: Text('Failed to start recording: $e')),
             );
           }
         }
@@ -288,405 +350,1090 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
-  Widget _modeSelectorItem(String text, int index) {
-    final isSelected = _currentMode == index;
-    return GestureDetector(
-      onTap: () => _switchMode(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.amber.withValues(alpha: 0.22) : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-          border: isSelected ? Border.all(color: Colors.amber, width: 1.5) : null,
+  void _startPhotoCountdown() {
+    setState(() => _countdownRemaining = _timerOption);
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) return;
+      if (_countdownRemaining <= 1) {
+        timer.cancel();
+        setState(() => _countdownRemaining = 0);
+        await _executeCapturePhoto();
+      } else {
+        setState(() => _countdownRemaining--);
+      }
+    });
+  }
+
+  Future<void> _executeCapturePhoto() async {
+    try {
+      final XFile file = await _controller!.takePicture();
+      final photoFile = File(file.path);
+      if (await photoFile.exists() && await photoFile.length() > 0) {
+        _showPreview(file.path, 'image');
+      } else {
+        throw Exception("Captured photo file is empty.");
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to capture photo: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
+    if (_isRecording || _isPreviewing) return;
+    try {
+      final picker = ImagePicker();
+      if (_currentMode == 2) {
+        final XFile? vid = await picker.pickVideo(source: ImageSource.gallery);
+        if (vid != null) _showPreview(vid.path, 'video');
+      } else {
+        final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
+        if (img != null) _showPreview(img.path, 'image');
+      }
+    } catch (e) {
+      debugPrint("Gallery pick error: $e");
+    }
+  }
+
+  Future<void> _showPreview(String path, String type) async {
+    _videoPlayerController?.dispose();
+    _videoPlayerController = null;
+
+    if (type == 'video') {
+      final vCtrl = VideoPlayerController.file(File(path));
+      try {
+        await vCtrl.initialize();
+        await vCtrl.setLooping(true);
+        await vCtrl.play();
+        _isVideoPlaying = true;
+      } catch (e) {
+        debugPrint("Video preview init error: $e");
+      }
+      _videoPlayerController = vCtrl;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isPreviewing = true;
+        _capturedPath = path;
+        _capturedType = type;
+      });
+    }
+  }
+
+  void _retakeMedia() {
+    _videoPlayerController?.pause();
+    _videoPlayerController?.dispose();
+    _videoPlayerController = null;
+
+    // Delete temporary discarded file
+    if (_capturedPath != null) {
+      try {
+        final f = File(_capturedPath!);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
+    }
+
+    setState(() {
+      _isPreviewing = false;
+      _capturedPath = null;
+      _capturedType = null;
+      _isVideoPlaying = false;
+    });
+  }
+
+  void _confirmSendMedia() {
+    if (_capturedPath == null || _capturedType == null) return;
+    _videoPlayerController?.pause();
+    _videoPlayerController?.dispose();
+    _videoPlayerController = null;
+
+    Navigator.pop(context, {
+      'type': _capturedType,
+      'path': _capturedPath,
+    });
+  }
+
+  // ───────────────────────── UI Builders ─────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isPermissionDenied || _errorMessage != null) {
+      return _buildErrorScaffold();
+    }
+
+    if (_isLoading || _controller == null || !_controller!.value.isInitialized) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator(color: Color(0xFFFFCC00))),
+      );
+    }
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.black,
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          bottom: false,
+          child: _isPreviewing ? _buildPreviewScreen() : _buildCameraViewfinder(),
         ),
-        child: Text(
-          text,
-          style: GoogleFonts.outfit(
-            color: isSelected ? Colors.amber : Colors.white70,
-            fontSize: isSelected ? 14 : 13,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            letterSpacing: 1.1,
+      ),
+    );
+  }
+
+  Widget _buildErrorScaffold() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isPermissionDenied ? Icons.no_photography_rounded : Icons.videocam_off_rounded,
+                  color: const Color(0xFFFFCC00),
+                  size: 54,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                _isPermissionDenied ? 'Camera Access Required' : 'Camera Unavailable',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.outfit(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _errorMessage ?? 'Please enable camera permissions in device settings.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.outfit(color: Colors.white70, fontSize: 14, height: 1.4),
+              ),
+              const SizedBox(height: 28),
+              if (_isPermissionDenied) ...[
+                ElevatedButton.icon(
+                  onPressed: () => openAppSettings(),
+                  icon: const Icon(Icons.settings, color: Colors.black, size: 20),
+                  label: Text('Open Settings', style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFCC00),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              OutlinedButton.icon(
+                onPressed: _initCamera,
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
+                label: Text('Retry', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.white38),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _stopRecordTimer();
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Error / Permission Denied Screen
-    if (_errorMessage != null) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: Text(
-            'Camera',
-            style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.08),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    _isPermissionDenied ? Icons.no_photography_outlined : Icons.videocam_off_outlined,
-                    color: Colors.amber,
-                    size: 56,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  _isPermissionDenied ? 'Camera Permission Required' : 'Camera Unavailable',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.outfit(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _errorMessage!,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.outfit(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                if (_isPermissionDenied) ...[
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      await openAppSettings();
-                    },
-                    icon: const Icon(Icons.settings, color: Colors.black),
-                    label: Text(
-                      'Open Settings',
-                      style: GoogleFonts.outfit(fontWeight: FontWeight.w600, color: Colors.black),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                OutlinedButton.icon(
-                  onPressed: _initCamera,
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  label: Text(
-                    'Retry',
-                    style: GoogleFonts.outfit(fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white38),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Loading Screen
-    if (_isLoading || _controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Camera Preview with Pinch-to-Zoom & Horizontal Swipe gesture support
-          Positioned.fill(
-            child: Container(
-              color: Colors.black,
-              child: Center(
-                child: GestureDetector(
-                  onScaleStart: (details) {
-                    _baseZoom = _currentZoom;
-                  },
-                  onScaleUpdate: (details) async {
-                    if (_controller == null || !_controller!.value.isInitialized) return;
-                    if (details.scale == 1.0) return;
-                    double targetZoom = _baseZoom * details.scale;
-                    if (targetZoom < _minZoom) targetZoom = _minZoom;
-                    if (targetZoom > _maxZoom) targetZoom = _maxZoom;
-                    if (targetZoom != _currentZoom) {
-                      setState(() {
-                        _currentZoom = targetZoom;
-                      });
-                      await _controller!.setZoomLevel(_currentZoom);
-                    }
-                  },
-                  onScaleEnd: (details) {
-                    if (_isRecording) return;
-                    final vx = details.velocity.pixelsPerSecond.dx;
-                    final vy = details.velocity.pixelsPerSecond.dy;
-                    if (vx.abs() > 250 && vx.abs() > vy.abs() * 1.4) {
-                      if (vx < 0) {
-                        _switchMode(2); // Swipe left -> Video
-                      } else {
-                        _switchMode(1); // Swipe right -> Photo
-                      }
-                    }
-                  },
-                  child: CameraPreview(_controller!),
-                ),
-              ),
-            ),
-          ),
-
-          // Zoom level display & Slider
-          Positioned(
-            bottom: 160,
-            left: 30,
-            right: 30,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '${_currentZoom.toStringAsFixed(1)}x',
-                    style: GoogleFonts.outfit(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (_maxZoom > _minZoom) ...[
-                  const SizedBox(height: 8),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 2.0,
-                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8.0),
-                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16.0),
-                    ),
-                    child: Slider(
-                      value: _currentZoom,
-                      min: _minZoom,
-                      max: _maxZoom,
-                      activeColor: Colors.amber,
-                      inactiveColor: Colors.white54,
-                      onChanged: (value) async {
-                        if (_controller == null || !_controller!.value.isInitialized) return;
-                        setState(() {
-                          _currentZoom = value;
-                          _baseZoom = value;
-                        });
-                        await _controller!.setZoomLevel(value);
-                      },
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // Grid overlay (simulated)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Column(
-                children: [
-                  Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
-                  Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
-                  Expanded(child: Container()),
-                ],
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Row(
-                children: [
-                  Expanded(child: Container(decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
-                  Expanded(child: Container(decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
-                  Expanded(child: Container()),
-                ],
-              ),
-            ),
-          ),
-
-          // Top controls
-          Positioned(
-            top: 40,
-            left: 16,
-            child: IconButton(
-              icon: Icon(_getFlashIcon(), color: Colors.white),
-              onPressed: _toggleFlash,
-            ),
-          ),
-          Positioned(
-            top: 40,
-            right: 16,
-            child: IconButton(
-              icon: const Icon(Icons.settings, color: Colors.white),
-              onPressed: () async {
-                await openAppSettings();
-              },
-            ),
-          ),
-
-          // Recording Timer Indicator when recording
-          if (_isRecording)
-            Positioned(
-              top: 44,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.85),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
+  Widget _buildCameraViewfinder() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Camera Viewfinder Preview with Pinch Zoom and Tap Focus
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) => _onTapToFocus(details, constraints),
+                onScaleStart: (_) => _baseZoom = _currentZoom,
+                onScaleUpdate: (details) {
+                  if (details.scale != 1.0) {
+                    _setZoom(_baseZoom * details.scale);
+                  }
+                },
+                onHorizontalDragEnd: (details) {
+                  if (_isRecording) return;
+                  final vx = details.primaryVelocity ?? 0;
+                  if (vx < -150) {
+                    _switchMode(2, 'Video'); // Swipe left -> Video
+                  } else if (vx > 150) {
+                    _switchMode(1, 'Photo'); // Swipe right -> Photo
+                  }
+                },
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.center,
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        height: constraints.maxWidth * _controller!.value.aspectRatio,
+                        child: CameraPreview(_controller!),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${_formatDuration(_recordSeconds)} / 00:30',
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+        // 3x3 Grid Lines Overlay (Matches Screenshots 1 & 2)
+        if (_gridEnabled)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _GridLinesPainter(),
+              ),
+            ),
+          ),
+
+        // Center Horizon Level & Focus Mark (Matches Screenshots 1 & 2)
+        if (_levelEnabled)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: SizedBox(
+                  width: 140,
+                  height: 30,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Horizon line with center gap
+                      Row(
+                        children: [
+                          Expanded(child: Container(height: 1.2, color: Colors.white.withValues(alpha: 0.65))),
+                          const SizedBox(width: 24),
+                          Expanded(child: Container(height: 1.2, color: Colors.white.withValues(alpha: 0.65))),
+                        ],
+                      ),
+                      // Center notch
+                      Container(
+                        width: 2,
+                        height: 8,
+                        color: Colors.white.withValues(alpha: 0.75),
                       ),
                     ],
                   ),
                 ),
               ),
             ),
+          ),
 
-          // Bottom Controls Background with Mode Selector and Shutter Button
+        // Tap-to-Focus Indicator
+        if (_focusPoint != null)
           Positioned(
-            bottom: 0,
+            left: _focusPoint!.dx - 30,
+            top: _focusPoint!.dy - 30,
+            child: IgnorePointer(
+              child: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xFFFFCC00), width: 1.5),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+
+        // Photo Timer Countdown Overlay
+        if (_countdownRemaining > 0)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(28),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.5),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$_countdownRemaining',
+                    style: GoogleFonts.outfit(color: const Color(0xFFFFCC00), fontSize: 72, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        // Top Control Bar (Matches Screenshots 1 & 2)
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: _buildTopControlBar(),
+        ),
+
+        // Right side tool buttons (Filter, Magic Wand, Aperture)
+        Positioned(
+          right: 16,
+          bottom: 180,
+          child: _buildRightSideToolButtons(),
+        ),
+
+        // Zoom Selector Pill (Matches Screenshots 1 & 2)
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 154,
+          child: _buildZoomSelectorPill(),
+        ),
+
+        // Bottom Controls Container (Mode Row + Shutter Bar)
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _buildBottomControlsArea(),
+        ),
+
+        // Pull-Down Settings Menu (Matches Screenshots 3 & 4)
+        if (_showSettingsPanel)
+          Positioned(
+            top: 0,
             left: 0,
             right: 0,
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.85),
-              padding: const EdgeInsets.only(bottom: 40, top: 16),
-              child: Column(
+            child: _buildSettingsDropdownPanel(),
+          ),
+      ],
+    );
+  }
+
+  // ───────────────────────── Top Control Bar ─────────────────────────
+
+  Widget _buildTopControlBar() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.45),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Top row status time ( 00 . 00 ) from screenshot
+          Align(
+            alignment: Alignment.topRight,
+            child: Text(
+              _isRecording ? '( ${_formatDuration(_recordSeconds)} )' : '( 00 . 00 )',
+              style: GoogleFonts.robotoMono(color: _isRecording ? Colors.redAccent : Colors.white60, fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Left: Back/Exit & Flash
+              Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Mode Selector with Tap and Horizontal Swipe support
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onHorizontalDragEnd: (details) {
-                      if (_isRecording) return;
-                      if (details.primaryVelocity != null) {
-                        if (details.primaryVelocity! < -100) {
-                          _switchMode(2); // Swiped left -> Video
-                        } else if (details.primaryVelocity! > 100) {
-                          _switchMode(1); // Swiped right -> Photo
-                        }
-                      }
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                    tooltip: 'Back to chat',
+                    onPressed: () {
+                      if (!_isRecording) Navigator.pop(context);
                     },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      _flashMode == FlashMode.off ? Icons.flash_off_rounded : Icons.flash_on_rounded,
+                      color: _flashMode == FlashMode.off ? Colors.white : const Color(0xFFFFCC00),
+                      size: 22,
+                    ),
+                    onPressed: _toggleFlash,
+                  ),
+                ],
+              ),
+
+              // Center: Mode-specific header icon
+              if (_currentMode == 1)
+                // Photo mode center cinema frame icon (Screenshot 1)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.white54, width: 1.2),
+                  ),
+                  child: Container(
+                    width: 14,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      gradient: const LinearGradient(colors: [Colors.purpleAccent, Colors.amber, Colors.cyanAccent]),
+                    ),
+                  ),
+                )
+              else
+                // Video mode center icons: Steady icon + 1080P/30 badge (Screenshot 2)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.vibration_rounded, color: Color(0xFFFFCC00), size: 22),
+                    const SizedBox(width: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(5),
+                        border: Border.all(color: Colors.white70, width: 1.2),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          _modeSelectorItem('PHOTO', 1),
-                          const SizedBox(width: 16),
-                          _modeSelectorItem('VIDEO', 2),
+                          Text('1080P', style: GoogleFonts.outfit(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800, height: 1.0)),
+                          Text('30', style: GoogleFonts.outfit(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold, height: 1.0)),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  // Shutter and Action Buttons
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          if (!_isRecording) {
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: Text(
-                          'Cancel',
-                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 16),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: _onShutterPressed,
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: _currentMode == 2 ? Colors.redAccent : Colors.amber,
-                              width: 4,
-                            ),
-                          ),
-                          child: Center(
-                            child: Container(
-                              width: _isRecording ? 26 : 54,
-                              height: _isRecording ? 26 : 54,
-                              decoration: BoxDecoration(
-                                color: _currentMode == 2 ? Colors.red : Colors.white,
-                                shape: _isRecording ? BoxShape.rectangle : BoxShape.circle,
-                                borderRadius: _isRecording ? BorderRadius.circular(6) : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.sync, color: Colors.white, size: 32),
-                        onPressed: _isRecording ? null : _switchCamera,
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
+
+              // Right: Settings Hexagon Gear Icon
+              IconButton(
+                icon: const Icon(Icons.settings_outlined, color: Colors.white, size: 24),
+                tooltip: 'Camera settings',
+                onPressed: () {
+                  setState(() => _showSettingsPanel = !_showSettingsPanel);
+                },
               ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ───────────────────────── Right Side Tools ─────────────────────────
+
+  Widget _buildRightSideToolButtons() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildCircularToolButton(
+          icon: Icons.auto_fix_high_rounded,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _effectsMaster = !_effectsMaster);
+          },
+          active: _effectsMaster,
+        ),
+        if (_currentMode == 2) ...[
+          const SizedBox(height: 12),
+          _buildCircularToolButton(
+            icon: Icons.face_retouching_natural_rounded,
+            onTap: () => HapticFeedback.selectionClick(),
+            active: false,
+          ),
+          const SizedBox(height: 12),
+          _buildCircularToolButton(
+            child: Text('f', style: GoogleFonts.playfairDisplay(color: Colors.white, fontSize: 16, fontStyle: FontStyle.italic, fontWeight: FontWeight.bold)),
+            onTap: () => HapticFeedback.selectionClick(),
+            active: false,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCircularToolButton({IconData? icon, Widget? child, required VoidCallback onTap, bool active = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: active ? const Color(0xFFFFCC00) : Colors.black.withValues(alpha: 0.55),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white24, width: 1),
+        ),
+        child: Center(
+          child: child ?? Icon(icon, color: active ? Colors.black : Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Zoom Selector Pill ─────────────────────────
+
+  Widget _buildZoomSelectorPill() {
+    final is1x = (_currentZoom - 1.0).abs() < 0.2;
+    final is06 = _currentZoom < 0.9;
+    final is2x = _currentZoom >= 1.8;
+
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.65),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white12, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => _setZoom(0.6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text('0.6', style: GoogleFonts.outfit(color: is06 ? const Color(0xFFFFCC00) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text('···', style: GoogleFonts.outfit(color: Colors.white38, fontSize: 12)),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => _setZoom(1.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: is1x ? const Color(0xFF2C2C2C) : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: is1x ? Border.all(color: const Color(0xFFFFCC00).withValues(alpha: 0.8), width: 1.2) : null,
+                ),
+                child: Text('1x', style: GoogleFonts.outfit(color: is1x ? const Color(0xFFFFCC00) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text('···', style: GoogleFonts.outfit(color: Colors.white38, fontSize: 12)),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => _setZoom(2.0),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text('2', style: GoogleFonts.outfit(color: is2x ? const Color(0xFFFFCC00) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Bottom Controls Area ─────────────────────────
+
+  Widget _buildBottomControlsArea() {
+    return Container(
+      color: Colors.black,
+      padding: const EdgeInsets.only(top: 10, bottom: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Recording Time Badge if actively recording video
+          if (_isRecording)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF3B30),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                    const SizedBox(width: 8),
+                    Text(
+                      'REC ${_formatDuration(_recordSeconds)} / 00:30',
+                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Horizontal Mode Selector (Matches Screenshots 1 & 2)
+          SizedBox(
+            height: 38,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: _isRecording ? const NeverScrollableScrollPhysics() : const BouncingScrollPhysics(),
+              itemCount: _modes.length,
+              itemBuilder: (context, index) {
+                final modeName = _modes[index];
+                final isSelected = modeName == _activeModeLabel;
+                return GestureDetector(
+                  onTap: () {
+                    if (modeName == 'Video' || modeName == 'Micro Movie') {
+                      _switchMode(2, modeName);
+                    } else {
+                      _switchMode(1, modeName);
+                    }
+                  },
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: Text(
+                      modeName,
+                      style: GoogleFonts.outfit(
+                        color: isSelected ? const Color(0xFFFFCC00) : Colors.white,
+                        fontSize: isSelected ? 15 : 13,
+                        fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Bottom Shutter Controls Bar (Thumbnail | Shutter Button | Switch Camera)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Left: Gallery Thumbnail
+                GestureDetector(
+                  onTap: _pickFromGallery,
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF222222),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white24, width: 1.5),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.photo_library_outlined, color: Colors.white, size: 22),
+                    ),
+                  ),
+                ),
+
+                // Center: Big Camera Shutter Button (Matches Screenshots 1 & 2)
+                GestureDetector(
+                  onTap: _onShutterPressed,
+                  child: Container(
+                    width: 78,
+                    height: 78,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 3.5),
+                    ),
+                    padding: const EdgeInsets.all(4),
+                    child: Center(
+                      child: _buildShutterCore(),
+                    ),
+                  ),
+                ),
+
+                // Right: Switch Camera Icon
+                GestureDetector(
+                  onTap: _switchCamera,
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF222222),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.sync_rounded, color: Colors.white, size: 26),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildShutterCore() {
+    if (_currentMode == 2) {
+      // Video Mode: Solid Red Circle, turns into rounded red square when recording
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: _isRecording ? 28 : 58,
+        height: _isRecording ? 28 : 58,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF3B30),
+          shape: _isRecording ? BoxShape.rectangle : BoxShape.circle,
+          borderRadius: _isRecording ? BorderRadius.circular(6) : null,
+        ),
+      );
+    } else {
+      // Photo Mode: Dark center with yellow/gold ring (Screenshot 1)
+      return Container(
+        width: 58,
+        height: 58,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFFFFCC00), width: 3),
+        ),
+      );
+    }
+  }
+
+  // ───────────────────────── Settings Dropdown (Screenshots 3 & 4) ─────────────────────────
+
+  Widget _buildSettingsDropdownPanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xF2151515),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(24),
+          bottomRight: Radius.circular(24),
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 20, offset: const Offset(0, 8)),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header (Close ✕ | More settings >)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
+                onPressed: () => setState(() => _showSettingsPanel = false),
+              ),
+              GestureDetector(
+                onTap: () async {
+                  setState(() => _showSettingsPanel = false);
+                  await openAppSettings();
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('More settings', style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 12),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Aspect Ratio Row
+          if (_currentMode == 1)
+            _buildSegmentedSettingRow(
+              options: ['1:1', '4:3', '16:9', 'Full'],
+              selected: _aspectRatio,
+              onSelect: (val) => setState(() => _aspectRatio = val),
+            )
+          else
+            _buildSegmentedSettingRow(
+              options: ['16:9', 'Wide'],
+              selected: _aspectRatio,
+              onSelect: (val) => setState(() => _aspectRatio = val),
+            ),
+
+          const SizedBox(height: 12),
+
+          // Timer Row (Photo mode only - Screenshot 4)
+          if (_currentMode == 1) ...[
+            _buildSegmentedSettingRow(
+              options: ['Off', '3s', '5s', '10s'],
+              selected: _timerOption == 0 ? 'Off' : '${_timerOption}s',
+              onSelect: (val) {
+                setState(() {
+                  if (val == 'Off') _timerOption = 0;
+                  if (val == '3s') _timerOption = 3;
+                  if (val == '5s') _timerOption = 5;
+                  if (val == '10s') _timerOption = 10;
+                });
+              },
+            ),
+            const SizedBox(height: 14),
+          ],
+
+          // Quick-Toggles Grid (Grid lines, Level, Shake, Watermark, HDR, etc.)
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildSettingPillButton(
+                label: 'Grid lines',
+                icon: Icons.grid_3x3_rounded,
+                active: _gridEnabled,
+                onTap: () => setState(() => _gridEnabled = !_gridEnabled),
+              ),
+              _buildSettingPillButton(
+                label: 'Level',
+                icon: Icons.remove_circle_outline_rounded,
+                active: _levelEnabled,
+                onTap: () => setState(() => _levelEnabled = !_levelEnabled),
+              ),
+              _buildSettingPillButton(
+                label: 'Shake reminder',
+                icon: Icons.camera_alt_outlined,
+                active: _shakeReminder,
+                onTap: () => setState(() => _shakeReminder = !_shakeReminder),
+              ),
+              _buildSettingPillButton(
+                label: 'Watermark',
+                icon: Icons.branding_watermark_outlined,
+                active: _watermark,
+                onTap: () => setState(() => _watermark = !_watermark),
+              ),
+              _buildSettingPillButton(
+                label: 'Motion AF',
+                icon: Icons.filter_center_focus_rounded,
+                active: _motionAF,
+                onTap: () => setState(() => _motionAF = !_motionAF),
+              ),
+              if (_currentMode == 1)
+                _buildSettingPillButton(
+                  label: 'HDR',
+                  icon: Icons.hdr_on_rounded,
+                  active: _hdrEnabled,
+                  onTap: () => setState(() => _hdrEnabled = !_hdrEnabled),
+                )
+              else
+                _buildSettingPillButton(
+                  label: 'Microphone',
+                  icon: Icons.mic_rounded,
+                  active: _microphoneEnabled,
+                  onTap: () => setState(() => _microphoneEnabled = !_microphoneEnabled),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSegmentedSettingRow({required List<String> options, required String selected, required ValueChanged<String> onSelect}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF222222),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: options.map((opt) {
+          final isSelected = opt == selected;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => onSelect(opt),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFFFFCC00) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  opt,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.outfit(
+                    color: isSelected ? Colors.black : Colors.white,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSettingPillButton({required String label, required IconData icon, required bool active, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: (MediaQuery.of(context).size.width - 52) / 3,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? const Color(0xFFFFCC00) : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.outfit(
+                  color: Colors.black,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Icon(icon, color: Colors.black87, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── Preview Screen (Photo & Video) ─────────────────────────
+
+  Widget _buildPreviewScreen() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Media Preview View
+        Positioned.fill(
+          child: Container(
+            color: Colors.black,
+            child: Center(
+              child: _capturedType == 'video' && _videoPlayerController != null && _videoPlayerController!.value.isInitialized
+                  ? AspectRatio(
+                      aspectRatio: _videoPlayerController!.value.aspectRatio,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          VideoPlayer(_videoPlayerController!),
+                          // Play / Pause Overlay Button
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                if (_videoPlayerController!.value.isPlaying) {
+                                  _videoPlayerController!.pause();
+                                  _isVideoPlaying = false;
+                                } else {
+                                  _videoPlayerController!.play();
+                                  _isVideoPlaying = true;
+                                }
+                              });
+                            },
+                            child: AnimatedOpacity(
+                              opacity: _isVideoPlaying ? 0.0 : 1.0,
+                              duration: const Duration(milliseconds: 200),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white70, width: 2),
+                                ),
+                                child: Icon(
+                                  _isVideoPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 40,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : (_capturedPath != null
+                      ? Image.file(
+                          File(_capturedPath!),
+                          fit: BoxFit.contain,
+                        )
+                      : const SizedBox()),
+            ),
+          ),
+        ),
+
+        // Top Preview Header (Back/Cancel)
+        Positioned(
+          top: 10,
+          left: 16,
+          child: IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+            onPressed: _retakeMedia,
+          ),
+        ),
+
+        // Bottom Action Bar: Retake & Confirm Send
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            color: Colors.black.withValues(alpha: 0.85),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _retakeMedia,
+                    icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                    label: Text('Retake', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Colors.white54, width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _confirmSendMedia,
+                    icon: const Icon(Icons.send_rounded, color: Colors.black),
+                    label: Text('Send to Chat', style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.w800, fontSize: 15)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFCC00),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ───────────────────────── Custom Grid Painter ─────────────────────────
+
+class _GridLinesPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.22)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    // Horizontal lines
+    final h1 = size.height / 3;
+    final h2 = size.height * 2 / 3;
+    canvas.drawLine(Offset(0, h1), Offset(size.width, h1), paint);
+    canvas.drawLine(Offset(0, h2), Offset(size.width, h2), paint);
+
+    // Vertical lines
+    final w1 = size.width / 3;
+    final w2 = size.width * 2 / 3;
+    canvas.drawLine(Offset(w1, 0), Offset(w1, size.height), paint);
+    canvas.drawLine(Offset(w2, 0), Offset(w2, size.height), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

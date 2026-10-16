@@ -36,6 +36,7 @@ dependencies:
   image_cropper: ^12.2.1
   camera: ^0.12.1
   path_provider: ^2.1.6
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:

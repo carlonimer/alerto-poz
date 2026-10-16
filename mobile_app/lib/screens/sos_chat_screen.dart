@@ -12,6 +12,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:video_compress/video_compress.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/user.dart';
 import '../services/socket_service.dart';
@@ -250,6 +251,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         'role': data['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
         'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
         'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
+        'videoPath': isVideo ? (data['media_url'] ?? data['message_content'] ?? data['message']) : null,
         'timestamp': data['timestamp'] != null 
             ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(data['timestamp'].toString()) ?? DateTime.now().millisecondsSinceEpoch).toIso8601String() 
             : DateTime.now().toIso8601String(),
@@ -398,6 +400,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               'role': msg['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
               'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
               'content': msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '',
+              'videoPath': isVideo ? (msg['media_url'] ?? msg['message_content'] ?? msg['content']) : null,
               'timestamp': ts,
             });
           }
@@ -529,6 +532,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'role': 'user',
           'type': 'video',
           'content': b64Thumb.isNotEmpty ? b64Thumb : uploadPath,
+          'videoPath': uploadPath,
           'timestamp': DateTime.now().toIso8601String(),
         });
       });
@@ -629,106 +633,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  Future<void> _showMediaReviewDialog(String path, String type) async {
-    ImageProvider? thumbnailProvider;
-    if (type == 'image') {
-      thumbnailProvider = FileImage(File(path));
-    } else {
-      try {
-        final thumbnailFile = await VideoCompress.getFileThumbnail(path);
-        thumbnailProvider = FileImage(thumbnailFile);
-      } catch (e) {
-        // Fallback handled in UI
-      }
-    }
 
-    if (!mounted) return;
-    final bool? send = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        backgroundColor: Colors.white,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Review Attachment', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
-              const SizedBox(height: 16),
-              if (thumbnailProvider != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Image(
-                        image: thumbnailProvider,
-                        height: 200,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                      ),
-                      if (type == 'video')
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.55),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 36),
-                        ),
-                    ],
-                  ),
-                )
-              else
-                Container(
-                  height: 200,
-                  width: double.infinity,
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
-                  child: const Center(child: Icon(Icons.videocam, size: 48, color: Colors.grey)),
-                ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: Text('Cancel', style: GoogleFonts.outfit(fontWeight: FontWeight.w700, color: Colors.black87)),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _C.orange,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 0,
-                      ),
-                      child: Text('Send', style: GoogleFonts.outfit(fontWeight: FontWeight.w700, color: Colors.white)),
-                    ),
-                  ),
-                ],
-              )
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (send == true) {
-      if (type == 'video') {
-        await _handleVideoTaken(path);
-      } else {
-        await _handleImageTaken(path);
-      }
-    }
-  }
 
 
 
@@ -909,7 +814,11 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         final path = result['path'] as String?;
         final type = result['type'] as String?;
         if (path != null && type != null) {
-          await _showMediaReviewDialog(path, type);
+          if (type == 'video') {
+            await _handleVideoTaken(path);
+          } else {
+            await _handleImageTaken(path);
+          }
         }
       }
     } catch (e) {
@@ -1022,6 +931,15 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           ],
         ),
       ),
+    );
+  }
+
+  void _openVideoPlayer(String pathOrUrl) {
+    if (pathOrUrl.trim().isEmpty) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => _ChatVideoPlayerDialog(pathOrUrl: pathOrUrl),
     );
   }
 
@@ -1743,10 +1661,20 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         ),
       );
 
-      if (!isUser) return _botRow(child: videoBubble);
+      final clickableVideo = GestureDetector(
+        onTap: () {
+          final videoSrc = (msg['videoPath'] ?? msg['content'] ?? '').toString();
+          if (videoSrc.isNotEmpty) {
+            _openVideoPlayer(videoSrc);
+          }
+        },
+        child: videoBubble,
+      );
+
+      if (!isUser) return _botRow(child: clickableVideo);
       return Padding(
         padding: const EdgeInsets.only(bottom: 14),
-        child: Align(alignment: Alignment.centerRight, child: videoBubble),
+        child: Align(alignment: Alignment.centerRight, child: clickableVideo),
       );
     }
 
@@ -2130,3 +2058,237 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     );
   }
 }
+
+class _ChatVideoPlayerDialog extends StatefulWidget {
+  final String pathOrUrl;
+  const _ChatVideoPlayerDialog({required this.pathOrUrl});
+
+  @override
+  State<_ChatVideoPlayerDialog> createState() => _ChatVideoPlayerDialogState();
+}
+
+class _ChatVideoPlayerDialogState extends State<_ChatVideoPlayerDialog> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _error = false;
+  String? _errorMsg;
+
+  @override
+  void initState() {
+    super.initState();
+    _initVideo();
+  }
+
+  Future<void> _initVideo() async {
+    try {
+      final raw = widget.pathOrUrl;
+      final isLocal = File(raw).existsSync();
+      if (isLocal) {
+        _controller = VideoPlayerController.file(File(raw));
+      } else {
+        final url = raw.startsWith('http') ? raw : '${ApiService.baseUrl}$raw';
+        _controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      }
+
+      await _controller!.initialize();
+      _controller!.setLooping(false);
+      _controller!.play();
+      if (mounted) {
+        setState(() {
+          _initialized = true;
+        });
+      }
+      _controller!.addListener(() {
+        if (mounted) setState(() {});
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = true;
+          _errorMsg = e.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.6),
+              blurRadius: 20,
+              spreadRadius: 2,
+            )
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Top Bar
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.black87,
+              child: Row(
+                children: [
+                  const Icon(Icons.videocam_rounded, color: Color(0xFFFFCC00), size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Video Playback',
+                    style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            // Video Viewport
+            if (_error)
+              Container(
+                height: 240,
+                color: Colors.black,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 44),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Could not play video',
+                          style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                        if (_errorMsg != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _errorMsg!,
+                            style: GoogleFonts.outfit(color: Colors.white70, fontSize: 12),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else if (!_initialized)
+              Container(
+                height: 260,
+                color: Colors.black,
+                child: const Center(
+                  child: CircularProgressIndicator(color: Color(0xFFFFCC00)),
+                ),
+              )
+            else
+              GestureDetector(
+                onTap: () {
+                  if (_controller != null) {
+                    if (_controller!.value.isPlaying) {
+                      _controller!.pause();
+                    } else {
+                      _controller!.play();
+                    }
+                  }
+                },
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio > 0 ? _controller!.value.aspectRatio : 16 / 9,
+                      child: VideoPlayer(_controller!),
+                    ),
+                    if (!_controller!.value.isPlaying)
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 40,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            // Controls & Scrubber
+            if (_initialized && _controller != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                color: Colors.black87,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    VideoProgressIndicator(
+                      _controller!,
+                      allowScrubbing: true,
+                      colors: const VideoProgressColors(
+                        playedColor: Color(0xFFFFCC00),
+                        bufferedColor: Colors.white30,
+                        backgroundColor: Colors.white12,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            _controller!.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              if (_controller!.value.isPlaying) {
+                                _controller!.pause();
+                              } else {
+                                _controller!.play();
+                              }
+                            });
+                          },
+                        ),
+                        Text(
+                          '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
+                          style: GoogleFonts.outfit(color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
