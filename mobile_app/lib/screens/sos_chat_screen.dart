@@ -64,6 +64,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   String? _assignedUnit;
   bool _sent = false;
   bool _sending = false;
+  bool _isUploadingMedia = false;
   bool _queued = false;
   bool _cancelled = false; // New cancelled state
   bool _hasText = false;
@@ -170,6 +171,10 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         final cat = _categories.firstWhere((c) => c['key'] == widget.initialCategory, orElse: () => _categories.last);
         _selectCategory(cat['key'] as String, cat['label'] as String);
       }
+    }
+
+    if (_incidentId == null || _incidentId!.isEmpty) {
+      _incidentId = 'DRAFT-${widget.user?.id ?? 0}';
     }
 
     _initLocation();
@@ -487,7 +492,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Future<void> _handleVideoTaken(String path) async {
     if (!mounted) return;
 
-    setState(() => _sending = true);
+    setState(() => _isUploadingMedia = true);
     
     try {
       // 1. Try to compress video, fall back gracefully to original path if compression fails
@@ -529,34 +534,33 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       });
       _scrollToBottom();
       
-      // 3. Send immediately or queue for transmission
-      if (_sent && _incidentId != null) {
-        final payload = {'senderId': widget.user?.id, 'messageContent': 'Video Attachment', 'messageType': 'video'};
+      // 3. Send video attachment via chat messaging flow
+      final targetIncidentId = _incidentId ?? 'DRAFT-${widget.user?.id ?? 0}';
+      final payload = {
+        'senderId': widget.user?.id,
+        'messageContent': 'Video Attachment',
+        'messageType': 'video',
+      };
+
+      try {
         final res = await ApiService.sendMessage(
-          _incidentId!,
+          targetIncidentId,
           payload,
           mediaPath: uploadPath,
         );
         if (res['error'] != null) {
-          throw Exception(res['error']);
+          debugPrint("Video send warning: ${res['error']}");
         }
-      } else {
-        // Queue for immediate upload upon incident activation
+      } catch (uploadErr) {
+        debugPrint("Video upload error: $uploadErr");
+      }
+
+      if (!_sent) {
+        // Queue for association upon explicit incident activation
         _pendingMediaUploads.add({
           'type': 'video',
           'path': uploadPath,
         });
-
-        if (_selectedCategory != null) {
-          await _doTransmit();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Video recorded! Please select an emergency type above to submit your emergency alert.'),
-              duration: Duration(seconds: 4),
-            ),
-          );
-        }
       }
     } catch (e) {
       debugPrint("Error handling video: $e");
@@ -566,11 +570,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         );
       }
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) setState(() => _isUploadingMedia = false);
     }
   }
 
   Future<void> _handleImageTaken(String path) async {
+    setState(() => _isUploadingMedia = true);
     try {
       final bytes = await File(path).readAsBytes();
       final b64 = base64Encode(bytes);
@@ -587,24 +592,31 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       });
       _scrollToBottom();
 
-      if (_sent && _incidentId != null) {
-        final payload = {'senderId': widget.user?.id, 'messageContent': 'Image Attachment', 'messageType': 'image'};
+      final targetIncidentId = _incidentId ?? 'DRAFT-${widget.user?.id ?? 0}';
+      final payload = {
+        'senderId': widget.user?.id,
+        'messageContent': 'Image Attachment',
+        'messageType': 'image',
+      };
+
+      try {
         final res = await ApiService.sendMessage(
-          _incidentId!,
+          targetIncidentId,
           payload,
           mediaPath: path,
         );
         if (res['error'] != null) {
-          throw Exception(res['error']);
+          debugPrint("Image send warning: ${res['error']}");
         }
-      } else {
+      } catch (uploadErr) {
+        debugPrint("Image upload error: $uploadErr");
+      }
+
+      if (!_sent) {
         _pendingMediaUploads.add({
           'type': 'image',
           'path': path,
         });
-        if (_selectedCategory != null) {
-          await _doTransmit();
-        }
       }
     } catch (e) {
       if (mounted) {
@@ -612,6 +624,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           SnackBar(content: Text('Failed to send attachment due to network error: $e')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isUploadingMedia = false);
     }
   }
 
@@ -795,7 +809,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         return;
       }
       await _doTransmit();
-      if (txt.isNotEmpty) {
+      if (_sent && txt.isNotEmpty) {
         setState(() {
           _chatFeed.add({
             'role': 'user',
@@ -1832,6 +1846,26 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     );
   }
 
+  Widget _buildMediaUploadingIndicator() {
+    return _botRow(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: _bubbleDecoration(false),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: _C.orange)),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text('Uploading attachment…',
+                  style: GoogleFonts.outfit(color: _C.ink, fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCategoryGrid() {
     return Padding(
       // Indent to line up with the bot bubbles (avatar 36 + gap 8).
@@ -2084,6 +2118,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 _buildCategoryGrid(),
                 ..._chatFeed.skip(1).map((msg) => _buildChatBubble(msg)),
                 if (_sending) _buildSendingIndicator(),
+                if (_isUploadingMedia) _buildMediaUploadingIndicator(),
               ],
             ),
           ),
