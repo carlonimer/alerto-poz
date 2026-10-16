@@ -629,19 +629,130 @@ class CitizenMobileClient {
         });
 
         this.cameraFacingMode = 'environment'; // Default to back camera for mobile web
+        this.cameraMode = 'photo'; // Default to photo mode
+        this.cameraMediaRecorder = null;
+        this.cameraRecordedChunks = [];
+        this.cameraRecordTimer = null;
+        this.cameraRecordSeconds = 0;
+        this.capturedCameraType = 'image';
+
+        const updateCameraModeUI = () => {
+            const btnPhoto = document.getElementById("btn-camera-mode-photo");
+            const btnVideo = document.getElementById("btn-camera-mode-video");
+            const btnCapture = document.getElementById("btn-camera-capture");
+            const title = document.getElementById("camera-modal-title");
+            
+            if (this.cameraMode === 'photo') {
+                if (btnPhoto) {
+                    btnPhoto.style.background = "rgba(245, 158, 11, 0.2)";
+                    btnPhoto.style.border = "1.5px solid #f59e0b";
+                    btnPhoto.style.color = "#f59e0b";
+                    btnPhoto.style.fontWeight = "bold";
+                }
+                if (btnVideo) {
+                    btnVideo.style.background = "transparent";
+                    btnVideo.style.border = "1.5px solid transparent";
+                    btnVideo.style.color = "#94a3b8";
+                    btnVideo.style.fontWeight = "500";
+                }
+                if (btnCapture) {
+                    btnCapture.textContent = "Capture Photo";
+                    btnCapture.style.background = "#3b82f6";
+                }
+                if (title) title.textContent = "Camera (Photo)";
+            } else {
+                if (btnVideo) {
+                    btnVideo.style.background = "rgba(239, 68, 68, 0.2)";
+                    btnVideo.style.border = "1.5px solid #ef4444";
+                    btnVideo.style.color = "#ef4444";
+                    btnVideo.style.fontWeight = "bold";
+                }
+                if (btnPhoto) {
+                    btnPhoto.style.background = "transparent";
+                    btnPhoto.style.border = "1.5px solid transparent";
+                    btnPhoto.style.color = "#94a3b8";
+                    btnPhoto.style.fontWeight = "500";
+                }
+                if (btnCapture) {
+                    btnCapture.textContent = "Record Video";
+                    btnCapture.style.background = "#ef4444";
+                }
+                if (title) title.textContent = "Camera (Video)";
+            }
+        };
 
         const startCamera = async (videoElement) => {
+            const errBox = document.getElementById("camera-error-message");
+            const errText = document.getElementById("camera-error-text");
+            if (errBox) errBox.style.display = "none";
+
             if (this.cameraStream) {
                 this.cameraStream.getTracks().forEach(track => track.stop());
+                this.cameraStream = null;
             }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                if (errBox) {
+                    errBox.style.display = "block";
+                    if (errText) errText.textContent = "Camera API is not supported in this browser or context (requires HTTPS or localhost). You can still attach files using the attachment button.";
+                }
+                return;
+            }
+
             try {
-                this.cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: this.cameraFacingMode }, audio: false });
+                // In video mode, also request audio if possible
+                const constraints = {
+                    video: { facingMode: this.cameraFacingMode }
+                };
+                if (this.cameraMode === 'video') {
+                    constraints.audio = true;
+                }
+
+                try {
+                    this.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch (audioErr) {
+                    // If audio fails (e.g. no microphone), fallback to video only
+                    if (this.cameraMode === 'video') {
+                        this.cameraStream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: this.cameraFacingMode },
+                            audio: false
+                        });
+                    } else {
+                        throw audioErr;
+                    }
+                }
+
                 videoElement.srcObject = this.cameraStream;
+                videoElement.style.display = "";
             } catch (err) {
                 console.error("Camera access denied or unavailable", err);
-                alert("Camera access denied or unavailable. Please check your browser permissions.");
-                const modal = document.getElementById("modal-camera-capture");
-                if (modal) modal.classList.add("hidden");
+                if (errBox) {
+                    errBox.style.display = "block";
+                    if (errText) {
+                        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                            errText.textContent = "Camera permission was denied. Please allow camera and microphone access in your browser settings to continue.";
+                        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                            errText.textContent = "No camera was found on your device.";
+                        } else {
+                            errText.textContent = "Camera access error: " + (err.message || err.name || "Unknown error");
+                        }
+                    }
+                }
+            }
+        };
+
+        const switchCameraMode = async (mode) => {
+            if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
+                return; // Don't switch modes while recording
+            }
+            if (this.cameraMode === mode) return;
+            this.cameraMode = mode;
+            updateCameraModeUI();
+
+            const video = document.getElementById("camera-video-feed");
+            if (video && this.cameraStream) {
+                // If switching to video, restart stream with audio if available
+                await startCamera(video);
             }
         };
 
@@ -651,15 +762,65 @@ class CitizenMobileClient {
                 const modal = document.getElementById("modal-camera-capture");
                 const video = document.getElementById("camera-video-feed");
                 if (modal && video) {
+                    // Open camera directly in Photo mode by default with no intermediate selection dialog
+                    this.cameraMode = 'photo';
+                    updateCameraModeUI();
                     modal.classList.remove("hidden");
                     await startCamera(video);
                 }
             });
         }
 
+        const btnModePhoto = document.getElementById("btn-camera-mode-photo");
+        if (btnModePhoto) {
+            btnModePhoto.addEventListener("click", () => switchCameraMode('photo'));
+        }
+
+        const btnModeVideo = document.getElementById("btn-camera-mode-video");
+        if (btnModeVideo) {
+            btnModeVideo.addEventListener("click", () => switchCameraMode('video'));
+        }
+
+        // Swipe gesture to switch between Photo and Video
+        const cameraFeed = document.getElementById("camera-video-feed");
+        const cameraModalCard = document.querySelector("#modal-camera-capture .modal-card");
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        const onTouchStart = (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        };
+
+        const onTouchEnd = (e) => {
+            const touchEndX = e.changedTouches[0].screenX;
+            const touchEndY = e.changedTouches[0].screenY;
+            const dx = touchEndX - touchStartX;
+            const dy = touchEndY - touchStartY;
+            if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                if (dx < 0) {
+                    // Swiped left -> Video mode
+                    switchCameraMode('video');
+                } else {
+                    // Swiped right -> Photo mode
+                    switchCameraMode('photo');
+                }
+            }
+        };
+
+        if (cameraFeed) {
+            cameraFeed.addEventListener("touchstart", onTouchStart, { passive: true });
+            cameraFeed.addEventListener("touchend", onTouchEnd, { passive: true });
+        }
+        if (cameraModalCard) {
+            cameraModalCard.addEventListener("touchstart", onTouchStart, { passive: true });
+            cameraModalCard.addEventListener("touchend", onTouchEnd, { passive: true });
+        }
+
         const btnCameraSwitch = document.getElementById("btn-camera-switch");
         if (btnCameraSwitch) {
             btnCameraSwitch.addEventListener("click", async () => {
+                if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") return;
                 this.cameraFacingMode = this.cameraFacingMode === 'environment' ? 'user' : 'environment';
                 const video = document.getElementById("camera-video-feed");
                 if (video) {
@@ -673,6 +834,16 @@ class CitizenMobileClient {
         const btnCameraCancelPreview = document.getElementById("btn-camera-cancel-preview");
         
         const closeCameraModal = () => {
+            if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
+                try { this.cameraMediaRecorder.stop(); } catch (_) {}
+            }
+            if (this.cameraRecordTimer) {
+                clearInterval(this.cameraRecordTimer);
+                this.cameraRecordTimer = null;
+            }
+            const recIndicator = document.getElementById("camera-recording-indicator");
+            if (recIndicator) recIndicator.style.display = "none";
+
             const modal = document.getElementById("modal-camera-capture");
             if (modal) modal.classList.add("hidden");
             if (this.cameraStream) {
@@ -681,45 +852,137 @@ class CitizenMobileClient {
             }
             // Reset to capture phase
             const video = document.getElementById("camera-video-feed");
-            const preview = document.getElementById("camera-preview-img");
+            const previewImg = document.getElementById("camera-preview-img");
+            const previewVideo = document.getElementById("camera-preview-video");
             const actionsCapture = document.getElementById("camera-actions-capture");
             const actionsPreview = document.getElementById("camera-actions-preview");
+            const btnCapture = document.getElementById("btn-camera-capture");
+            const errBox = document.getElementById("camera-error-message");
+
             if (video) video.style.display = "";
-            if (preview) { preview.style.display = "none"; preview.src = ""; }
+            if (previewImg) { previewImg.style.display = "none"; previewImg.src = ""; }
+            if (previewVideo) {
+                previewVideo.style.display = "none";
+                previewVideo.pause();
+                previewVideo.src = "";
+            }
             if (actionsCapture) actionsCapture.style.display = "flex";
             if (actionsPreview) actionsPreview.style.display = "none";
+            if (btnCapture) {
+                btnCapture.textContent = this.cameraMode === 'video' ? "Record Video" : "Capture Photo";
+                btnCapture.style.background = this.cameraMode === 'video' ? "#ef4444" : "#3b82f6";
+            }
+            if (errBox) errBox.style.display = "none";
             this.capturedCameraBlob = null;
+            this.capturedCameraType = 'image';
+            this.cameraRecordedChunks = [];
         };
 
         if (btnCameraCancel) btnCameraCancel.addEventListener("click", closeCameraModal);
         if (btnCameraCancelPreview) btnCameraCancelPreview.addEventListener("click", closeCameraModal);
 
-        // Capture button — take snapshot and show preview
+        // Capture / Record button
         const btnCameraCapture = document.getElementById("btn-camera-capture");
         if (btnCameraCapture) {
             btnCameraCapture.addEventListener("click", () => {
                 const video = document.getElementById("camera-video-feed");
                 const canvas = document.getElementById("camera-canvas");
-                const preview = document.getElementById("camera-preview-img");
+                const previewImg = document.getElementById("camera-preview-img");
+                const previewVideo = document.getElementById("camera-preview-video");
                 const actionsCapture = document.getElementById("camera-actions-capture");
                 const actionsPreview = document.getElementById("camera-actions-preview");
-                if (video && canvas) {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    const ctx = canvas.getContext("2d");
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    // Show preview, hide live feed
-                    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-                    if (preview) { preview.src = dataUrl; preview.style.display = "block"; }
-                    video.style.display = "none";
-                    if (actionsCapture) actionsCapture.style.display = "none";
-                    if (actionsPreview) actionsPreview.style.display = "flex";
-                    
-                    // Store the blob for later confirm
-                    canvas.toBlob((blob) => {
-                        this.capturedCameraBlob = blob;
-                    }, "image/jpeg", 0.9);
+                const recIndicator = document.getElementById("camera-recording-indicator");
+                const recordTime = document.getElementById("camera-record-time");
+
+                if (this.cameraMode === 'photo') {
+                    // Photo Mode: snapshot immediately
+                    if (video && canvas) {
+                        canvas.width = video.videoWidth || 640;
+                        canvas.height = video.videoHeight || 480;
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        
+                        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+                        if (previewImg) { previewImg.src = dataUrl; previewImg.style.display = "block"; }
+                        if (previewVideo) previewVideo.style.display = "none";
+                        video.style.display = "none";
+                        if (actionsCapture) actionsCapture.style.display = "none";
+                        if (actionsPreview) actionsPreview.style.display = "flex";
+                        
+                        this.capturedCameraType = 'image';
+                        canvas.toBlob((blob) => {
+                            this.capturedCameraBlob = blob;
+                        }, "image/jpeg", 0.9);
+                    }
+                } else {
+                    // Video Mode: Start or Stop recording
+                    if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
+                        // Stop recording
+                        this.cameraMediaRecorder.stop();
+                    } else {
+                        // Start recording
+                        if (!this.cameraStream) return;
+                        this.cameraRecordedChunks = [];
+                        let mimeType = 'video/webm;codecs=vp8,opus';
+                        if (!MediaRecorder.isTypeSupported(mimeType)) {
+                            mimeType = 'video/webm';
+                            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                                mimeType = '';
+                            }
+                        }
+
+                        try {
+                            const options = mimeType ? { mimeType } : undefined;
+                            this.cameraMediaRecorder = new MediaRecorder(this.cameraStream, options);
+                        } catch (recErr) {
+                            console.warn("Could not create MediaRecorder with options, fallback", recErr);
+                            this.cameraMediaRecorder = new MediaRecorder(this.cameraStream);
+                        }
+
+                        this.cameraMediaRecorder.ondataavailable = (event) => {
+                            if (event.data && event.data.size > 0) {
+                                this.cameraRecordedChunks.push(event.data);
+                            }
+                        };
+
+                        this.cameraMediaRecorder.onstop = () => {
+                            if (this.cameraRecordTimer) {
+                                clearInterval(this.cameraRecordTimer);
+                                this.cameraRecordTimer = null;
+                            }
+                            if (recIndicator) recIndicator.style.display = "none";
+
+                            const finalType = this.cameraMediaRecorder.mimeType || 'video/webm';
+                            const videoBlob = new Blob(this.cameraRecordedChunks, { type: finalType });
+                            this.capturedCameraBlob = videoBlob;
+                            this.capturedCameraType = 'video';
+
+                            const videoUrl = URL.createObjectURL(videoBlob);
+                            if (previewVideo) {
+                                previewVideo.src = videoUrl;
+                                previewVideo.style.display = "block";
+                            }
+                            if (previewImg) previewImg.style.display = "none";
+                            video.style.display = "none";
+                            if (actionsCapture) actionsCapture.style.display = "none";
+                            if (actionsPreview) actionsPreview.style.display = "flex";
+                        };
+
+                        this.cameraMediaRecorder.start();
+                        btnCameraCapture.textContent = "Stop Recording";
+                        btnCameraCapture.style.background = "#dc2626";
+
+                        this.cameraRecordSeconds = 0;
+                        if (recordTime) recordTime.textContent = "00:00";
+                        if (recIndicator) recIndicator.style.display = "flex";
+
+                        this.cameraRecordTimer = setInterval(() => {
+                            this.cameraRecordSeconds++;
+                            const mins = String(Math.floor(this.cameraRecordSeconds / 60)).padStart(2, '0');
+                            const secs = String(this.cameraRecordSeconds % 60).padStart(2, '0');
+                            if (recordTime) recordTime.textContent = `${mins}:${secs}`;
+                        }, 1000);
+                    }
                 }
             });
         }
@@ -729,23 +992,41 @@ class CitizenMobileClient {
         if (btnCameraRetake) {
             btnCameraRetake.addEventListener("click", () => {
                 const video = document.getElementById("camera-video-feed");
-                const preview = document.getElementById("camera-preview-img");
+                const previewImg = document.getElementById("camera-preview-img");
+                const previewVideo = document.getElementById("camera-preview-video");
                 const actionsCapture = document.getElementById("camera-actions-capture");
                 const actionsPreview = document.getElementById("camera-actions-preview");
+                const btnCapture = document.getElementById("btn-camera-capture");
+
                 if (video) video.style.display = "";
-                if (preview) { preview.style.display = "none"; preview.src = ""; }
+                if (previewImg) { previewImg.style.display = "none"; previewImg.src = ""; }
+                if (previewVideo) {
+                    previewVideo.style.display = "none";
+                    previewVideo.pause();
+                    previewVideo.src = "";
+                }
                 if (actionsCapture) actionsCapture.style.display = "flex";
                 if (actionsPreview) actionsPreview.style.display = "none";
+                if (btnCapture) {
+                    btnCapture.textContent = this.cameraMode === 'video' ? "Record Video" : "Capture Photo";
+                    btnCapture.style.background = this.cameraMode === 'video' ? "#ef4444" : "#3b82f6";
+                }
                 this.capturedCameraBlob = null;
+                this.cameraRecordedChunks = [];
             });
         }
 
-        // Confirm button — send the captured photo
+        // Confirm button — send the captured photo or recorded video
         const btnCameraConfirm = document.getElementById("btn-camera-confirm");
         if (btnCameraConfirm) {
             btnCameraConfirm.addEventListener("click", () => {
                 if (this.capturedCameraBlob) {
-                    const file = new File([this.capturedCameraBlob], "camera-capture.jpg", { type: "image/jpeg" });
+                    let file;
+                    if (this.capturedCameraType === 'video') {
+                        file = new File([this.capturedCameraBlob], "camera-video-" + Date.now() + ".webm", { type: this.capturedCameraBlob.type || "video/webm" });
+                    } else {
+                        file = new File([this.capturedCameraBlob], "camera-capture.jpg", { type: "image/jpeg" });
+                    }
                     const fakeEvent = {
                         target: {
                             files: [file],
@@ -2132,7 +2413,7 @@ class CitizenMobileClient {
         if (!this.addressSearchInput.value || this.addressSearchInput.value.includes("📍") || this.addressSearchInput.value.includes("16.1")) {
             this.addressSearchInput.value = "Locating...";
             const chatGeofenceAddress = document.getElementById('chat-geofence-address');
-            if (chatGeofenceAddress && (chatGeofenceAddress.textContent.includes("Buneg") || chatGeofenceAddress.textContent.includes("📍"))) {
+            if (chatGeofenceAddress && (chatGeofenceAddress.textContent === "Unknown Location" || chatGeofenceAddress.textContent.includes("📍"))) {
                 chatGeofenceAddress.textContent = "Locating...";
             }
         }
@@ -2145,41 +2426,31 @@ class CitizenMobileClient {
             this.consoleUserMarker.setLatLng(this.gps);
         }
 
-        const currentLatStr = this.gps.lat.toFixed(4);
-        const currentLngStr = this.gps.lng.toFixed(4);
+        const currentLatStr = this.gps.lat.toFixed(5);
+        const currentLngStr = this.gps.lng.toFixed(5);
         const locKey = `${currentLatStr},${currentLngStr}`;
         if (this._lastSyncLocKey === locKey) return;
         this._lastSyncLocKey = locKey;
 
         try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${this.gps.lat}&lon=${this.gps.lng}&zoom=18&addressdetails=1`, {
-                headers: { 'Accept-Language': 'en' }
-            });
-            if (!res.ok) throw new Error("Reverse geocoding failed");
-            const data = await res.json();
-            const addr = data.address || {};
-            const barangay = addr.village || addr.suburb || addr.quarter || addr.hamlet || addr.neighbourhood || addr.city_district || "";
-            const town = addr.town || addr.municipality || addr.city || addr.county || "Pozorrubio";
-            const province = addr.province || addr.state || addr.region || "Pangasinan";
-
-            let brgyStr = barangay.toString().trim();
-            if (brgyStr.toLowerCase().startsWith("barangay ")) {
-                brgyStr = brgyStr.substring(9).trim();
+            let result = null;
+            if (window.BarangayService) {
+                result = await window.BarangayService.resolveLocation(this.gps.lat, this.gps.lng);
+            }
+            if (!result || !result.success) {
+                const res = await fetch(`${SERVER_URL}/api/geocode/reverse?lat=${this.gps.lat}&lng=${this.gps.lng}`);
+                if (res.ok) result = await res.json();
             }
 
-            const parts = [];
-            if (brgyStr) parts.push(brgyStr);
-            if (town) parts.push(town);
-            if (province) parts.push(province);
-
-            const chatGeofenceAddress = document.getElementById('chat-geofence-address');
-            if (parts.length > 0) {
-                const addressStr = parts.join(", ");
+            if (result && result.success) {
+                this._resolvedBarangay = result.barangay;
+                const addressStr = result.formattedAddress || `${result.barangay || ''}, ${result.municipality || 'Pozorrubio'}, ${result.province || 'Pangasinan'}`;
                 this.addressSearchInput.value = addressStr;
+                const chatGeofenceAddress = document.getElementById('chat-geofence-address');
                 if (chatGeofenceAddress) chatGeofenceAddress.textContent = addressStr;
+                console.log(`[CitizenClient] GPS UI updated: ${addressStr} (Barangay: ${result.barangay}, source: ${result.source})`);
             } else {
-                this.addressSearchInput.value = "Unknown Location";
-                if (chatGeofenceAddress) chatGeofenceAddress.textContent = "Unknown Location";
+                throw new Error("Location resolution returned unsuccessful");
             }
         } catch (err) {
             console.error("Reverse geocoding error:", err);
@@ -2693,6 +2964,7 @@ class CitizenMobileClient {
                     reporterPhone: this.activeUser.phone,
                     lat: this.gps.lat,
                     lng: this.gps.lng,
+                    barangay: this._resolvedBarangay || (window.BarangayService && window.BarangayService.findPozorrubioBarangay ? window.BarangayService.findPozorrubioBarangay(this.gps.lat, this.gps.lng)?.name : null) || this.activeUser.barangay || null,
                     reporter: this.activeUser.name,
                     createdAt: Date.now(),
                     forceNew: forceNew

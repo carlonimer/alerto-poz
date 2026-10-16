@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -17,9 +16,10 @@ import 'package:video_compress/video_compress.dart';
 import '../models/user.dart';
 import '../services/socket_service.dart';
 import '../services/location_service.dart';
+import '../services/barangay_service.dart';
 import '../services/api_service.dart';
 import 'call_screen.dart';
-
+import 'camera_screen.dart';
 
 /// Colour tokens for the ALERTO-POZ emergency chat (orange emergency theme).
 class _C {
@@ -78,6 +78,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   LatLng? _selectedPos;
   Timer? _geocodeTimer;
   String _currentAddress = 'Locating...';
+  String? _resolvedBarangay;
+  int _locationSeq = 0;
 
   static const List<Map<String, dynamic>> _categories = [
     {'key': 'medical', 'label': 'MEDICAL', 'icon': Icons.medical_services_rounded, 'color': Color(0xFFE53935)},
@@ -308,41 +310,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  /// Best-effort reverse geocode to "Barangay, Town, Province".
   Future<void> _resolveAddress(double lat, double lng) async {
+    final seq = ++_locationSeq;
     try {
-      final uri = Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
-      final res = await http
-          .get(uri, headers: {'User-Agent': 'com.alertopoz.app', 'Accept-Language': 'en'})
-          .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) {
-         if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
-         return;
+      debugPrint('[SosChatScreen] Requesting address for ($lat, $lng), seq=$seq');
+      final result = await BarangayService.resolveLocation(lat, lng);
+      if (!mounted || seq != _locationSeq) {
+        debugPrint('[SosChatScreen] Stale location response ignored (seq=$seq, current=$_locationSeq)');
+        return;
       }
-      final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
-      
-      var barangay = addr['village'] ?? addr['suburb'] ?? addr['quarter'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['city_district'] ?? '';
-      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? 'Pozorrubio';
-      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? 'Pangasinan';
-
-      var brgyStr = barangay.toString().trim();
-      if (brgyStr.toLowerCase().startsWith('barangay ')) {
-        brgyStr = brgyStr.substring(9).trim();
-      }
-
-      final parts = <String>[];
-      if (brgyStr.isNotEmpty) parts.add(brgyStr);
-      if (town.toString().isNotEmpty) parts.add(town.toString());
-      if (province.toString().isNotEmpty) parts.add(province.toString());
-      
-      if (parts.isNotEmpty && mounted) {
-        setState(() => _currentAddress = parts.join(', '));
-      } else if (mounted) {
+      setState(() {
+        _currentAddress = result.formattedAddress;
+        _resolvedBarangay = result.barangay;
+      });
+      debugPrint('[SosChatScreen] UI Location updated: $_currentAddress (Barangay: $_resolvedBarangay, Source: ${result.source})');
+    } catch (e) {
+      debugPrint('[SosChatScreen] Location resolution error: $e');
+      if (mounted && seq == _locationSeq && _currentAddress == 'Locating...') {
         setState(() => _currentAddress = 'Unknown Location');
       }
-    } catch (_) {
-      if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
     }
   }
 
@@ -659,14 +645,19 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (!background) setState(() => _sending = true);
     if (!background) _scrollToBottom();
 
+    final transmitLat = _selectedPos?.latitude ?? _defaultCenter.latitude;
+    final transmitLng = _selectedPos?.longitude ?? _defaultCenter.longitude;
+    final transmitBarangay = _resolvedBarangay ?? BarangayService.findPozorrubioBarangay(transmitLat, transmitLng)?.name;
+
     final payload = {
       'id': _incidentId ?? 'draft',
       'status': 'pending',
       'reporterId': widget.user?.id ?? 0,
       'reporterPhone': widget.user?.phone ?? '',
       'reporter': widget.user?.name ?? 'Citizen',
-      'lat': _selectedPos?.latitude ?? _defaultCenter.latitude,
-      'lng': _selectedPos?.longitude ?? _defaultCenter.longitude,
+      'lat': transmitLat,
+      'lng': transmitLng,
+      'barangay': transmitBarangay,
       'category': _selectedCategory,
       'details': _commentCtrl.text.trim(),
       'media': _attachedImages,
@@ -812,91 +803,19 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
   // ───────────────────────── Dialogs ─────────────────────────
 
-  void _showCameraOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 24),
-              decoration: BoxDecoration(
-                color: _C.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            _buildOptionTile(
-              icon: Icons.camera_alt,
-              color: Colors.blue,
-              title: 'Photo',
-              onTap: () {
-                Navigator.pop(context);
-                _openCamera(1);
-              },
-            ),
-            const SizedBox(height: 16),
-            _buildOptionTile(
-              icon: Icons.videocam,
-              color: Colors.red,
-              title: 'Video',
-              onTap: () {
-                Navigator.pop(context);
-                _openCamera(2);
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionTile({required IconData icon, required Color color, required String title, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        decoration: BoxDecoration(
-          border: Border.all(color: _C.divider),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(width: 16),
-            Text(title, style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.w600, color: _C.ink)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openCamera(int mode) async {
-    final picker = ImagePicker();
-    XFile? file;
+  Future<void> _openCameraDirectly() async {
     try {
-      if (mode == 1) { // Photo
-        file = await picker.pickImage(source: ImageSource.camera);
-      } else { // Video
-        file = await picker.pickVideo(source: ImageSource.camera);
-      }
-      
-      if (file != null) {
-        await _showMediaReviewDialog(file.path, mode == 2 ? 'video' : 'image');
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CameraScreen(initialMode: 1)),
+      );
+
+      if (result != null && result is Map && mounted) {
+        final path = result['path'] as String?;
+        final type = result['type'] as String?;
+        if (path != null && type != null) {
+          await _showMediaReviewDialog(path, type);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -906,6 +825,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
     }
   }
+
 
   void _showCloseIncidentDialog() {
     showDialog(
@@ -1864,7 +1784,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   tooltip: 'Camera',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
-                  onPressed: _showCameraOptions,
+                  onPressed: _openCameraDirectly,
                 ),
                 const SizedBox(width: 4),
                 Expanded(

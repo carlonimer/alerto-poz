@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,6 +10,7 @@ import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/location_service.dart';
+import '../services/barangay_service.dart';
 import '../main.dart';
 import 'sos_chat_screen.dart';
 import 'call_screen.dart';
@@ -34,6 +34,8 @@ class _HomeScreenState extends State<HomeScreen>
   List<dynamic> _broadcasts = [];
   LatLng? _myLocation;
   String _currentAddress = 'Locating...';
+  String? _resolvedBarangay;
+  int _locationSeq = 0;
   bool _showBroadcastBanner = false;
   Map<String, dynamic>? _latestBroadcast;
 
@@ -213,31 +215,24 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _resolveAddress(double lat, double lng) async {
+    final seq = ++_locationSeq;
     try {
-      final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
-      final res = await http.get(uri, headers: {'User-Agent': 'com.alertopoz.app', 'Accept-Language': 'en'}).timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) {
-        if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
+      debugPrint('[HomeScreen] Requesting address for ($lat, $lng), seq=$seq');
+      final result = await BarangayService.resolveLocation(lat, lng);
+      if (!mounted || seq != _locationSeq) {
+        debugPrint('[HomeScreen] Stale location response ignored (seq=$seq, current=$_locationSeq)');
         return;
       }
-      final addr = Map<String, dynamic>.from(jsonDecode(res.body)['address'] ?? {});
-      var barangay = addr['village'] ?? addr['suburb'] ?? addr['quarter'] ?? addr['hamlet'] ?? addr['neighbourhood'] ?? addr['city_district'] ?? '';
-      var town = addr['town'] ?? addr['municipality'] ?? addr['city'] ?? addr['county'] ?? 'Pozorrubio';
-      var province = addr['province'] ?? addr['state'] ?? addr['region'] ?? 'Pangasinan';
-      var brgyStr = barangay.toString().trim();
-      if (brgyStr.toLowerCase().startsWith('barangay ')) brgyStr = brgyStr.substring(9).trim();
-      final parts = <String>[];
-      if (brgyStr.isNotEmpty) parts.add(brgyStr);
-      if (town.toString().isNotEmpty) parts.add(town.toString());
-      if (province.toString().isNotEmpty) parts.add(province.toString());
-      
-      if (parts.isNotEmpty && mounted) {
-        setState(() => _currentAddress = parts.join(', '));
-      } else if (mounted) {
+      setState(() {
+        _currentAddress = result.formattedAddress;
+        _resolvedBarangay = result.barangay;
+      });
+      debugPrint('[HomeScreen] UI Location updated: $_currentAddress (Barangay: $_resolvedBarangay, Source: ${result.source})');
+    } catch (e) {
+      debugPrint('[HomeScreen] Location resolution error: $e');
+      if (mounted && seq == _locationSeq && _currentAddress == 'Locating...') {
         setState(() => _currentAddress = 'Unknown Location');
       }
-    } catch (_) {
-      if (mounted && _currentAddress == 'Locating...') setState(() => _currentAddress = 'Unknown Location');
     }
   }
 
@@ -1359,11 +1354,15 @@ class _HomeScreenState extends State<HomeScreen>
                         
                         try {
                           final pos = await LocationService.getCurrentPosition();
+                          final detectedLat = pos?.latitude ?? _myLocation?.latitude ?? 16.1086;
+                          final detectedLng = pos?.longitude ?? _myLocation?.longitude ?? 120.5424;
+                          final detectedBarangay = _resolvedBarangay ?? BarangayService.findPozorrubioBarangay(detectedLat, detectedLng)?.name;
                           final payload = {
                             'reporterId': _user?.id,
                             'reporterPhone': _user?.phone,
-                            'lat': pos?.latitude ?? 16.1086,
-                            'lng': pos?.longitude ?? 120.5424,
+                            'lat': detectedLat,
+                            'lng': detectedLng,
+                            'barangay': detectedBarangay,
                             'reporter': _user?.name,
                             'createdAt': DateTime.now().toIso8601String(),
                             'forceNew': true

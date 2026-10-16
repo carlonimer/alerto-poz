@@ -14,6 +14,7 @@ const twilio = require('twilio');
 const crypto = require('crypto');
 const multer = require('multer');
 const exifr = require('exifr');
+const barangayService = require('./services/barangay_service');
 
 async function getMediaMetadataMarkdown(filePath) {
     let fallback = `\n\n**Proof of Evidence**\n* 📍 Location: Unavailable\n* Latitude: Unavailable\n* Longitude: Unavailable\n* Date: Unavailable\n* Time: Unavailable\n* Day: Unavailable`;
@@ -37,24 +38,12 @@ async function getMediaMetadataMarkdown(filePath) {
 
         if (lat && lng) {
             try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
-                    headers: { 'User-Agent': 'AlertoPoz/1.0' }
-                });
-                const geoData = await response.json();
-                if (geoData && geoData.display_name) {
-                    const addr = geoData.address;
-                    if (addr) {
-                        let parts = [];
-                        if (addr.village || addr.suburb || addr.neighbourhood) parts.push(addr.village || addr.suburb || addr.neighbourhood);
-                        if (addr.town || addr.city || addr.municipality) parts.push(addr.town || addr.city || addr.municipality);
-                        if (addr.state || addr.province) parts.push(addr.state || addr.province);
-                        location = parts.length > 0 ? parts.join(', ') : geoData.display_name;
-                    } else {
-                        location = geoData.display_name;
-                    }
+                const geo = await barangayService.resolveLocation(lat, lng);
+                if (geo && geo.formattedAddress) {
+                    location = geo.formattedAddress;
                 }
             } catch (e) {
-                console.error("Reverse geocoding failed", e);
+                console.error("EXIF reverse geocoding failed", e);
             }
         }
 
@@ -412,8 +401,17 @@ async function registerUser(phone, pin, name) {
 }
 
 async function addIncident(report) {
+    // Authoritatively resolve and verify barangay from GPS coordinates
+    if (report.lat && report.lng) {
+        const pozBgy = barangayService.findPozorrubioBarangay(Number(report.lat), Number(report.lng));
+        if (pozBgy && pozBgy.name) {
+            console.log(`[Incident Location] GPS (${report.lat}, ${report.lng}) mapped authoritatively to Barangay: ${pozBgy.name}`);
+            report.barangay = pozBgy.name;
+        }
+    }
+
     if (useMySQL) {
-        // Try to get reporter's barangay if missing
+        // Fallback: Try to get reporter's barangay if missing
         if (!report.barangay && report.reporterPhone) {
             const [u] = await pool.query("SELECT barangay FROM users WHERE phone = ?", [report.reporterPhone]);
             if (u.length > 0 && u[0].barangay) report.barangay = u[0].barangay;
@@ -542,6 +540,22 @@ app.get('/api/db-state', async (req, res) => {
 
 // --- Register RBAC APIs ---
 require('./routes_rbac.js')(app, getDBState, pool, useMySQL);
+
+// Shared Authoritative Reverse Geocoding API endpoint
+app.get('/api/geocode/reverse', async (req, res) => {
+    try {
+        const lat = parseFloat(req.query.lat);
+        const lng = parseFloat(req.query.lng || req.query.lon);
+        if (isNaN(lat) || isNaN(lng)) {
+            return res.status(400).json({ success: false, error: "Valid 'lat' and 'lng' query parameters are required." });
+        }
+        const result = await barangayService.resolveLocation(lat, lng);
+        res.json(result);
+    } catch (e) {
+        console.error("Geocoding reverse endpoint error:", e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 app.get('/api/incidents', async (req, res) => {
     try {
@@ -1843,6 +1857,7 @@ app.post('/api/incidents/draft', async (req, res) => {
                 details: `Emergency report prepared by ${reporter}`,
                 lat: lat || 16.1086,
                 lng: lng || 120.5424,
+                barangay: req.body.barangay || null,
                 reporter: reporter || 'Unknown Citizen',
                 reporterPhone: phone,
                 media: [],

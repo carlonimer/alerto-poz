@@ -1830,27 +1830,49 @@
     <!-- Camera Capture Modal -->
     <div class="profile-sub-modal hidden" id="modal-camera-capture" style="z-index: 9999;">
       <div class="modal-card" style="width: 90%; max-width: 500px; display: flex; flex-direction: column; align-items: center; background: #1e293b; color: white;">
-        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 10px; margin-bottom: 15px;">
-          <h3 style="margin: 0; color: white;">Capture Photo</h3>
-          <button id="btn-camera-switch" style="padding: 8px 12px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 6px; font-size: 13px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 10px; margin-bottom: 12px;">
+          <h3 id="camera-modal-title" style="margin: 0; color: white;">Camera</h3>
+          <button id="btn-camera-switch" type="button" style="padding: 8px 12px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 6px; font-size: 13px;">
               <i class="fa-solid fa-camera-rotate"></i> Switch
           </button>
         </div>
+
+        <!-- Mode selector: Photo / Video -->
+        <div id="camera-mode-bar" style="display: flex; gap: 12px; margin-bottom: 12px; justify-content: center; width: 100%;">
+          <button type="button" id="btn-camera-mode-photo" style="background: rgba(245, 158, 11, 0.2); border: 1.5px solid #f59e0b; color: #f59e0b; border-radius: 20px; padding: 4px 16px; font-weight: bold; cursor: pointer; font-size: 13px; letter-spacing: 1px;">PHOTO</button>
+          <button type="button" id="btn-camera-mode-video" style="background: transparent; border: 1.5px solid transparent; color: #94a3b8; border-radius: 20px; padding: 4px 16px; font-weight: 500; cursor: pointer; font-size: 13px; letter-spacing: 1px;">VIDEO</button>
+        </div>
+
+        <!-- Recording Indicator (Hidden by default) -->
+        <div id="camera-recording-indicator" style="display: none; align-items: center; gap: 8px; background: rgba(239, 68, 68, 0.9); padding: 4px 14px; border-radius: 20px; margin-bottom: 10px; font-weight: bold; font-size: 13px;">
+          <span style="display: inline-block; width: 8px; height: 8px; background: #fff; border-radius: 50%;"></span>
+          <span id="camera-record-time">00:00</span>
+        </div>
+
+        <!-- Camera Error / Permission Notice -->
+        <div id="camera-error-message" style="display: none; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin-bottom: 12px; color: #fca5a5; font-size: 13px; text-align: center; width: 100%;">
+          <div style="font-weight: bold; margin-bottom: 4px;">Camera Access Needed</div>
+          <div id="camera-error-text">Please allow camera access in your browser settings to take photos and record emergency clips.</div>
+        </div>
+
         <!-- Live camera feed -->
         <video id="camera-video-feed" autoplay playsinline style="width: 100%; border-radius: 8px; background: #000; max-height: 60vh; object-fit: cover;"></video>
         <!-- Preview image (hidden by default) -->
         <img id="camera-preview-img" style="display: none; width: 100%; border-radius: 8px; max-height: 60vh; object-fit: cover;" />
+        <!-- Preview video (hidden by default) -->
+        <video id="camera-preview-video" controls playsinline style="display: none; width: 100%; border-radius: 8px; max-height: 60vh; object-fit: cover;"></video>
         <canvas id="camera-canvas" style="display: none;"></canvas>
+
         <!-- Phase 1: Capture buttons -->
-        <div id="camera-actions-capture" class="modal-actions" style="margin-top: 20px; width: 100%; justify-content: center; gap: 15px;">
-          <button id="btn-camera-capture" style="background: #3b82f6; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Capture</button>
-          <button id="btn-camera-cancel" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
+        <div id="camera-actions-capture" class="modal-actions" style="margin-top: 18px; width: 100%; justify-content: center; gap: 15px;">
+          <button id="btn-camera-capture" type="button" style="background: #3b82f6; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Capture</button>
+          <button id="btn-camera-cancel" type="button" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
         </div>
         <!-- Phase 2: Preview buttons (hidden by default) -->
-        <div id="camera-actions-preview" class="modal-actions" style="display: none; margin-top: 20px; width: 100%; justify-content: center; gap: 15px;">
-          <button id="btn-camera-retake" style="background: #f59e0b; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Retake</button>
-          <button id="btn-camera-confirm" style="background: #10b981; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Confirm</button>
-          <button id="btn-camera-cancel-preview" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
+        <div id="camera-actions-preview" class="modal-actions" style="display: none; margin-top: 18px; width: 100%; justify-content: center; gap: 15px;">
+          <button id="btn-camera-retake" type="button" style="background: #f59e0b; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Retake</button>
+          <button id="btn-camera-confirm" type="button" style="background: #10b981; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Confirm</button>
+          <button id="btn-camera-cancel-preview" type="button" style="background: #ef4444; border: none; padding: 10px 24px; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; font-size: 14px;">Cancel</button>
         </div>
       </div>
     </div>
@@ -2036,8 +2058,10 @@
         this.src = '../../server/public/webcam-overlay.js';
       "
     ></script>
+    <!-- Authoritative Barangay Service -->
+    <script src="barangay_service.js"></script>
     <!-- Main JS Application -->
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
     <!-- Media Lightbox Viewer -->
     <div id="media-lightbox" class="hidden">
       <span id="lightbox-close">&times;</span>

@@ -918,38 +918,39 @@ class CommandDashboard {
                     });
                     marker.setIcon(locIcon);
                     
-                    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${inc.lat}&lon=${inc.lng}&zoom=18&addressdetails=1`)
-                        .then(res => res.json())
-                        .then(data => {
-                            const addr = data.address || {};
-                            let brgy = addr.village || addr.suburb || addr.quarter || addr.hamlet || addr.neighbourhood || addr.city_district || "";
-                            let town = addr.town || addr.municipality || addr.city || addr.county || "Pozorrubio"; // Fallback to Pozorrubio
-                            let prov = addr.province || addr.state || addr.region || "Pangasinan"; // Fallback to Pangasinan
+                    const setPopupAddress = (address) => {
+                        marker.bindPopup(`
+                            <div style="max-width: 250px; white-space: normal; text-align: center; font-family: 'Inter', sans-serif; padding: 5px;">
+                                <div style="background: #eef2ff; color: #4f46e5; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; display: inline-block; margin-bottom: 6px; text-transform: uppercase;">User Location Detected</div><br>
+                                <span style="font-size: 12px; font-weight: 600; color: #1e293b;">${address}</span>
+                            </div>
+                        `, {
+                            offset: [0, -32],
+                            closeButton: false
+                        }).openPopup();
+                    };
 
-                            let brgyStr = brgy.trim();
-                            if (brgyStr.toLowerCase().startsWith("barangay ")) {
-                                brgyStr = brgyStr.substring(9).trim();
-                            }
-
-                            const parts = [];
-                            if (brgyStr) parts.push(brgyStr);
-                            if (town) parts.push(town);
-                            if (prov) parts.push(prov);
-                            const address = parts.length > 0 ? parts.join(", ") : data.display_name || "Unknown Location";
-                            
-                            marker.bindPopup(`
-                                <div style="max-width: 250px; white-space: normal; text-align: center; font-family: 'Inter', sans-serif; padding: 5px;">
-                                    <div style="background: #eef2ff; color: #4f46e5; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; display: inline-block; margin-bottom: 6px; text-transform: uppercase;">User Location Detected</div><br>
-                                    <span style="font-size: 12px; font-weight: 600; color: #1e293b;">${address}</span>
-                                </div>
-                            `, {
-                                offset: [0, -32],
-                                closeButton: false
-                            }).openPopup();
-                        })
-                        .catch(err => {
-                            console.error("Reverse geocoding failed", err);
-                        });
+                    if (window.BarangayService && typeof window.BarangayService.resolveLocation === 'function') {
+                        window.BarangayService.resolveLocation(inc.lat, inc.lng)
+                            .then(loc => {
+                                const address = loc.formattedAddress || `${inc.barangay || 'Pozorrubio'}, Pozorrubio, Pangasinan`;
+                                setPopupAddress(address);
+                            })
+                            .catch(err => {
+                                console.error("BarangayService geocoding failed, falling back", err);
+                                const fallbackAddr = inc.barangay ? `${inc.barangay}, Pozorrubio, Pangasinan` : "Pozorrubio, Pangasinan";
+                                setPopupAddress(fallbackAddr);
+                            });
+                    } else if (inc.barangay) {
+                        setPopupAddress(`${inc.barangay}, Pozorrubio, Pangasinan`);
+                    } else {
+                        fetch(`/api/geocode/reverse?lat=${inc.lat}&lng=${inc.lng}`)
+                            .then(res => res.json())
+                            .then(data => {
+                                setPopupAddress(data.formattedAddress || "Pozorrubio, Pangasinan");
+                            })
+                            .catch(() => setPopupAddress("Pozorrubio, Pangasinan"));
+                    }
                 }
             }
         }, 150);
