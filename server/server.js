@@ -2147,7 +2147,21 @@ app.post('/api/incidents', async (req, res) => {
                     [report.reporterId, report.reporterPhone || '']
                 );
                 if (existing.length > 0) {
-                    return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                    if (!report.forceNew) {
+                        return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                    } else {
+                        for (let inc of existing) {
+                            if (inc.id !== report.id) {
+                                await pool.query("UPDATE incidents SET status='cancelled' WHERE id=?", [inc.id]);
+                                if (inc.assignedVehicle) {
+                                    await pool.query("UPDATE rescue_vehicles SET status='Available' WHERE id=? OR name=?", [inc.assignedVehicle, inc.assignedVehicle]);
+                                }
+                                if (inc.assignedUnit) {
+                                    await pool.query("UPDATE responders SET status='available' WHERE id=?", [inc.assignedUnit]);
+                                }
+                            }
+                        }
+                    }
                 }
             } else if (!useMySQL && report.reporterId) {
                 const dbState = await getDBState();
@@ -2156,7 +2170,23 @@ app.post('/api/incidents', async (req, res) => {
                     !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())
                 );
                 if (existing.length > 0) {
-                    return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                    if (!report.forceNew) {
+                        return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                    } else {
+                        for (let inc of existing) {
+                            if (inc.id !== report.id) {
+                                inc.status = 'cancelled';
+                                if (inc.assignedVehicle && db.rescue_vehicles) {
+                                    const v = db.rescue_vehicles.find(vh => vh.id === inc.assignedVehicle || vh.name === inc.assignedVehicle);
+                                    if (v) v.status = 'Available';
+                                }
+                                if (inc.assignedUnit && db.responders) {
+                                    const r = db.responders.find(rsp => rsp.id === inc.assignedUnit);
+                                    if (r) r.status = 'available';
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2679,10 +2709,24 @@ io.on('connection', async (socket) => {
                         [report.reporterId, report.reporterPhone || '']
                     );
                     if (existing.length > 0) {
-                        if (typeof callback === 'function') {
-                            return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                        if (!report.forceNew) {
+                            if (typeof callback === 'function') {
+                                return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                            }
+                            return;
+                        } else {
+                            for (let inc of existing) {
+                                if (inc.id !== report.id) {
+                                    await pool.query("UPDATE incidents SET status='cancelled' WHERE id=?", [inc.id]);
+                                    if (inc.assignedVehicle) {
+                                        await pool.query("UPDATE rescue_vehicles SET status='Available' WHERE id=? OR name=?", [inc.assignedVehicle, inc.assignedVehicle]);
+                                    }
+                                    if (inc.assignedUnit) {
+                                        await pool.query("UPDATE responders SET status='available' WHERE id=?", [inc.assignedUnit]);
+                                    }
+                                }
+                            }
                         }
-                        return;
                     }
                 } else if (!useMySQL && report.reporterId) {
                     const dbState = await getDBState();
@@ -2691,10 +2735,26 @@ io.on('connection', async (socket) => {
                         !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())
                     );
                     if (existing.length > 0) {
-                        if (typeof callback === 'function') {
-                            return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                        if (!report.forceNew) {
+                            if (typeof callback === 'function') {
+                                return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                            }
+                            return;
+                        } else {
+                            for (let inc of existing) {
+                                if (inc.id !== report.id) {
+                                    inc.status = 'cancelled';
+                                    if (inc.assignedVehicle && db.rescue_vehicles) {
+                                        const v = db.rescue_vehicles.find(vh => vh.id === inc.assignedVehicle || vh.name === inc.assignedVehicle);
+                                        if (v) v.status = 'Available';
+                                    }
+                                    if (inc.assignedUnit && db.responders) {
+                                        const r = db.responders.find(rsp => rsp.id === inc.assignedUnit);
+                                        if (r) r.status = 'available';
+                                    }
+                                }
+                            }
                         }
-                        return;
                     }
                 }
 

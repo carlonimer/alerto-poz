@@ -2885,10 +2885,20 @@ class CitizenMobileClient {
 
             try {
                 // FIRST: Check if active report exists without creating a draft
-                const checkRes = await fetch(`${SERVER_URL}/api/incidents/active?userId=${this.activeUser.id}&phone=${encodeURIComponent(this.activeUser.phone || '')}`);
-                const checkData = await checkRes.json();
+                let checkData = null;
+                try {
+                    const checkController = new AbortController();
+                    const checkTimeout = setTimeout(() => checkController.abort(), 4000);
+                    const checkRes = await fetch(`${SERVER_URL}/api/incidents/active?userId=${this.activeUser.id}&phone=${encodeURIComponent(this.activeUser.phone || '')}`, { signal: checkController.signal });
+                    clearTimeout(checkTimeout);
+                    if (checkRes.ok) {
+                        checkData = await checkRes.json();
+                    }
+                } catch (checkErr) {
+                    console.warn("Could not check active emergency status from Command Center:", checkErr);
+                }
 
-                if (checkData.hasActive && checkData.incident) {
+                if (checkData && checkData.hasActive && checkData.incident) {
                     const modalOverlay = document.createElement("div");
                     modalOverlay.style.position = "fixed";
                     modalOverlay.style.top = "0"; modalOverlay.style.left = "0"; modalOverlay.style.width = "100%"; modalOverlay.style.height = "100%";
@@ -2933,22 +2943,16 @@ class CitizenMobileClient {
                         continueBtn.disabled = true;
                         startBtn.textContent = "PLEASE WAIT...";
                         try {
-                            const success = await this.createNewDraftAndEnterChat(true);
-                            if (success) {
-                                if (document.body.contains(modalOverlay)) {
-                                    document.body.removeChild(modalOverlay);
-                                }
-                            } else {
-                                startBtn.disabled = false;
-                                continueBtn.disabled = false;
-                                startBtn.textContent = "START NEW";
+                            await this.createNewDraftAndEnterChat(true);
+                            if (document.body.contains(modalOverlay)) {
+                                document.body.removeChild(modalOverlay);
                             }
                         } catch (err) {
                             console.error("Start new emergency error:", err);
-                            alert("Failed to cancel existing report and start new emergency. Please try again.");
-                            startBtn.disabled = false;
-                            continueBtn.disabled = false;
-                            startBtn.textContent = "START NEW";
+                            await this.createNewDraftAndEnterChat(true);
+                            if (document.body.contains(modalOverlay)) {
+                                document.body.removeChild(modalOverlay);
+                            }
                         } finally {
                             this.isTriggeringSos = false;
                         }
@@ -2987,48 +2991,39 @@ class CitizenMobileClient {
     }
 
     async createNewDraftAndEnterChat(forceNew) {
-        try {
-            const res = await fetch(`${SERVER_URL}/api/incidents/draft`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    reporterId: this.activeUser.id,
-                    reporterPhone: this.activeUser.phone,
-                    lat: this.gps.lat,
-                    lng: this.gps.lng,
-                    barangay: this._resolvedBarangay || (window.BarangayService && window.BarangayService.findPozorrubioBarangay ? window.BarangayService.findPozorrubioBarangay(this.gps.lat, this.gps.lng)?.name : null) || this.activeUser.barangay || null,
-                    reporter: this.activeUser.name,
-                    createdAt: Date.now(),
-                    forceNew: forceNew
-                })
-            });
+        // Create offline draft structure in case server is unreachable, cold-starting, or restarting
+        const offlineDraft = {
+            id: `DRAFT-${this.activeUser?.id || Date.now()}`,
+            category: null,
+            details: `Emergency report prepared by ${this.activeUser?.name || 'Citizen'}`,
+            media: [],
+            lat: this.gps?.lat || 16.1086,
+            lng: this.gps?.lng || 120.5424,
+            barangay: this._resolvedBarangay || (window.BarangayService && window.BarangayService.findPozorrubioBarangay ? window.BarangayService.findPozorrubioBarangay(this.gps?.lat, this.gps?.lng)?.name : null) || this.activeUser?.barangay || null,
+            reporter: this.activeUser?.name || 'Citizen',
+            reporterPhone: this.activeUser?.phone || '',
+            reporterId: this.activeUser?.id || null,
+            status: 'draft',
+            createdAt: Date.now(),
+            networkReceivedAt: null,
+            assignedUnit: null,
+            responseProgress: null,
+            has_sent_messages: false,
+            assigned_agency: 'MDRRMO',
+            forceNew: !!forceNew,
+            isOffline: true
+        };
 
-            const data = await res.json();
-
-            if (res.status === 409 && !forceNew) {
-                // Conflict: Existing emergency found (fallback)
-                this.activeIncident = data.incident;
-                this.syncActiveIncidentStatus();
-                await this.restoreChatHistory();
-                this.transitionAppState("chat");
-                return true;
-            }
-
-            if (!res.ok || !data.success) {
-                alert(data.error || "Failed to cancel existing report and start new emergency session.");
-                return false;
-            }
-
-            // Successful Draft Creation - Reset fresh state
+        const setupDraftSession = (incident) => {
             this.attachments = [];
             this.renderMediaPreviews();
             if (this.chatDetailsInput) this.chatDetailsInput.value = "";
-            this.selectedCategory = (data.incident && data.incident.category && data.incident.category !== 'draft') ? data.incident.category : null;
+            this.selectedCategory = (incident && incident.category && incident.category !== 'draft') ? incident.category : null;
 
-            if (data.incident) {
-                data.incident.category = this.selectedCategory;
+            if (incident) {
+                incident.category = this.selectedCategory;
             }
-            this.activeIncident = data.incident;
+            this.activeIncident = incident;
 
             this.transitionAppState("chat");
 
@@ -3040,23 +3035,79 @@ class CitizenMobileClient {
             if (catGrid) catGrid.classList.remove("has-selection");
             const categoryButtons = document.querySelectorAll(".chat-category-btn");
             categoryButtons.forEach(b => b.classList.remove("active"));
+            if (this.selectedCategory) {
+                const activeBtn = document.querySelector(`.chat-category-btn[data-cat="${this.selectedCategory}"]`);
+                if (activeBtn) activeBtn.classList.add("active");
+                if (catGrid) catGrid.classList.add("has-selection");
+            }
             
             this.chatDetailsInput.disabled = false;
             this.chatSendBtn.disabled = false;
             this.btnAttachMedia.disabled = false;
 
-            this.chatIncidentId.textContent = "ALR-DRAFT";
-            this.chatIncidentTime.textContent = "Not Sent";
+            this.chatIncidentId.textContent = incident.id || "ALR-DRAFT";
+            this.chatIncidentTime.textContent = incident.isOffline ? "Connecting..." : "Not Sent";
             this.reportStatusBadge.textContent = "Draft";
             this.reportStatusBadge.style.backgroundColor = "rgba(142, 142, 147, 0.15)";
             this.reportStatusBadge.style.color = "var(--text-secondary)";
 
             localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+        };
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+            const res = await fetch(`${SERVER_URL}/api/incidents/draft`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({
+                    reporterId: this.activeUser.id,
+                    reporterPhone: this.activeUser.phone,
+                    lat: this.gps.lat,
+                    lng: this.gps.lng,
+                    barangay: this._resolvedBarangay || (window.BarangayService && window.BarangayService.findPozorrubioBarangay ? window.BarangayService.findPozorrubioBarangay(this.gps.lat, this.gps.lng)?.name : null) || this.activeUser.barangay || null,
+                    reporter: this.activeUser.name,
+                    createdAt: Date.now(),
+                    forceNew: forceNew
+                })
+            });
+            clearTimeout(timeoutId);
+
+            let data = null;
+            try {
+                data = await res.json();
+            } catch (_) {}
+
+            if (res.status === 409 && !forceNew && data && data.incident) {
+                // Conflict: Existing emergency found (fallback)
+                this.activeIncident = data.incident;
+                this.syncActiveIncidentStatus();
+                await this.restoreChatHistory();
+                this.transitionAppState("chat");
+                return true;
+            }
+
+            if (res.status === 400 && data && data.error) {
+                alert(data.error);
+                return false;
+            }
+
+            if (!res.ok || !data || !data.success || !data.incident) {
+                console.warn("Could not save initial draft to server; entering local emergency draft session.", res.status, data);
+                setupDraftSession(offlineDraft);
+                return true;
+            }
+
+            // Successful Draft Creation - Reset fresh state
+            setupDraftSession(data.incident);
             return true;
         } catch (err) {
-            console.warn("Could not connect to ALERTO-POZ Command Center.", err);
-            alert("Network error: Could not connect to Command Center. Please try again.");
-            return false;
+            console.warn("Could not connect to ALERTO-POZ Command Center immediately. Entering offline draft mode.", err);
+            // Seamlessly fallback to offline draft session so the citizen is never blocked in an emergency
+            setupDraftSession(offlineDraft);
+            return true;
         }
     }
 
@@ -3334,12 +3385,20 @@ Stay calm and provide clear updates.`;
                     category: this.activeIncident.category || null,
                     details: this.activeIncident.details,
                     createdAt: this.activeIncident.createdAt,
-                    forceNew: false
+                    forceNew: !!this.activeIncident.forceNew
                 })
             });
-            const data = await res.json();
+            if (!res.ok) return;
+            let data = null;
+            try {
+                data = await res.json();
+            } catch (_) {}
             if (data && data.success && data.incident) {
                 this.activeIncident.category = data.incident.category;
+                this.activeIncident.isOffline = false;
+                if (this.chatIncidentTime && this.chatIncidentTime.textContent === "Connecting...") {
+                    this.chatIncidentTime.textContent = "Not Sent";
+                }
                 localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
             }
         } catch (err) {
