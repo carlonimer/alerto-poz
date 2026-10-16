@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- 2. Incidents Table (Emergency Reports)
 CREATE TABLE IF NOT EXISTS incidents (
     id VARCHAR(20) PRIMARY KEY,
-    category VARCHAR(20) NOT NULL,
+    category VARCHAR(50) NULL,
     details TEXT,
     lat DOUBLE NOT NULL,
     lng DOUBLE NOT NULL,

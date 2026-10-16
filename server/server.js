@@ -247,6 +247,12 @@ async function initDatabase() {
             // Table doesn't exist yet, which is fine
         }
 
+        try {
+            await pool.query("ALTER TABLE incidents MODIFY COLUMN category VARCHAR(50) NULL");
+        } catch (e) {
+            // Table doesn't exist yet, which is fine
+        }
+
         await initializeTables(pool);
 
         useMySQL = true;
@@ -452,7 +458,7 @@ async function addIncident(report) {
 
         await pool.query(
             "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
-            [report.id, report.category, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null, report.assigned_agency]
+            [report.id, report.category || null, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null, report.assigned_agency]
         );
     } else {
         const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
@@ -1812,7 +1818,7 @@ app.get('/api/incidents/active/:userId', async (req, res) => {
 // Draft Creation endpoint (Creates a temporary draft record or cancels existing active incident on forceNew)
 app.post('/api/incidents/draft', async (req, res) => {
     try {
-        const { reporterId, reporterPhone, lat, lng, reporter, createdAt, forceNew } = req.body;
+        const { reporterId, reporterPhone, lat, lng, reporter, createdAt, forceNew, category, details, media } = req.body;
         let phone = reporterPhone;
         
         if (useMySQL && !phone && reporterId) {
@@ -1892,17 +1898,31 @@ app.post('/api/incidents/draft', async (req, res) => {
                     if (pozBgy && pozBgy.name) barangay = pozBgy.name;
                 }
 
+                // Determine assigned agency based on category (if provided)
+                let assigned_agency = 'MDRRMO';
+                const draftCategory = (category && category !== 'draft') ? category : null;
+                if (draftCategory) {
+                    const cat = draftCategory.toLowerCase();
+                    if (cat === 'fire') {
+                        assigned_agency = 'BFP';
+                    } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
+                        assigned_agency = 'PNP';
+                    } else if (cat === 'barangay') {
+                        assigned_agency = 'Barangay';
+                    }
+                }
+
                 const ts = createdAt || Date.now();
                 normalizedReport = {
                     id: draftId,
-                    category: null,
-                    details: `Emergency report prepared by ${reporter || 'Citizen'}`,
+                    category: draftCategory,
+                    details: details || `Emergency report prepared by ${reporter || 'Citizen'}`,
                     lat: lat || 16.1086,
                     lng: lng || 120.5424,
                     barangay: barangay,
                     reporter: reporter || 'Unknown Citizen',
                     reporterPhone: phone,
-                    media: [],
+                    media: media || [],
                     createdAt: ts,
                     networkReceivedAt: Date.now(),
                     status: 'draft',
@@ -1910,13 +1930,26 @@ app.post('/api/incidents/draft', async (req, res) => {
                     reporterId: reporterId,
                     responseProgress: null,
                     has_sent_messages: false,
-                    assigned_agency: 'MDRRMO'
+                    assigned_agency: assigned_agency
                 };
 
-                await conn.query(
-                    "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
-                    [normalizedReport.id, normalizedReport.category, normalizedReport.details, JSON.stringify(normalizedReport.media || []), normalizedReport.lat, normalizedReport.lng, normalizedReport.reporter, normalizedReport.reporterPhone, reporterId, normalizedReport.createdAt, normalizedReport.networkReceivedAt, normalizedReport.barangay, normalizedReport.status, normalizedReport.assignedUnit, normalizedReport.responseProgress, normalizedReport.assigned_agency]
-                );
+                try {
+                    await conn.query(
+                        "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
+                        [normalizedReport.id, normalizedReport.category, normalizedReport.details, JSON.stringify(normalizedReport.media || []), normalizedReport.lat, normalizedReport.lng, normalizedReport.reporter, normalizedReport.reporterPhone, reporterId, normalizedReport.createdAt, normalizedReport.networkReceivedAt, normalizedReport.barangay, normalizedReport.status, normalizedReport.assignedUnit, normalizedReport.responseProgress, normalizedReport.assigned_agency]
+                    );
+                } catch (insertErr) {
+                    if (insertErr.code === 'ER_BAD_NULL_ERROR' || insertErr.errno === 1048 || (insertErr.message && insertErr.message.includes("'category' cannot be null"))) {
+                        console.warn("Self-healing: modifying incidents.category to allow NULL and retrying draft insert...");
+                        await conn.query("ALTER TABLE incidents MODIFY COLUMN category VARCHAR(50) NULL");
+                        await conn.query(
+                            "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
+                            [normalizedReport.id, normalizedReport.category, normalizedReport.details, JSON.stringify(normalizedReport.media || []), normalizedReport.lat, normalizedReport.lng, normalizedReport.reporter, normalizedReport.reporterPhone, reporterId, normalizedReport.createdAt, normalizedReport.networkReceivedAt, normalizedReport.barangay, normalizedReport.status, normalizedReport.assignedUnit, normalizedReport.responseProgress, normalizedReport.assigned_agency]
+                        );
+                    } else {
+                        throw insertErr;
+                    }
+                }
 
                 await conn.commit();
             } catch (txErr) {
@@ -1995,17 +2028,30 @@ app.post('/api/incidents/draft', async (req, res) => {
                 if (pozBgy && pozBgy.name) barangay = pozBgy.name;
             }
 
+            let assigned_agency = 'MDRRMO';
+            const draftCategory = (category && category !== 'draft') ? category : null;
+            if (draftCategory) {
+                const cat = draftCategory.toLowerCase();
+                if (cat === 'fire') {
+                    assigned_agency = 'BFP';
+                } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
+                    assigned_agency = 'PNP';
+                } else if (cat === 'barangay') {
+                    assigned_agency = 'Barangay';
+                }
+            }
+
             const ts = createdAt || Date.now();
             const normalizedReport = {
                 id: draftId,
-                category: null,
-                details: `Emergency report prepared by ${reporter || 'Citizen'}`,
+                category: draftCategory,
+                details: details || `Emergency report prepared by ${reporter || 'Citizen'}`,
                 lat: lat || 16.1086,
                 lng: lng || 120.5424,
                 barangay: barangay,
                 reporter: reporter || 'Unknown Citizen',
                 reporterPhone: phone,
-                media: [],
+                media: media || [],
                 createdAt: ts,
                 networkReceivedAt: Date.now(),
                 status: 'draft',
@@ -2013,7 +2059,7 @@ app.post('/api/incidents/draft', async (req, res) => {
                 reporterId: reporterId,
                 responseProgress: null,
                 has_sent_messages: false,
-                assigned_agency: 'MDRRMO'
+                assigned_agency: assigned_agency
             };
 
             db.incidents.unshift(normalizedReport);

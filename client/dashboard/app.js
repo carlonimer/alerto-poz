@@ -795,7 +795,7 @@ class CommandDashboard {
         }
         
         const marker = L.marker([inc.lat, inc.lng], { icon: pinIcon })
-            .bindPopup(`<b>${inc.category.toUpperCase()} INCIDENT</b><br>${inc.details}${manageBtnHTML}`);
+            .bindPopup(`<b>${(inc.category || 'Draft').toUpperCase()} INCIDENT</b><br>${inc.details}${manageBtnHTML}`);
             
         if (this.selectedIncident) {
             if (this.selectedIncident.id === inc.id) {
@@ -857,7 +857,7 @@ class CommandDashboard {
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">Category:</span>
-                    <span class="summary-val uppercase">${inc.category}</span>
+                    <span class="summary-val uppercase">${inc.category || 'Draft'}</span>
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">Status:</span>

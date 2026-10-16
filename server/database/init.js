@@ -116,7 +116,7 @@ async function initDatabase(pool) {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS incidents (
             id VARCHAR(20) PRIMARY KEY,
-            category VARCHAR(20) NOT NULL,
+            category VARCHAR(50) NULL,
             details TEXT,
             lat DOUBLE NOT NULL,
             lng DOUBLE NOT NULL,
@@ -155,6 +155,11 @@ async function initDatabase(pool) {
     for (const col of incidentColumns) {
         try { await pool.query(`ALTER TABLE incidents ADD COLUMN ${col}`); } catch(e) {}
     }
+
+    // Migration: Ensure category allows NULL for draft incidents
+    try {
+        await pool.query("ALTER TABLE incidents MODIFY COLUMN category VARCHAR(50) NULL");
+    } catch(e) {}
 
     // 6. Incident Events (History) Table
     await pool.query(`

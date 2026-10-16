@@ -1560,7 +1560,7 @@ class CitizenMobileClient {
                             }).format(dt);
                             this.chatIncidentTime.textContent = timeString;
 
-                            if (this.activeIncident.category) {
+                            if (this.activeIncident.category && this.activeIncident.category !== 'draft') {
                                 this.selectedCategory = this.activeIncident.category;
 
                                 // Only hide the selection grid if the user has ALREADY sent the emergency
@@ -1579,6 +1579,8 @@ class CitizenMobileClient {
                                 categoryButtons.forEach(b => {
                                     if (b.getAttribute("data-cat") === this.selectedCategory) {
                                         b.classList.add("active");
+                                    } else {
+                                        b.classList.remove("active");
                                     }
                                 });
                                 const catGrid = document.querySelector(".emergency-categories-grid");
@@ -1589,6 +1591,12 @@ class CitizenMobileClient {
                                         catGrid.classList.remove("has-selection");
                                     }
                                 }
+                            } else {
+                                this.selectedCategory = null;
+                                const categoryButtons = document.querySelectorAll(".chat-category-btn");
+                                categoryButtons.forEach(b => b.classList.remove("active"));
+                                const catGrid = document.querySelector(".emergency-categories-grid");
+                                if (catGrid) catGrid.classList.remove("has-selection");
                             }
 
                             this.syncActiveIncidentStatus();
@@ -3015,10 +3023,10 @@ class CitizenMobileClient {
             this.attachments = [];
             this.renderMediaPreviews();
             if (this.chatDetailsInput) this.chatDetailsInput.value = "";
-            this.selectedCategory = null;
+            this.selectedCategory = (data.incident && data.incident.category && data.incident.category !== 'draft') ? data.incident.category : null;
 
             if (data.incident) {
-                data.incident.category = null;
+                data.incident.category = this.selectedCategory;
             }
             this.activeIncident = data.incident;
 
@@ -3299,9 +3307,43 @@ Stay calm and provide clear updates.`;
 
         localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
 
+        // If draft, autosave updated category to backend without submitting
+        if (this.activeIncident.status === "draft" && this.isOnline) {
+            this.saveDraftToServer();
+        }
+
         // Only broadcast if active and already has an ID
         if (this.activeIncident.status !== "draft" && this.activeIncident.status !== "requesting_id" && this.socket && this.socket.connected && this.isOnline) {
             this.socket.emit('citizen-sos-report', this.activeIncident);
+        }
+    }
+
+    async saveDraftToServer() {
+        if (!this.activeIncident || this.activeIncident.status !== "draft" || !this.activeUser) return;
+        try {
+            const res = await fetch(`${SERVER_URL}/api/incidents/draft`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    reporterId: this.activeUser.id,
+                    reporterPhone: this.activeUser.phone,
+                    lat: this.activeIncident.lat || this.gps.lat,
+                    lng: this.activeIncident.lng || this.gps.lng,
+                    barangay: this.activeIncident.barangay || this._resolvedBarangay || (window.BarangayService && window.BarangayService.findPozorrubioBarangay ? window.BarangayService.findPozorrubioBarangay(this.gps.lat, this.gps.lng)?.name : null) || this.activeUser.barangay || null,
+                    reporter: this.activeUser.name,
+                    category: this.activeIncident.category || null,
+                    details: this.activeIncident.details,
+                    createdAt: this.activeIncident.createdAt,
+                    forceNew: false
+                })
+            });
+            const data = await res.json();
+            if (data && data.success && data.incident) {
+                this.activeIncident.category = data.incident.category;
+                localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
+            }
+        } catch (err) {
+            console.warn("Draft autosave background sync warning:", err);
         }
     }
 
@@ -4161,14 +4203,14 @@ Stay calm and provide clear updates.`;
             let typeMatch = (t === "all");
             if (!typeMatch) {
                 // Ensure correct matching between filter options and actual categories
-                const incCategory = inc.category.toLowerCase().replace('_', '');
+                const incCategory = (inc.category || '').toLowerCase().replace('_', '');
                 if (incCategory === t.replace('_', '')) {
                     typeMatch = true;
                 }
             }
 
             // Status Match
-            let incStatus = inc.status.toLowerCase();
+            let incStatus = (inc.status || '').toLowerCase();
             let filterStatus = s;
             if (filterStatus === "dispatching responders") filterStatus = "dispatching";
             
@@ -4179,7 +4221,7 @@ Stay calm and provide clear updates.`;
             if (!q) {
                 searchMatch = true;
             } else {
-                const searchStr = `${inc.id} ${inc.category} ${inc.location} ${inc.status}`.toLowerCase();
+                const searchStr = `${inc.id} ${inc.category || ''} ${inc.location || ''} ${inc.status || ''}`.toLowerCase();
                 if (searchStr.includes(q)) searchMatch = true;
             }
 
@@ -4205,14 +4247,16 @@ Stay calm and provide clear updates.`;
             const dateStr = new Intl.DateTimeFormat('en-US', optionsDate).format(dt);
             const timeStr = new Intl.DateTimeFormat('en-US', optionsTime).format(dt);
 
-            const cat = inc.category.toUpperCase();
+            const cat = (inc.category || 'Draft').toUpperCase();
+            const catLower = (inc.category || '').toLowerCase();
 
             let agency = "Unknown Agency";
             let vehicle = "Unknown Vehicle";
-            if (inc.category.toLowerCase() === 'fire') { agency = "BFP"; vehicle = "Fire Truck"; }
-            else if (inc.category.toLowerCase() === 'medical') { agency = "Medical/EMS"; vehicle = "Ambulance"; }
-            else if (inc.category.toLowerCase() === 'police' || inc.category.toLowerCase() === 'road_crash') { agency = "PNP"; vehicle = "Police Patrol"; }
-            else if (inc.category.toLowerCase() === 'flood' || inc.category.toLowerCase() === 'rescue') { agency = "MDRRMO"; vehicle = "Rescue Vehicle"; }
+            if (catLower === 'fire') { agency = "BFP"; vehicle = "Fire Truck"; }
+            else if (catLower === 'medical') { agency = "Medical/EMS"; vehicle = "Ambulance"; }
+            else if (catLower === 'police' || catLower === 'road_crash') { agency = "PNP"; vehicle = "Police Patrol"; }
+            else if (catLower === 'flood' || catLower === 'rescue') { agency = "MDRRMO"; vehicle = "Rescue Vehicle"; }
+            else if ((inc.status || '').toLowerCase() === 'draft') { agency = "Pending Selection"; vehicle = "None Assigned"; }
 
             // Check if there's an explicit assignedUnit
             if (inc.assignedUnit) vehicle = inc.assignedUnit;
@@ -4221,9 +4265,9 @@ Stay calm and provide clear updates.`;
                 <div class="history-card">
                     <div class="history-card-header">
                         <div class="history-card-title">
-                            ${inc.category.toLowerCase() === 'fire' ? '🔥' : (inc.category.toLowerCase() === 'medical' ? '🚑' : '🚨')} ${cat} EMERGENCY
+                            ${catLower === 'fire' ? '🔥' : (catLower === 'medical' ? '🚑' : (catLower ? '🚨' : '📝'))} ${cat} EMERGENCY
                         </div>
-                        <span class="history-status-badge history-badge-${inc.status.toLowerCase().replace(" ", "")}">${inc.status}</span>
+                        <span class="history-status-badge history-badge-${(inc.status || 'draft').toLowerCase().replace(" ", "")}">${inc.status}</span>
                     </div>
                     <div class="history-card-body">
                         <div><strong>Emergency ID:</strong> ALR-${dt.getFullYear()}-${String(inc.id).padStart(4, '0')}</div>
@@ -4256,10 +4300,11 @@ Stay calm and provide clear updates.`;
         let responders = "Pending";
 
         if (['verified', 'dispatching', 'enroute', 'onscene', 'inprogress', 'resolved', 'closed'].includes(inc.status.toLowerCase())) {
-            if (inc.category.toLowerCase() === 'fire') { agency = "BFP"; vehicle = inc.assignedUnit || "Fire Truck"; responders = "Fire Responders"; }
-            else if (inc.category.toLowerCase() === 'medical') { agency = "Medical/EMS"; vehicle = inc.assignedUnit || "Ambulance"; responders = "Medical Responders"; }
-            else if (inc.category.toLowerCase() === 'police' || inc.category.toLowerCase() === 'road_crash') { agency = "PNP"; vehicle = inc.assignedUnit || "Police Patrol"; responders = "Police Responders"; }
-            else if (inc.category.toLowerCase() === 'flood' || inc.category.toLowerCase() === 'rescue') { agency = "MDRRMO"; vehicle = inc.assignedUnit || "Rescue Vehicle"; responders = "Rescue Team"; }
+            const catLower = (inc.category || '').toLowerCase();
+            if (catLower === 'fire') { agency = "BFP"; vehicle = inc.assignedUnit || "Fire Truck"; responders = "Fire Responders"; }
+            else if (catLower === 'medical') { agency = "Medical/EMS"; vehicle = inc.assignedUnit || "Ambulance"; responders = "Medical Responders"; }
+            else if (catLower === 'police' || catLower === 'road_crash') { agency = "PNP"; vehicle = inc.assignedUnit || "Police Patrol"; responders = "Police Responders"; }
+            else if (catLower === 'flood' || catLower === 'rescue') { agency = "MDRRMO"; vehicle = inc.assignedUnit || "Rescue Vehicle"; responders = "Rescue Team"; }
         }
 
         let eventsHtml = '';
@@ -4317,7 +4362,7 @@ Stay calm and provide clear updates.`;
                     <span class="history-status-badge history-badge-${inc.status.toLowerCase().replace(" ", "")}">${inc.status}</span>
                 </div>
                 <div class="history-details">
-                    <div><strong>Type:</strong> <span style="text-transform: uppercase">${inc.category}</span></div>
+                    <div><strong>Type:</strong> <span style="text-transform: uppercase">${inc.category || 'Draft'}</span></div>
                     <div><strong>Location:</strong> ${inc.location || "N/A"}</div>
                     <div><strong>Date/Time:</strong> ${dateStr} - ${timeStr}</div>
                 </div>
