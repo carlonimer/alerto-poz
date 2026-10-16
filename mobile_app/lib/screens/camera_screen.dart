@@ -209,6 +209,9 @@ class _CameraScreenState extends State<CameraScreen> {
         setState(() {
           _recordSeconds++;
         });
+        if (_recordSeconds >= 30) {
+          _onShutterPressed();
+        }
       }
     });
   }
@@ -582,7 +585,7 @@ class _CameraScreenState extends State<CameraScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        _formatDuration(_recordSeconds),
+                        '${_formatDuration(_recordSeconds)} / 00:30',
                         style: GoogleFonts.outfit(
                           color: Colors.white,
                           fontSize: 14,

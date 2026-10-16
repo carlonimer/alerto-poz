@@ -70,6 +70,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
   final List<String> _attachedImages = []; // base64 strings
+  final List<Map<String, String>> _pendingMediaUploads = []; // Queued media files: {'path': ..., 'type': 'video'|'image'}
 
   bool _isMapExpanded = true;
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
@@ -233,10 +234,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     // Ignore if it's our own message because we already appended it optimistically
     if (data['sender_id']?.toString() == widget.user?.id.toString()) return;
 
+    final msgType = data['message_type']?.toString();
+    final isVideo = msgType == 'video';
+    final isImage = msgType == 'image' || data['is_media'] == true;
+
     setState(() {
       _chatFeed.add({
         'role': data['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
-        'type': (data['message_type'] == 'image' || data['message_type'] == 'video' || data['is_media'] == true) ? 'image' : 'text',
+        'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
         'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
         'timestamp': data['timestamp'] != null 
             ? DateTime.fromMillisecondsSinceEpoch(int.tryParse(data['timestamp'].toString()) ?? DateTime.now().millisecondsSinceEpoch).toIso8601String() 
@@ -379,9 +384,12 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
             if (int.tryParse(ts) != null) {
               ts = DateTime.fromMillisecondsSinceEpoch(int.parse(ts)).toIso8601String();
             }
+            final mType = msg['message_type']?.toString();
+            final isVideo = mType == 'video';
+            final isImage = mType == 'image' || msg['isMedia'] == true;
             _chatFeed.add({
               'role': msg['sender_id']?.toString() == widget.user?.id.toString() ? 'user' : 'bot',
-              'type': (msg['message_type'] == 'image' || msg['message_type'] == 'video' || msg['isMedia'] == true) ? 'image' : 'text',
+              'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
               'content': msg['media_url'] ?? msg['message_content'] ?? msg['content'] ?? '',
               'timestamp': ts,
             });
@@ -447,61 +455,109 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
 
 
+  Future<void> _flushPendingMediaUploads() async {
+    if (_incidentId == null || _pendingMediaUploads.isEmpty) return;
+    final toUpload = List<Map<String, String>>.from(_pendingMediaUploads);
+    _pendingMediaUploads.clear();
+
+    for (final item in toUpload) {
+      final mediaPath = item['path'];
+      final mediaType = item['type'] ?? 'image';
+      if (mediaPath == null || mediaPath.isEmpty) continue;
+
+      try {
+        final payload = {
+          'senderId': widget.user?.id,
+          'messageContent': '${mediaType == 'video' ? 'Video' : 'Image'} Attachment',
+          'messageType': mediaType,
+        };
+        await ApiService.sendMessage(
+          _incidentId!,
+          payload,
+          mediaPath: mediaPath,
+        );
+      } catch (e) {
+        debugPrint("Error uploading queued pending media: $e");
+      }
+    }
+  }
+
   Future<void> _handleVideoTaken(String path) async {
     if (!mounted) return;
-    
-    // Check duration to strictly enforce 30 seconds
-    try {
-      final info = await VideoCompress.getMediaInfo(path);
-      if (info.duration != null && info.duration! > 32000) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video cannot exceed 30 seconds.')),
-          );
-        }
-        return;
-      }
-    } catch (_) {}
 
     setState(() => _sending = true);
     
     try {
-      final info = await VideoCompress.compressVideo(
-        path,
-        quality: VideoQuality.DefaultQuality,
-        deleteOrigin: false,
-      );
-      
-      final compressedPath = info?.path ?? path;
-      
-      final thumbnailFile = await VideoCompress.getFileThumbnail(path);
-      final thumbBytes = await thumbnailFile.readAsBytes();
-      final b64 = base64Encode(thumbBytes);
-      
+      // 1. Try to compress video, fall back gracefully to original path if compression fails
+      String uploadPath = path;
+      try {
+        final info = await VideoCompress.compressVideo(
+          path,
+          quality: VideoQuality.DefaultQuality,
+          deleteOrigin: false,
+        );
+        if (info?.path != null && info!.path!.isNotEmpty) {
+          uploadPath = info.path!;
+        }
+      } catch (compErr) {
+        debugPrint("Video compression skipped/fallback: $compErr");
+      }
+
+      // 2. Extract thumbnail for local chat feed preview
+      String b64Thumb = '';
+      try {
+        final thumbnailFile = await VideoCompress.getFileThumbnail(path);
+        final thumbBytes = await thumbnailFile.readAsBytes();
+        b64Thumb = base64Encode(thumbBytes);
+      } catch (thumbErr) {
+        debugPrint("Thumbnail extraction error: $thumbErr");
+      }
+
       if (!mounted) return;
       setState(() {
-        _attachedImages.add(b64);
+        if (b64Thumb.isNotEmpty) {
+          _attachedImages.add(b64Thumb);
+        }
         _chatFeed.add({
           'role': 'user',
-          'type': 'video', // Show as video locally
-          'content': b64,
+          'type': 'video',
+          'content': b64Thumb.isNotEmpty ? b64Thumb : uploadPath,
           'timestamp': DateTime.now().toIso8601String(),
         });
       });
       _scrollToBottom();
       
+      // 3. Send immediately or queue for transmission
       if (_sent && _incidentId != null) {
         final payload = {'senderId': widget.user?.id, 'messageContent': 'Video Attachment', 'messageType': 'video'};
         final res = await ApiService.sendMessage(
           _incidentId!,
           payload,
-          mediaPath: compressedPath,
+          mediaPath: uploadPath,
         );
         if (res['error'] != null) {
           throw Exception(res['error']);
         }
+      } else {
+        // Queue for immediate upload upon incident activation
+        _pendingMediaUploads.add({
+          'type': 'video',
+          'path': uploadPath,
+        });
+
+        if (_selectedCategory != null) {
+          await _doTransmit();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video recorded! Please select an emergency type above to submit your emergency alert.'),
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
       }
     } catch (e) {
+      debugPrint("Error handling video: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to process and send video: $e')),
@@ -538,6 +594,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         );
         if (res['error'] != null) {
           throw Exception(res['error']);
+        }
+      } else {
+        _pendingMediaUploads.add({
+          'type': 'image',
+          'path': path,
+        });
+        if (_selectedCategory != null) {
+          await _doTransmit();
         }
       }
     } catch (e) {
@@ -579,11 +643,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
               if (thumbnailProvider != null)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image(
-                    image: thumbnailProvider,
-                    height: 200,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Image(
+                        image: thumbnailProvider,
+                        height: 200,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                      if (type == 'video')
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 36),
+                        ),
+                    ],
                   ),
                 )
               else
@@ -688,6 +766,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           'timestamp': DateTime.now().toIso8601String(),
         });
         SharedPreferences.getInstance().then((prefs) => prefs.remove('draft_incident_payload')); // Clear draft once sent
+        _flushPendingMediaUploads();
       } else if (res is Map && res['_statusCode'] == 409) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('You already have an active emergency report. Please resolve it before creating a new one.')),
@@ -1558,6 +1637,100 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       return Padding(
         padding: const EdgeInsets.only(bottom: 14),
         child: Align(alignment: Alignment.centerRight, child: image),
+      );
+    }
+
+    if (type == 'video') {
+      final raw = msg['content']?.toString() ?? '';
+      final isUrl = raw.startsWith('http') || raw.startsWith('/uploads');
+      ImageProvider? provider;
+      if (isUrl) {
+        provider = null;
+      } else if (raw.isNotEmpty && !raw.startsWith('/')) {
+        try {
+          provider = MemoryImage(base64Decode(raw));
+        } catch (_) {}
+      }
+
+      final side = (maxW * 0.8).clamp(140.0, 240.0);
+      final videoBubble = Container(
+        width: side,
+        height: side,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 2))
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (provider != null)
+                Image(
+                  image: provider,
+                  fit: BoxFit.cover,
+                  errorBuilder: (c, e, s) => Container(
+                    color: Colors.black87,
+                    child: const Center(
+                      child: Icon(Icons.videocam_rounded, size: 44, color: Colors.white54),
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  color: Colors.black87,
+                  child: const Center(
+                    child: Icon(Icons.videocam_rounded, size: 44, color: Colors.white54),
+                  ),
+                ),
+              // Play icon overlay in center
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 1.5),
+                  ),
+                  child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 28),
+                ),
+              ),
+              // Video label badge at bottom left
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.videocam, color: Colors.white, size: 12),
+                      const SizedBox(width: 4),
+                      Text(
+                        'VIDEO',
+                        style: GoogleFonts.outfit(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (!isUser) return _botRow(child: videoBubble);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Align(alignment: Alignment.centerRight, child: videoBubble),
       );
     }
 

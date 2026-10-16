@@ -973,14 +973,19 @@ class CitizenMobileClient {
                         btnCameraCapture.style.background = "#dc2626";
 
                         this.cameraRecordSeconds = 0;
-                        if (recordTime) recordTime.textContent = "00:00";
+                        if (recordTime) recordTime.textContent = "00:00 / 00:30";
                         if (recIndicator) recIndicator.style.display = "flex";
 
                         this.cameraRecordTimer = setInterval(() => {
                             this.cameraRecordSeconds++;
                             const mins = String(Math.floor(this.cameraRecordSeconds / 60)).padStart(2, '0');
                             const secs = String(this.cameraRecordSeconds % 60).padStart(2, '0');
-                            if (recordTime) recordTime.textContent = `${mins}:${secs}`;
+                            if (recordTime) recordTime.textContent = `${mins}:${secs} / 00:30`;
+                            if (this.cameraRecordSeconds >= 30) {
+                                if (this.cameraMediaRecorder && this.cameraMediaRecorder.state === "recording") {
+                                    this.cameraMediaRecorder.stop();
+                                }
+                            }
                         }, 1000);
                     }
                 }

@@ -111,13 +111,18 @@ const chatMediaStorage = multer.diskStorage({
 
 const uploadChatMedia = multer({
     storage: chatMediaStorage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max for videos
+    limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB max for videos
     fileFilter: (req, file, cb) => {
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'];
-        if (allowedTypes.includes(file.mimetype)) {
+        const allowedTypes = [
+            'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
+            'video/mp4', 'video/webm', 'video/quicktime', 'video/3gpp', 'video/3gp', 'video/x-matroska', 'video/avi', 'video/mpeg',
+            'application/octet-stream'
+        ];
+        const isVideoOrImageExt = file.originalname && file.originalname.match(/\.(jpg|jpeg|png|webp|mp4|webm|mov|3gp|mkv|avi)$/i);
+        if (file.mimetype.startsWith('video/') || file.mimetype.startsWith('image/') || allowedTypes.includes(file.mimetype) || isVideoOrImageExt) {
             cb(null, true);
         } else {
-            cb(new Error("Invalid file type. Only JPG, PNG, WebP, MP4, and WebM are allowed."));
+            cb(new Error("Invalid file type. Allowed formats: JPG, PNG, WebP, MP4, WebM, MOV, 3GP, MKV."));
         }
     }
 });
@@ -2076,7 +2081,15 @@ app.get('/api/incidents/:id/messages', async (req, res) => {
     }
 });
 
-app.post('/api/incidents/:id/messages', uploadChatMedia.single('media'), async (req, res) => {
+app.post('/api/incidents/:id/messages', (req, res, next) => {
+    uploadChatMedia.single('media')(req, res, (err) => {
+        if (err) {
+            console.error("Chat media upload error:", err.message);
+            return res.status(400).json({ success: false, error: err.message || "Failed to upload media file" });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         if (!useMySQL) return res.status(501).json({ error: "Only supported on MySQL" });
         const { senderId, senderRole, messageType, messageContent } = req.body;
@@ -2086,7 +2099,7 @@ app.post('/api/incidents/:id/messages', uploadChatMedia.single('media'), async (
         let finalContent = messageContent || "";
         if (req.file) {
             mediaUrl = `/uploads/chat/${req.file.filename}`;
-            if (messageType === 'image' || messageType === 'video') {
+            if (messageType === 'image') {
                 const proofMetadata = await getMediaMetadataMarkdown(req.file.path);
                 if (finalContent) {
                     finalContent += proofMetadata;
