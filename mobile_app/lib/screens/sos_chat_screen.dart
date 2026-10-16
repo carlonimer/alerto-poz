@@ -19,7 +19,7 @@ import '../services/socket_service.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
 import 'call_screen.dart';
-import 'camera_screen.dart';
+
 
 /// Colour tokens for the ALERTO-POZ emergency chat (orange emergency theme).
 class _C {
@@ -459,16 +459,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     }
   }
 
-  Future<void> _recordVideoDirectly() async {
-    final picker = ImagePicker();
-    final file = await picker.pickVideo(
-      source: ImageSource.camera,
-      maxDuration: const Duration(seconds: 30),
-    );
-    if (file != null) {
-      _handleVideoTaken(file.path);
-    }
-  }
+
 
   Future<void> _handleVideoTaken(String path) async {
     if (!mounted) return;
@@ -506,30 +497,28 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         _attachedImages.add(b64);
         _chatFeed.add({
           'role': 'user',
-          'type': 'image', // Show thumbnail locally using image type
+          'type': 'video', // Show as video locally
           'content': b64,
           'timestamp': DateTime.now().toIso8601String(),
         });
       });
       _scrollToBottom();
       
-      if (!_sent) {
-        _selectedCategory = 'other';
-        await _doTransmit();
-      }
-      
       if (_sent && _incidentId != null) {
         final payload = {'senderId': widget.user?.id, 'messageContent': 'Video Attachment', 'messageType': 'video'};
-        await ApiService.sendMessage(
+        final res = await ApiService.sendMessage(
           _incidentId!,
           payload,
           mediaPath: compressedPath,
         );
+        if (res['error'] != null) {
+          throw Exception(res['error']);
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to process and send video.')),
+          SnackBar(content: Text('Failed to process and send video: $e')),
         );
       }
     } finally {
@@ -538,40 +527,125 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   }
 
   Future<void> _handleImageTaken(String path) async {
-    final bytes = await File(path).readAsBytes();
-    final b64 = base64Encode(bytes);
+    try {
+      final bytes = await File(path).readAsBytes();
+      final b64 = base64Encode(bytes);
 
-    if (!mounted) return;
-    setState(() {
-      _attachedImages.add(b64);
-      _chatFeed.add({
-        'role': 'user',
-        'type': 'image',
-        'content': b64,
-        'timestamp': DateTime.now().toIso8601String(),
+      if (!mounted) return;
+      setState(() {
+        _attachedImages.add(b64);
+        _chatFeed.add({
+          'role': 'user',
+          'type': 'image',
+          'content': b64,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
       });
-    });
-    _scrollToBottom();
+      _scrollToBottom();
 
-    if (!_sent) {
-      _selectedCategory = 'other';
-      await _doTransmit();
-    }
-
-    if (_sent && _incidentId != null) {
-      final payload = {'senderId': widget.user?.id, 'messageContent': 'Image Attachment'};
-      try {
-        await ApiService.sendMessage(
+      if (_sent && _incidentId != null) {
+        final payload = {'senderId': widget.user?.id, 'messageContent': 'Image Attachment', 'messageType': 'image'};
+        final res = await ApiService.sendMessage(
           _incidentId!,
           payload,
           mediaPath: path,
         );
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to send attachment due to network error.')),
-          );
+        if (res['error'] != null) {
+          throw Exception(res['error']);
         }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send attachment due to network error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showMediaReviewDialog(String path, String type) async {
+    ImageProvider? thumbnailProvider;
+    if (type == 'image') {
+      thumbnailProvider = FileImage(File(path));
+    } else {
+      try {
+        final thumbnailFile = await VideoCompress.getFileThumbnail(path);
+        thumbnailProvider = FileImage(thumbnailFile);
+      } catch (e) {
+        // Fallback handled in UI
+      }
+    }
+
+    if (!mounted) return;
+    final bool? send = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Review Attachment', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 16),
+              if (thumbnailProvider != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image(
+                    image: thumbnailProvider,
+                    height: 200,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                  ),
+                )
+              else
+                Container(
+                  height: 200,
+                  width: double.infinity,
+                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
+                  child: const Center(child: Icon(Icons.videocam, size: 48, color: Colors.grey)),
+                ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: Text('Cancel', style: GoogleFonts.outfit(fontWeight: FontWeight.w700, color: Colors.black87)),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _C.orange,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 0,
+                      ),
+                      child: Text('Send', style: GoogleFonts.outfit(fontWeight: FontWeight.w700, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (send == true) {
+      if (type == 'video') {
+        await _handleVideoTaken(path);
+      } else {
+        await _handleImageTaken(path);
       }
     }
   }
@@ -812,16 +886,23 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   }
 
   Future<void> _openCamera(int mode) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => CameraScreen(initialMode: mode)),
-    );
-    
-    if (result != null && result is Map) {
-      if (result['type'] == 'video') {
-        _handleVideoTaken(result['path']);
-      } else {
-        _handleImageTaken(result['path']);
+    final picker = ImagePicker();
+    XFile? file;
+    try {
+      if (mode == 1) { // Photo
+        file = await picker.pickImage(source: ImageSource.camera);
+      } else { // Video
+        file = await picker.pickVideo(source: ImageSource.camera);
+      }
+      
+      if (file != null) {
+        await _showMediaReviewDialog(file.path, mode == 2 ? 'video' : 'image');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Camera error: $e')),
+        );
       }
     }
   }
@@ -1221,7 +1302,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                               if (_sent) return;
                               try {
                                 final cam = _mapController.camera;
-                                final pt = cam.latLngToScreenPoint(_selectedPos ?? marker!);
+                                final pt = cam.latLngToScreenPoint(_selectedPos ?? marker);
                                 final newPt = math.Point(pt.x + details.delta.dx, pt.y + details.delta.dy);
                                 final newLatLng = cam.pointToLatLng(newPt);
                                 setState(() {

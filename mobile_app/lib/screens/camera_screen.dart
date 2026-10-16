@@ -258,8 +258,8 @@ class _CameraScreenState extends State<CameraScreen> {
           Positioned.fill(
             child: Column(
               children: [
-                Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
-                Expanded(child: Container(decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
+                Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
+                Expanded(child: Container(decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white24, width: 1))))),
                 Expanded(child: Container()),
               ],
             ),
@@ -267,8 +267,8 @@ class _CameraScreenState extends State<CameraScreen> {
           Positioned.fill(
             child: Row(
               children: [
-                Expanded(child: Container(decoration: BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
-                Expanded(child: Container(decoration: BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
+                Expanded(child: Container(decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
+                Expanded(child: Container(decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.white24, width: 1))))),
                 Expanded(child: Container()),
               ],
             ),
