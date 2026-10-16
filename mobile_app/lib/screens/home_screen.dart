@@ -1284,7 +1284,8 @@ class _HomeScreenState extends State<HomeScreen>
           _isTriggeringSos = false;
           return;
         }
-        if (res['success'] == true && res['hasActive'] == true) {
+        if (res['success'] == true && (res['hasActive'] == true || res['active'] == true)) {
+          if (mounted) setState(() => _isTriggeringSos = false);
           // Requirement: Show modal with CONTINUE, START NEW, CANCEL
           _showConflictDialog(res['incident'] as Map<String, dynamic>?);
         } else {
@@ -1303,113 +1304,134 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showConflictDialog(Map<String, dynamic>? activeIncident) {
+    bool isStartingNew = false;
     showDialog(
       context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFFF6EDE5),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Icon(Icons.warning_rounded, color: Colors.orange, size: 26),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('Active Emergency Report Found', style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87), textAlign: TextAlign.center),
-                  ),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      if (mounted) setState(() => _isTriggeringSos = false);
-                    },
-                    child: const Icon(Icons.close, color: Colors.grey, size: 26),
-                  ),
-                ],
-              ),
-              Container(
-                height: 2,
-                color: const Color(0xFFF05628),
-                margin: const EdgeInsets.only(top: 10, bottom: 20),
-              ),
-              Text(
-                'You already have an active emergency report. What would you like to do?',
-                style: GoogleFonts.outfit(fontSize: 14, color: Colors.black87),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 25),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        if (!_isTriggeringSos) {
-                            if (mounted) setState(() => _isTriggeringSos = true);
-                        } else {
-                          return;
-                        }
-                        
-                        try {
-                          final pos = await LocationService.getCurrentPosition();
-                          final detectedLat = pos?.latitude ?? _myLocation?.latitude ?? 16.1086;
-                          final detectedLng = pos?.longitude ?? _myLocation?.longitude ?? 120.5424;
-                          final detectedBarangay = _resolvedBarangay ?? BarangayService.findPozorrubioBarangay(detectedLat, detectedLng)?.name;
-                          final payload = {
-                            'reporterId': _user?.id,
-                            'reporterPhone': _user?.phone,
-                            'lat': detectedLat,
-                            'lng': detectedLng,
-                            'barangay': detectedBarangay,
-                            'reporter': _user?.name,
-                            'createdAt': DateTime.now().toIso8601String(),
-                            'forceNew': true
-                          };
-                          
-                          final res = await ApiService.createDraftIncident(payload);
-                          if (res['success'] == true && res['incident'] != null) {
-                              if (mounted) setState(() => _isTriggeringSos = false);
-                              Navigator.pop(ctx);
-                              _navigateToChat(null, res['incident']);
-                          } else {
-                              if (mounted) setState(() => _isTriggeringSos = false);
-                              Navigator.pop(ctx);
-                          }
-                        } catch (e) {
-                            if (mounted) setState(() => _isTriggeringSos = false);
-                            Navigator.pop(ctx);
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFE5E7EB),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        elevation: 0,
-                      ),
-                      child: Text('START NEW', style: GoogleFonts.outfit(color: const Color(0xFF222222), fontWeight: FontWeight.w800, fontSize: 14)),
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => Dialog(
+          backgroundColor: const Color(0xFFF6EDE5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.warning_rounded, color: Colors.orange, size: 26),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('Active Emergency Report Found',
+                          style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.black87),
+                          textAlign: TextAlign.center),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _navigateToChat(null, activeIncident);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF05628),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        elevation: 0,
-                      ),
-                      child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                    GestureDetector(
+                      onTap: isStartingNew
+                          ? null
+                          : () {
+                              Navigator.pop(ctx);
+                              if (mounted) setState(() => _isTriggeringSos = false);
+                            },
+                      child: Icon(Icons.close, color: isStartingNew ? Colors.grey[400] : Colors.grey, size: 26),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+                Container(
+                  height: 2,
+                  color: const Color(0xFFF05628),
+                  margin: const EdgeInsets.only(top: 10, bottom: 20),
+                ),
+                Text(
+                  'You already have an active emergency report. What would you like to do?',
+                  style: GoogleFonts.outfit(fontSize: 14, color: Colors.black87),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 25),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: isStartingNew
+                            ? null
+                            : () async {
+                                setDialogState(() => isStartingNew = true);
+                                try {
+                                  final pos = await LocationService.getCurrentPosition();
+                                  final detectedLat = pos?.latitude ?? _myLocation?.latitude ?? 16.1086;
+                                  final detectedLng = pos?.longitude ?? _myLocation?.longitude ?? 120.5424;
+                                  final detectedBarangay = _resolvedBarangay ?? BarangayService.findPozorrubioBarangay(detectedLat, detectedLng)?.name;
+                                  final payload = {
+                                    'reporterId': _user?.id,
+                                    'reporterPhone': _user?.phone,
+                                    'lat': detectedLat,
+                                    'lng': detectedLng,
+                                    'barangay': detectedBarangay,
+                                    'reporter': _user?.name,
+                                    'createdAt': DateTime.now().toIso8601String(),
+                                    'forceNew': true
+                                  };
+                                  
+                                  final res = await ApiService.createDraftIncident(payload);
+                                  if (!mounted) return;
+                                  if (res['success'] == true && res['incident'] != null) {
+                                    setState(() => _isTriggeringSos = false);
+                                    Navigator.pop(ctx);
+                                    _loadData();
+                                    _navigateToChat(null, res['incident']);
+                                  } else {
+                                    setDialogState(() => isStartingNew = false);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(res['error']?.toString() ?? 'Failed to cancel previous report and start new emergency. Please try again.')),
+                                    );
+                                  }
+                                } catch (e) {
+                                  setDialogState(() => isStartingNew = false);
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Network error: Could not cancel existing report. Please try again.')),
+                                    );
+                                  }
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFE5E7EB),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                        child: isStartingNew
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF222222)),
+                              )
+                            : Text('START NEW', style: GoogleFonts.outfit(color: const Color(0xFF222222), fontWeight: FontWeight.w800, fontSize: 14)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: isStartingNew
+                            ? null
+                            : () {
+                                Navigator.pop(ctx);
+                                _navigateToChat(null, activeIncident);
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFF05628),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                        child: Text('CONTINUE', style: GoogleFonts.outfit(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -115,7 +115,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (widget.activeIncident != null) {
       final inc = widget.activeIncident!;
       _incidentId = inc['_id']?.toString() ?? inc['id']?.toString();
-      _selectedCategory = inc['category'];
+      _selectedCategory = (inc['category'] == 'draft' || inc['category'] == null) ? null : inc['category'];
       _ticketCode = inc['ticketCode']?.toString() ?? inc['id']?.toString() ?? _incidentId;
       _assignedUnit = inc['assignedUnit']?.toString();
       final cStamp = inc['timestamp'] ?? inc['createdAt'];
@@ -147,6 +147,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         });
         _fetchHistory();
       } else {
+        _attachedImages.clear();
+        _commentCtrl.clear();
         _restoreDraftFromPrefs();
         _chatFeed.add({
           'role': 'bot',

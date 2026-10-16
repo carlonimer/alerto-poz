@@ -2924,9 +2924,26 @@ class CitizenMobileClient {
                         startBtn.disabled = true;
                         continueBtn.disabled = true;
                         startBtn.textContent = "PLEASE WAIT...";
-                        await this.createNewDraftAndEnterChat(true);
-                        document.body.removeChild(modalOverlay);
-                        this.isTriggeringSos = false;
+                        try {
+                            const success = await this.createNewDraftAndEnterChat(true);
+                            if (success) {
+                                if (document.body.contains(modalOverlay)) {
+                                    document.body.removeChild(modalOverlay);
+                                }
+                            } else {
+                                startBtn.disabled = false;
+                                continueBtn.disabled = false;
+                                startBtn.textContent = "START NEW";
+                            }
+                        } catch (err) {
+                            console.error("Start new emergency error:", err);
+                            alert("Failed to cancel existing report and start new emergency. Please try again.");
+                            startBtn.disabled = false;
+                            continueBtn.disabled = false;
+                            startBtn.textContent = "START NEW";
+                        } finally {
+                            this.isTriggeringSos = false;
+                        }
                     };
 
                     document.getElementById("modal-btn-continue").onclick = async () => {
@@ -2934,7 +2951,9 @@ class CitizenMobileClient {
                         const continueBtn = document.getElementById("modal-btn-continue");
                         startBtn.disabled = true;
                         continueBtn.disabled = true;
-                        document.body.removeChild(modalOverlay);
+                        if (document.body.contains(modalOverlay)) {
+                            document.body.removeChild(modalOverlay);
+                        }
                         this.activeIncident = checkData.incident;
                         this.syncActiveIncidentStatus();
                         await this.restoreChatHistory();
@@ -2984,19 +3003,23 @@ class CitizenMobileClient {
                 this.syncActiveIncidentStatus();
                 await this.restoreChatHistory();
                 this.transitionAppState("chat");
-                return;
-            }
-
-            if (res.status === 400) {
-                alert(data.error || "Bad Request");
-                return;
+                return true;
             }
 
             if (!res.ok || !data.success) {
-                throw new Error(data.error || "Failed to initialize emergency session.");
+                alert(data.error || "Failed to cancel existing report and start new emergency session.");
+                return false;
             }
 
-            // Successful Draft Creation
+            // Successful Draft Creation - Reset fresh state
+            this.attachments = [];
+            this.renderMediaPreviews();
+            if (this.chatDetailsInput) this.chatDetailsInput.value = "";
+            this.selectedCategory = null;
+
+            if (data.incident) {
+                data.incident.category = null;
+            }
             this.activeIncident = data.incident;
 
             this.transitionAppState("chat");
@@ -3005,7 +3028,6 @@ class CitizenMobileClient {
             if (this.dynamicChatFeed) this.dynamicChatFeed.innerHTML = "";
 
             // Reset category UI
-            this.selectedCategory = null;
             const catGrid = document.querySelector(".emergency-categories-grid");
             if (catGrid) catGrid.classList.remove("has-selection");
             const categoryButtons = document.querySelectorAll(".chat-category-btn");
@@ -3022,11 +3044,11 @@ class CitizenMobileClient {
             this.reportStatusBadge.style.color = "var(--text-secondary)";
 
             localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
-            
+            return true;
         } catch (err) {
             console.warn("Could not connect to ALERTO-POZ Command Center.", err);
             alert("Network error: Could not connect to Command Center. Please try again.");
-            return;
+            return false;
         }
     }
 
@@ -3098,7 +3120,7 @@ class CitizenMobileClient {
 
         // Validation: Must select an emergency type before sending the first message
         if (this.activeIncident.status === "draft" && !this.activeIncident.has_sent_messages) {
-            if (!this.activeIncident.category) {
+            if (!this.activeIncident.category || this.activeIncident.category === 'draft') {
                 this.appendChatMessage("System", "⚠️ Please select an emergency type first.", "incoming-bubble");
                 return;
             }
@@ -3163,10 +3185,12 @@ Stay calm and provide clear updates.`;
         const handleNetworkError = async () => {
             this.chatSendBtn.disabled = false;
             // Ensure status remains draft if it failed to activate
-            if (!this.activeIncident.id || this.activeIncident.id === 'draft' || String(this.activeIncident.id).startsWith("ALERTOPOZ-26")) {
+            if (!this.activeIncident.id || this.activeIncident.id === 'draft' || String(this.activeIncident.id).startsWith("DRAFT-") || String(this.activeIncident.id).startsWith("ALERTOPOZ-26")) {
                 this.activeIncident.status = "draft";
                 this.activeIncident.has_sent_messages = false;
-                this.activeIncident.id = 'draft';
+                if (!String(this.activeIncident.id).startsWith("DRAFT-")) {
+                    this.activeIncident.id = 'draft';
+                }
                 localStorage.setItem("alerto-active-incident", JSON.stringify(this.activeIncident));
             }
             this.appendChatMessage("System", "Message failed to send. Network error. Please try again.", "incoming-bubble");

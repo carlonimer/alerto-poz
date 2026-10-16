@@ -1504,7 +1504,7 @@ app.get('/api/user/history/:id', async (req, res) => {
             
             res.json(rows);
         } else {
-            const dbState = await loadDB();
+            const dbState = await getDBState();
             const userIncidents = dbState.incidents.filter(i => i.reporterId == id || i.reporterPhone == id).sort((a,b) => b.createdAt - a.createdAt);
             
             // For JSON, attach chronological events if they exist
@@ -1809,7 +1809,7 @@ app.get('/api/incidents/active/:userId', async (req, res) => {
     }
 });
 
-// Draft Creation endpoint (Creates a temporary draft record)
+// Draft Creation endpoint (Creates a temporary draft record or cancels existing active incident on forceNew)
 app.post('/api/incidents/draft', async (req, res) => {
     try {
         const { reporterId, reporterPhone, lat, lng, reporter, createdAt, forceNew } = req.body;
@@ -1818,51 +1818,191 @@ app.post('/api/incidents/draft', async (req, res) => {
         if (useMySQL && !phone && reporterId) {
             const [u] = await pool.query("SELECT phone FROM users WHERE id = ?", [reporterId]);
             if (u.length > 0 && u[0].phone) phone = u[0].phone;
+        } else if (!useMySQL && !phone && reporterId) {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            const u = (db.users || []).find(usr => String(usr.id) === String(reporterId));
+            if (u && u.phone) phone = u.phone;
         }
 
         if (!phone || phone.trim() === '') {
-            return res.status(400).json({ error: "Your account is missing a phone number. Please update your profile." });
+            return res.status(400).json({ success: false, error: "Your account is missing a phone number. Please update your profile." });
         }
 
         const draftId = `DRAFT-${reporterId}`;
         
         if (useMySQL) {
-            // Check if active incident exists (including any existing draft)
-            const [existing] = await pool.query(
-                "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed')",
-                [reporterId, phone]
-            );
-            
-            if (existing.length > 0) {
-                if (forceNew) {
-                    for (let inc of existing) {
-                        await pool.query("UPDATE incidents SET status='cancelled' WHERE id=?", [inc.id]);
-                        await recordIncidentEvent(inc.id, inc.ticketCode || inc.id, 'Cancelled', inc.status, 'cancelled', 'Citizen App');
-                        io.emit('incident-cancelled', { id: inc.id });
-                        io.emit('incident-updated', { id: inc.id, status: 'cancelled' });
+            const conn = await pool.getConnection();
+            let cancelledIncidents = [];
+            let normalizedReport = null;
+
+            try {
+                await conn.beginTransaction();
+
+                // Check if active incident exists with lock (excluding already closed, cancelled, or unsubmitted draft)
+                const [existing] = await conn.query(
+                    "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed', 'draft') FOR UPDATE",
+                    [reporterId, phone]
+                );
+
+                if (existing.length > 0) {
+                    if (!forceNew) {
+                        await conn.rollback();
+                        const inc = existing[0];
+                        const [events] = await conn.query("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY timestamp ASC", [inc.id]);
+                        inc.events = events;
+                        conn.release();
+                        return res.status(409).json({ success: false, error: "Existing emergency found.", incident: inc });
                     }
-                } else {
-                    // Already has an active emergency or draft
+
+                    // ForceNew: Cancel all existing active incidents (except temporary draft itself which gets replaced)
+                    for (let inc of existing) {
+                        if (inc.id !== draftId) {
+                            await conn.query("UPDATE incidents SET status='cancelled' WHERE id=?", [inc.id]);
+                            if (inc.assignedVehicle) {
+                                await conn.query("UPDATE rescue_vehicles SET status='Available' WHERE id=? OR name=?", [inc.assignedVehicle, inc.assignedVehicle]);
+                            }
+                            if (inc.assignedUnit) {
+                                await conn.query("UPDATE responders SET status='available' WHERE id=?", [inc.assignedUnit]);
+                            }
+
+                            const now = new Date();
+                            const optionsDate = { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: '2-digit' };
+                            const optionsTime = { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true };
+                            const dateStr = new Intl.DateTimeFormat('en-US', optionsDate).format(now);
+                            const timeStr = new Intl.DateTimeFormat('en-US', optionsTime).format(now);
+                            const timestamp = now.getTime();
+
+                            await conn.query(
+                                "INSERT INTO incident_events (incident_id, ticket_number, event_status, previous_status, new_status, actor_source, date_str, time_str, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                [inc.id, inc.ticketCode || inc.id, 'Cancelled', inc.status, 'cancelled', 'Citizen App', dateStr, timeStr, timestamp]
+                            );
+                            cancelledIncidents.push(inc.id);
+                        }
+                    }
+                }
+
+                // Explicitly delete any old draft session data
+                await conn.query("DELETE FROM incident_events WHERE incident_id = ?", [draftId]);
+                await conn.query("DELETE FROM incidents WHERE id = ?", [draftId]);
+
+                // Authoritative barangay resolution
+                let barangay = req.body.barangay || null;
+                if (lat && lng) {
+                    const pozBgy = barangayService.findPozorrubioBarangay(Number(lat), Number(lng));
+                    if (pozBgy && pozBgy.name) barangay = pozBgy.name;
+                }
+
+                const ts = createdAt || Date.now();
+                normalizedReport = {
+                    id: draftId,
+                    category: null,
+                    details: `Emergency report prepared by ${reporter || 'Citizen'}`,
+                    lat: lat || 16.1086,
+                    lng: lng || 120.5424,
+                    barangay: barangay,
+                    reporter: reporter || 'Unknown Citizen',
+                    reporterPhone: phone,
+                    media: [],
+                    createdAt: ts,
+                    networkReceivedAt: Date.now(),
+                    status: 'draft',
+                    assignedUnit: null,
+                    reporterId: reporterId,
+                    responseProgress: null,
+                    has_sent_messages: false,
+                    assigned_agency: 'MDRRMO'
+                };
+
+                await conn.query(
+                    "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
+                    [normalizedReport.id, normalizedReport.category, normalizedReport.details, JSON.stringify(normalizedReport.media || []), normalizedReport.lat, normalizedReport.lng, normalizedReport.reporter, normalizedReport.reporterPhone, reporterId, normalizedReport.createdAt, normalizedReport.networkReceivedAt, normalizedReport.barangay, normalizedReport.status, normalizedReport.assignedUnit, normalizedReport.responseProgress, normalizedReport.assigned_agency]
+                );
+
+                await conn.commit();
+            } catch (txErr) {
+                await conn.rollback();
+                throw txErr;
+            } finally {
+                conn.release();
+            }
+
+            // Real-time synchronization for cancelled incidents
+            for (let incId of cancelledIncidents) {
+                const [rows] = await pool.query("SELECT * FROM incidents WHERE id=?", [incId]);
+                const updatedInc = rows.length > 0 ? rows[0] : { id: incId, status: 'cancelled' };
+                io.emit('incident_status_changed', updatedInc);
+                io.emit('incident-updated', updatedInc);
+                io.emit('incident-cancelled', { id: incId });
+            }
+
+            const dbState = await getDBState();
+            io.emit('init-state', dbState);
+            io.emit('new-incident-alert', normalizedReport);
+            return res.json({ success: true, incident: normalizedReport });
+        } else {
+            // JSON Database Simulation Fallback
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (!db.incidents) db.incidents = [];
+            if (!db.incident_events) db.incident_events = [];
+
+            const existing = db.incidents.filter(i =>
+                (String(i.reporterId) === String(reporterId) || (phone && i.reporterPhone === phone)) &&
+                !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())
+            );
+
+            let cancelledIncidents = [];
+            if (existing.length > 0) {
+                if (!forceNew) {
                     const inc = existing[0];
-                    const [events] = await pool.query("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY timestamp ASC", [inc.id]);
-                    inc.events = events;
-                    return res.status(409).json({ error: "Existing emergency found.", incident: inc });
+                    inc.events = db.incident_events.filter(e => e.incident_id === inc.id).sort((a,b) => a.timestamp - b.timestamp);
+                    return res.status(409).json({ success: false, error: "Existing emergency found.", incident: inc });
+                }
+
+                for (let inc of existing) {
+                    if (inc.id !== draftId) {
+                        const prevStatus = inc.status;
+                        inc.status = 'cancelled';
+                        if (inc.assignedVehicle && db.rescue_vehicles) {
+                            const v = db.rescue_vehicles.find(vh => vh.id === inc.assignedVehicle || vh.name === inc.assignedVehicle);
+                            if (v) v.status = 'Available';
+                        }
+                        if (inc.assignedUnit && db.responders) {
+                            const r = db.responders.find(rp => rp.id === inc.assignedUnit);
+                            if (r) r.status = 'available';
+                        }
+                        db.incident_events.push({
+                            id: Date.now() + Math.floor(Math.random() * 1000),
+                            incident_id: inc.id,
+                            ticket_code: inc.ticketCode || inc.id,
+                            event_type: 'Cancelled',
+                            previous_status: prevStatus,
+                            new_status: 'cancelled',
+                            actor_role: 'Citizen App',
+                            timestamp: Date.now()
+                        });
+                        cancelledIncidents.push(inc);
+                    }
                 }
             }
-            
-            // Explicitly delete any old cancelled/resolved draft data to ensure a fresh session
-            await pool.query("DELETE FROM incident_events WHERE incident_id = ?", [draftId]);
-            await pool.query("DELETE FROM incidents WHERE id = ?", [draftId]);
-            
-            // Create temporary draft ticket
+
+            // Remove old draft
+            db.incidents = db.incidents.filter(i => i.id !== draftId);
+            db.incident_events = db.incident_events.filter(e => e.incident_id !== draftId);
+
+            let barangay = req.body.barangay || null;
+            if (lat && lng) {
+                const pozBgy = barangayService.findPozorrubioBarangay(Number(lat), Number(lng));
+                if (pozBgy && pozBgy.name) barangay = pozBgy.name;
+            }
+
             const ts = createdAt || Date.now();
             const normalizedReport = {
                 id: draftId,
-                category: 'draft',
-                details: `Emergency report prepared by ${reporter}`,
+                category: null,
+                details: `Emergency report prepared by ${reporter || 'Citizen'}`,
                 lat: lat || 16.1086,
                 lng: lng || 120.5424,
-                barangay: req.body.barangay || null,
+                barangay: barangay,
                 reporter: reporter || 'Unknown Citizen',
                 reporterPhone: phone,
                 media: [],
@@ -1872,18 +2012,26 @@ app.post('/api/incidents/draft', async (req, res) => {
                 assignedUnit: null,
                 reporterId: reporterId,
                 responseProgress: null,
-                has_sent_messages: false
+                has_sent_messages: false,
+                assigned_agency: 'MDRRMO'
             };
-            
-            await addIncident(normalizedReport);
+
+            db.incidents.unshift(normalizedReport);
+            fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+
+            for (let inc of cancelledIncidents) {
+                io.emit('incident_status_changed', inc);
+                io.emit('incident-updated', inc);
+                io.emit('incident-cancelled', { id: inc.id });
+            }
+
+            io.emit('init-state', db);
             io.emit('new-incident-alert', normalizedReport);
             return res.json({ success: true, incident: normalizedReport });
-        } else {
-            return res.status(501).json({ error: "Drafts only supported on MySQL" });
         }
     } catch(e) {
         console.error("Draft creation error:", e);
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ success: false, error: e.message || "Failed to cancel existing report and start new session." });
     }
 });
 
@@ -1893,15 +2041,21 @@ app.delete('/api/incidents/draft/:userId', async (req, res) => {
         const userId = req.params.userId;
         const draftId = `DRAFT-${userId}`;
         if (useMySQL) {
+            await pool.query("DELETE FROM incident_events WHERE incident_id = ?", [draftId]);
             await pool.query("DELETE FROM incidents WHERE id = ?", [draftId]);
             io.emit('incident-deleted', { id: draftId });
             res.json({ success: true });
         } else {
-            res.status(501).json({ error: "Drafts only supported on MySQL" });
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (db.incidents) db.incidents = db.incidents.filter(i => i.id !== draftId);
+            if (db.incident_events) db.incident_events = db.incident_events.filter(e => e.incident_id !== draftId);
+            fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+            io.emit('incident-deleted', { id: draftId });
+            res.json({ success: true });
         }
     } catch(e) {
         console.error("Draft deletion error:", e);
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 
@@ -1910,7 +2064,7 @@ app.get('/api/incidents/active', async (req, res) => {
     try {
         const { userId, phone } = req.query;
         if (!userId && !phone) {
-            return res.status(400).json({ error: "Missing userId or phone" });
+            return res.status(400).json({ success: false, error: "Missing userId or phone" });
         }
         
         const state = await getDBState();
@@ -1922,9 +2076,9 @@ app.get('/api/incidents/active', async (req, res) => {
         });
 
         if (activeIncident) {
-            res.json({ success: true, hasActive: true, incident: activeIncident });
+            res.json({ success: true, hasActive: true, active: true, incident: activeIncident });
         } else {
-            res.json({ success: true, hasActive: false });
+            res.json({ success: true, hasActive: false, active: false });
         }
     } catch (e) {
         console.error("Check active incident error:", e);
@@ -1947,7 +2101,16 @@ app.post('/api/incidents', async (req, res) => {
                     [report.reporterId, report.reporterPhone || '']
                 );
                 if (existing.length > 0) {
-                    return res.status(409).json({ error: "Active emergency report already exists.", incident: existing[0] });
+                    return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                }
+            } else if (!useMySQL && report.reporterId) {
+                const dbState = await getDBState();
+                const existing = (dbState.incidents || []).filter(i =>
+                    (String(i.reporterId) === String(report.reporterId) || (report.reporterPhone && i.reporterPhone === report.reporterPhone)) &&
+                    !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())
+                );
+                if (existing.length > 0) {
+                    return res.status(409).json({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
                 }
             }
 
@@ -2463,6 +2626,32 @@ io.on('connection', async (socket) => {
             let oldDraftId = null;
 
             if (!report.id || report.id === 'draft' || report.id.startsWith('DRAFT-')) {
+                // BACKEND PROTECTION: Ensure the user does not already have an active emergency
+                if (useMySQL && report.reporterId) {
+                    const [existing] = await pool.query(
+                        "SELECT * FROM incidents WHERE (reporterId = ? OR reporterPhone = ?) AND status NOT IN ('resolved', 'cancelled', 'closed', 'draft')",
+                        [report.reporterId, report.reporterPhone || '']
+                    );
+                    if (existing.length > 0) {
+                        if (typeof callback === 'function') {
+                            return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                        }
+                        return;
+                    }
+                } else if (!useMySQL && report.reporterId) {
+                    const dbState = await getDBState();
+                    const existing = (dbState.incidents || []).filter(i =>
+                        (String(i.reporterId) === String(report.reporterId) || (report.reporterPhone && i.reporterPhone === report.reporterPhone)) &&
+                        !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())
+                    );
+                    if (existing.length > 0) {
+                        if (typeof callback === 'function') {
+                            return callback({ success: false, error: "Active emergency report already exists.", incident: existing[0] });
+                        }
+                        return;
+                    }
+                }
+
                 isNewEmergency = true;
                 if (report.id && report.id.startsWith('DRAFT-')) {
                     oldDraftId = report.id;
