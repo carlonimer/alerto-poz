@@ -13,6 +13,8 @@ class SocketService {
   // static const String serverUrl = 'http://localhost:3000'; // Web / iOS Emulator
   // static const String serverUrl = 'http://192.168.100.131:3000'; // Local Network IP
 
+  static final Map<String, List<EventCallback>> _listeners = {};
+
   static bool get isConnected => _connected;
 
   static void init() {
@@ -43,19 +45,53 @@ class SocketService {
       debugPrint('[Socket] Connect error: $err');
     });
 
+    // Re-attach all registered event listeners to the underlying socket
+    for (final event in _listeners.keys) {
+      _attachSocketDispatcher(event);
+    }
+
     _socket!.connect();
   }
 
+  static void _attachSocketDispatcher(String event) {
+    if (_socket == null) return;
+    _socket!.off(event);
+    _socket!.on(event, (data) {
+      final callbacks = List<EventCallback>.from(_listeners[event] ?? const []);
+      for (final cb in callbacks) {
+        try {
+          cb(data);
+        } catch (e) {
+          debugPrint('[Socket] Error in listener for $event: $e');
+        }
+      }
+    });
+  }
+
   static void on(String event, EventCallback callback) {
-    _socket?.on(event, callback);
+    _listeners.putIfAbsent(event, () => <EventCallback>[]);
+    if (_listeners[event]!.contains(callback)) {
+      debugPrint('[Socket] Callback already registered for event "$event", skipping duplicate');
+      return;
+    }
+    final wasEmpty = _listeners[event]!.isEmpty;
+    _listeners[event]!.add(callback);
+    if (wasEmpty && _socket != null) {
+      _attachSocketDispatcher(event);
+    }
   }
 
   /// Removes listeners for [event]. If [handler] is given, only that specific
   /// listener is removed (other screens' listeners stay attached).
   static void off(String event, [EventCallback? handler]) {
     if (handler != null) {
-      _socket?.off(event, handler);
+      _listeners[event]?.remove(handler);
+      if (_listeners[event]?.isEmpty ?? true) {
+        _listeners.remove(event);
+        _socket?.off(event);
+      }
     } else {
+      _listeners.remove(event);
       _socket?.off(event);
     }
   }

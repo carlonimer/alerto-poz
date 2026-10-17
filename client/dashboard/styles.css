@@ -1317,6 +1317,10 @@ body {
     margin-top: 12px;
 }
 
+.chat-message-row .chat-bubble {
+    margin-top: 2px;
+}
+
 .chat-bubble.chat-incoming+.chat-bubble.chat-incoming {
     margin-top: 3px;
 }

@@ -3,24 +3,34 @@ const { verifyAdmin } = require('./middleware/auth.js');
 module.exports = function(app, getDBState, pool, useMySQL) {
 
     const filterIncidents = (incidents, assigned_agency, barangay = null) => {
-        return incidents.filter(i => {
+        return (incidents || []).filter(i => {
             let agency = i.assigned_agency;
             if (!agency) {
                 const cat = (i.category || '').toLowerCase();
                 if (cat === 'fire') agency = 'BFP';
-                else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
+                else if (cat === 'crime' || cat === 'police') agency = 'PNP';
                 else if (cat === 'barangay') agency = 'Barangay';
-                else if (cat === 'report') agency = 'MDRRMO';
                 else agency = 'MDRRMO';
             }
-            if (agency !== assigned_agency) return false;
-            if (barangay && i.barangay !== barangay) return false;
+            if (barangay) {
+                const incBrgy = (i.barangay || '').trim().toLowerCase();
+                const targetBrgy = String(barangay).trim().toLowerCase();
+                return incBrgy === targetBrgy || (agency === 'Barangay' && (!i.barangay || incBrgy === targetBrgy));
+            }
+            if (assigned_agency && assigned_agency !== 'ALL') {
+                if (agency !== assigned_agency) return false;
+            }
             return true;
         });
     };
 
     app.get('/api/auth/me', verifyAdmin(), (req, res) => {
         res.json({ user: req.admin });
+    });
+
+    app.get('/api/admin/incidents', verifyAdmin(), async (req, res) => {
+        const state = await getDBState();
+        res.json({ incidents: state.incidents || [] });
     });
 
     app.get('/api/bfp/incidents', verifyAdmin(['bfp_admin']), async (req, res) => {
@@ -39,8 +49,10 @@ module.exports = function(app, getDBState, pool, useMySQL) {
     });
 
     app.get('/api/barangays/:id/incidents', verifyAdmin(['barangay_admin']), async (req, res) => {
-        // Enforce the user can only fetch their own barangay
-        if (req.admin.barangay !== req.params.id) {
+        // Enforce the user can only fetch their own barangay (case-insensitive check)
+        const userBrgy = (req.admin.barangay || '').trim().toLowerCase();
+        const paramBrgy = decodeURIComponent(req.params.id || '').trim().toLowerCase();
+        if (userBrgy !== paramBrgy) {
             return res.status(403).json({ error: "Access denied to other barangay's incidents." });
         }
         const state = await getDBState();

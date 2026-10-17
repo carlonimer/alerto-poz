@@ -67,15 +67,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   bool _sent = false;
   bool _sending = false;
   bool _isUploadingMedia = false;
+  bool _isSendingText = false;
+  bool _isOpeningPicker = false;
   bool _queued = false;
   bool _cancelled = false; // New cancelled state
   bool _hasText = false;
   DateTime _createdAt = DateTime.now();
   final List<Map<String, dynamic>> _chatFeed = [];
   final Set<String> _seenMessageIds = {}; // Server message ids already rendered (dedupe)
+  final Set<String> _seenClientMessageIds = {}; // Client message ids already rendered (dedupe)
+  final Set<String> _activeUploadKeys = {}; // Active upload keys to prevent duplicate uploads of the same file
   bool _isFetchingHistory = false;
   final List<String> _attachedImages = []; // base64 strings
-  final List<Map<String, String>> _pendingMediaUploads = []; // Queued media files: {'path': ..., 'type': 'video'|'image'}
+  final List<Map<String, dynamic>> _pendingMediaUploads = []; // Queued media files: {'path': ..., 'type': 'video'|'image', 'clientMessageId': ..., 'uploaded': bool}
+
+  String _generateClientMessageId() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    final uid = widget.user?.id ?? 0;
+    return 'cm_${uid}_$now';
+  }
 
   bool _isMapExpanded = true;
   String _mapLayer = 'Standard'; // Standard, Satellite, Terrain
@@ -259,28 +269,81 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Socket handlers ─────────────────────────
 
   void _onChatMessage(dynamic data) {
-    if (data is! Map || data['incident_id']?.toString() != _incidentId || !mounted) return;
+    if (data is! Map || !mounted) return;
+    final incId = data['incident_id']?.toString();
+    if (incId != _incidentId && incId != _ticketCode) return;
     
-    // Dedupe: never render the same server message twice
+    // Dedupe: never render the same server message or client message twice
     final msgId = data['id']?.toString();
+    final clientMsgId = data['client_message_id']?.toString() ?? data['clientMessageId']?.toString();
     if (msgId != null && msgId.isNotEmpty && _seenMessageIds.contains(msgId)) return;
-    if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+    if (clientMsgId != null && clientMsgId.isNotEmpty && _seenClientMessageIds.contains(clientMsgId)) {
+      if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+      return;
+    }
 
     final isUser = data['sender_role'] == 'Citizen App' || data['sender_id']?.toString() == widget.user?.id.toString();
     final msgType = data['message_type']?.toString();
     final isVideo = msgType == 'video';
     final isImage = msgType == 'image' || data['is_media'] == true;
     final ts = data['timestamp'] != null ? _parseTs(data['timestamp']) : DateTime.now();
+    final serverMedia = data['media_url']?.toString();
+    final serverContent = (data['message_content'] ?? data['message'])?.toString();
+
+    // Check if an optimistic entry already exists in the feed to reconcile in place
+    int optIdx = -1;
+    if (clientMsgId != null && clientMsgId.isNotEmpty) {
+      optIdx = _chatFeed.indexWhere((m) => m['clientMessageId'] == clientMsgId);
+    }
+    if (optIdx == -1 && isUser) {
+      optIdx = _chatFeed.indexWhere((m) {
+        if (m['id'] != null && m['id'].toString().isNotEmpty) return false;
+        if (m['role'] != 'user') return false;
+        if (isVideo && m['type'] == 'video') {
+          if (m['localPath'] != null && serverMedia != null && serverMedia.endsWith(m['localPath'].toString().split(Platform.pathSeparator).last)) return true;
+          return true;
+        }
+        if (isImage && m['type'] == 'image') {
+          if (m['localPath'] != null && serverMedia != null && serverMedia.endsWith(m['localPath'].toString().split(Platform.pathSeparator).last)) return true;
+          return true;
+        }
+        if (!isVideo && !isImage && m['type'] == 'text') {
+          if (serverContent != null && m['content'] == serverContent) return true;
+        }
+        return false;
+      });
+    }
 
     setState(() {
-      _chatFeed.add({
-        'id': msgId,
-        'role': isUser ? 'user' : 'bot',
-        'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
-        'content': data['media_url'] ?? data['message_content'] ?? data['message'] ?? '',
-        'videoPath': isVideo ? (data['media_url'] ?? data['message_content'] ?? data['message']) : null,
-        'timestamp': ts.toIso8601String(),
-      });
+      if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+      if (clientMsgId != null && clientMsgId.isNotEmpty) _seenClientMessageIds.add(clientMsgId);
+
+      if (optIdx != -1) {
+        // Reconcile optimistic entry in place (no duplicate bubble)
+        final entry = _chatFeed[optIdx];
+        if (msgId != null && msgId.isNotEmpty) entry['id'] = msgId;
+        if (clientMsgId != null && clientMsgId.isNotEmpty) entry['clientMessageId'] = clientMsgId;
+        entry['status'] = 'sent';
+        if (serverMedia != null && serverMedia.isNotEmpty) {
+          entry['media_url'] = serverMedia;
+          if (isVideo) entry['videoPath'] = serverMedia;
+        }
+        if (data['timestamp'] != null) {
+          entry['timestamp'] = ts.toIso8601String();
+        }
+      } else {
+        _chatFeed.add({
+          'id': msgId,
+          'clientMessageId': clientMsgId,
+          'role': isUser ? 'user' : 'bot',
+          'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
+          'content': serverMedia ?? serverContent ?? '',
+          'media_url': serverMedia,
+          'videoPath': isVideo ? (serverMedia ?? serverContent) : null,
+          'status': 'sent',
+          'timestamp': ts.toIso8601String(),
+        });
+      }
       _sortFeed();
     });
     _scrollToBottom();
@@ -326,9 +389,22 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (res is! Map || res['success'] != true || res['message'] is! Map) return;
     final m = res['message'] as Map;
     final id = m['id']?.toString();
+    final clientMsgId = m['client_message_id']?.toString() ?? entry['clientMessageId']?.toString();
     if (id != null && id.isNotEmpty) {
       _seenMessageIds.add(id);
       entry['id'] = id;
+    }
+    if (clientMsgId != null && clientMsgId.isNotEmpty) {
+      _seenClientMessageIds.add(clientMsgId);
+      entry['clientMessageId'] = clientMsgId;
+    }
+    entry['status'] = 'sent';
+    final serverMedia = m['media_url']?.toString();
+    if (serverMedia != null && serverMedia.isNotEmpty) {
+      entry['media_url'] = serverMedia;
+      if (entry['type'] == 'video') {
+        entry['videoPath'] = serverMedia;
+      }
     }
     if (m['timestamp'] != null) {
       entry['timestamp'] = _parseTs(m['timestamp']).toIso8601String();
@@ -370,10 +446,6 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   Future<void> _restoreDraftFromPrefs() async {}
 
   void _saveDraftToPrefs() {}
-
-
-
-  Future<void> _flushOfflineQueue() async {}
 
 
   Future<void> _initLocation() async {
@@ -468,8 +540,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           for (var msg in msgs) {
             if (msg is! Map) continue;
             final msgId = msg['id']?.toString();
-            // Dedupe by server id so refresh/restore never duplicates messages
+            final clientMsgId = msg['client_message_id']?.toString() ?? msg['clientMessageId']?.toString();
+
+            // Dedupe by server id or client message id so refresh/restore never duplicates messages
             if (msgId != null && msgId.isNotEmpty && _seenMessageIds.contains(msgId)) {
+              continue;
+            }
+            if (clientMsgId != null && clientMsgId.isNotEmpty && _seenClientMessageIds.contains(clientMsgId)) {
+              if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
               continue;
             }
 
@@ -503,41 +581,59 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
               if (existingCatIdx != -1) {
                 _chatFeed[existingCatIdx]['id'] = msgId;
+                if (clientMsgId != null && clientMsgId.isNotEmpty) {
+                  _chatFeed[existingCatIdx]['clientMessageId'] = clientMsgId;
+                }
                 _chatFeed[existingCatIdx]['timestamp'] = parsedTime;
                 _chatFeed[existingCatIdx]['content'] = 'Selected Emergency: ${catPart.toUpperCase()}';
-                if (msgId != null && msgId.isNotEmpty) {
-                  _seenMessageIds.add(msgId);
-                }
+                if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+                if (clientMsgId != null && clientMsgId.isNotEmpty) _seenClientMessageIds.add(clientMsgId);
                 continue;
               }
             }
 
             // Reconcile optimistic message if already in feed
-            final optIdx = _chatFeed.indexWhere((m) =>
-                m['id'] == null &&
-                m['role'] == (isUser ? 'user' : 'bot') &&
-                m['type'] == (isVideo ? 'video' : (isImage ? 'image' : 'text')) &&
-                (m['content'] == content || m['content'] == msg['message_content']));
+            int optIdx = -1;
+            if (clientMsgId != null && clientMsgId.isNotEmpty) {
+              optIdx = _chatFeed.indexWhere((m) => m['clientMessageId'] == clientMsgId);
+            }
+            if (optIdx == -1) {
+              optIdx = _chatFeed.indexWhere((m) =>
+                  m['id'] == null &&
+                  m['role'] == (isUser ? 'user' : 'bot') &&
+                  m['type'] == (isVideo ? 'video' : (isImage ? 'image' : 'text')) &&
+                  (m['content'] == content ||
+                   m['content'] == msg['message_content'] ||
+                   (m['localPath'] != null && content.toString().endsWith(m['localPath'].toString().split(Platform.pathSeparator).last))));
+            }
+
+            if (msgId != null && msgId.isNotEmpty) _seenMessageIds.add(msgId);
+            if (clientMsgId != null && clientMsgId.isNotEmpty) _seenClientMessageIds.add(clientMsgId);
 
             if (optIdx != -1) {
               _chatFeed[optIdx]['id'] = msgId;
+              if (clientMsgId != null && clientMsgId.isNotEmpty) {
+                _chatFeed[optIdx]['clientMessageId'] = clientMsgId;
+              }
+              _chatFeed[optIdx]['status'] = 'sent';
               _chatFeed[optIdx]['timestamp'] = parsedTime;
               if (isVideo && msg['media_url'] != null) {
                 _chatFeed[optIdx]['videoPath'] = msg['media_url'];
+                _chatFeed[optIdx]['media_url'] = msg['media_url'];
               }
-              if (msgId != null && msgId.isNotEmpty) {
-                _seenMessageIds.add(msgId);
+              if (isImage && msg['media_url'] != null) {
+                _chatFeed[optIdx]['media_url'] = msg['media_url'];
               }
             } else {
-              if (msgId != null && msgId.isNotEmpty) {
-                _seenMessageIds.add(msgId);
-              }
               _chatFeed.add({
                 'id': msgId,
+                'clientMessageId': clientMsgId,
                 'role': isUser ? 'user' : 'bot',
                 'type': isVideo ? 'video' : (isImage ? 'image' : 'text'),
                 'content': isCatMsg ? 'Selected Emergency: ${rawContentStr.split(':').last.trim().toUpperCase()}' : content,
+                'media_url': msg['media_url'],
                 'videoPath': isVideo ? (msg['media_url'] ?? msg['message_content'] ?? msg['content']) : null,
+                'status': 'sent',
                 'timestamp': parsedTime,
               });
             }
@@ -593,27 +689,40 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   }
 
   Future<void> _attachGalleryImage() async {
-    final picker = ImagePicker();
-    final XFile? file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
-    if (file != null) {
-      await _handleImageTaken(file.path);
+    if (_isOpeningPicker || _isUploadingMedia) return;
+    _isOpeningPicker = true;
+    try {
+      final picker = ImagePicker();
+      final XFile? file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
+      if (file != null && mounted) {
+        await _handleImageTaken(file.path);
+      }
+    } finally {
+      _isOpeningPicker = false;
     }
   }
 
-
-
   Future<void> _flushPendingMediaUploads() async {
     if (_incidentId == null || _pendingMediaUploads.isEmpty) return;
-    final toUpload = List<Map<String, String>>.from(_pendingMediaUploads);
+    final toUpload = List<Map<String, dynamic>>.from(_pendingMediaUploads);
     _pendingMediaUploads.clear();
 
     for (final item in toUpload) {
-      final mediaPath = item['path'];
-      final mediaType = item['type'] ?? 'image';
+      if (item['uploaded'] == true || item['uploaded'] == 'true') {
+        // Skip media already successfully uploaded and migrated
+        continue;
+      }
+      final mediaPath = item['path']?.toString();
+      final mediaType = item['type']?.toString() ?? 'image';
+      final clientMsgId = item['clientMessageId']?.toString() ?? _generateClientMessageId();
       if (mediaPath == null || mediaPath.isEmpty) continue;
+
+      if (_activeUploadKeys.contains(mediaPath)) continue;
+      _activeUploadKeys.add(mediaPath);
 
       try {
         final payload = {
+          'clientMessageId': clientMsgId,
           'senderId': widget.user?.id,
           'messageContent': '${mediaType == 'video' ? 'Video' : 'Image'} Attachment',
           'messageType': mediaType,
@@ -623,22 +732,53 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           payload,
           mediaPath: mediaPath,
         );
-        if (mediaType == 'video' && res['success'] == true && res['message'] != null) {
+        final isSuccess = (res['success'] == true);
+        item['uploaded'] = isSuccess;
+
+        final optIdx = _chatFeed.indexWhere((m) => m['clientMessageId'] == clientMsgId);
+        if (optIdx != -1) {
+          if (isSuccess) {
+            _applyServerAck(_chatFeed[optIdx], res);
+          } else {
+            setState(() {
+              _chatFeed[optIdx]['status'] = 'failed';
+              _chatFeed[optIdx]['error'] = res['error']?.toString() ?? 'Upload failed';
+            });
+          }
+        }
+        if (mediaType == 'video' && isSuccess && res['message'] != null) {
           final serverMediaUrl = res['message']['media_url']?.toString();
           final cachedBytes = VideoThumbnailService.getCachedThumbnailSync(mediaPath);
           if (serverMediaUrl != null && serverMediaUrl.isNotEmpty && cachedBytes != null) {
             VideoThumbnailService.cacheThumbnail(serverMediaUrl, cachedBytes);
           }
         }
+        if (!isSuccess) {
+          _pendingMediaUploads.add(item);
+        }
       } catch (e) {
         debugPrint("Error uploading queued pending media: $e");
+        _pendingMediaUploads.add(item);
+        final optIdx = _chatFeed.indexWhere((m) => m['clientMessageId'] == clientMsgId);
+        if (optIdx != -1 && mounted) {
+          setState(() {
+            _chatFeed[optIdx]['status'] = 'failed';
+            _chatFeed[optIdx]['error'] = e.toString();
+          });
+        }
+      } finally {
+        _activeUploadKeys.remove(mediaPath);
       }
     }
   }
 
   Future<void> _handleVideoTaken(String path) async {
     if (!mounted) return;
-
+    if (_activeUploadKeys.contains(path)) {
+      debugPrint("Skipping duplicate video upload for path: $path");
+      return;
+    }
+    _activeUploadKeys.add(path);
     setState(() => _isUploadingMedia = true);
     
     try {
@@ -678,12 +818,16 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
 
       if (!mounted) return;
+      final clientMsgId = _generateClientMessageId();
       final videoEntry = <String, dynamic>{
+        'clientMessageId': clientMsgId,
         'role': 'user',
         'type': 'video',
         'content': uploadPath,
         'videoPath': uploadPath,
+        'localPath': uploadPath,
         'thumbnail': rawThumbBytes,
+        'status': 'uploading',
         'timestamp': DateTime.now().toIso8601String(),
       };
       setState(() {
@@ -698,10 +842,22 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       // 3. Send video attachment via chat messaging flow
       final targetIncidentId = _incidentId ?? 'DRAFT-${widget.user?.id ?? 0}';
       final payload = {
+        'clientMessageId': clientMsgId,
         'senderId': widget.user?.id,
         'messageContent': 'Video Attachment',
         'messageType': 'video',
       };
+
+      final pendingItem = <String, dynamic>{
+        'clientMessageId': clientMsgId,
+        'type': 'video',
+        'path': uploadPath,
+        'uploaded': false,
+      };
+      if (!_sent) {
+        // Queue for association upon explicit incident activation
+        _pendingMediaUploads.add(pendingItem);
+      }
 
       try {
         final res = await ApiService.sendMessage(
@@ -709,27 +865,31 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           payload,
           mediaPath: uploadPath,
         );
-        _applyServerAck(videoEntry, res);
-        if (res['success'] == true && res['message'] != null && rawThumbBytes != null) {
-          final serverMediaUrl = res['message']['media_url']?.toString();
-          if (serverMediaUrl != null && serverMediaUrl.isNotEmpty) {
-            // Pre-cache under server URL so when history or updates arrive, thumbnail is instant!
-            VideoThumbnailService.cacheThumbnail(serverMediaUrl, rawThumbBytes);
+        if (res['success'] == true) {
+          pendingItem['uploaded'] = true;
+          _applyServerAck(videoEntry, res);
+          if (res['message'] != null && rawThumbBytes != null) {
+            final serverMediaUrl = res['message']['media_url']?.toString();
+            if (serverMediaUrl != null && serverMediaUrl.isNotEmpty) {
+              VideoThumbnailService.cacheThumbnail(serverMediaUrl, rawThumbBytes);
+            }
           }
-        }
-        if (res['error'] != null) {
-          debugPrint("Video send warning: ${res['error']}");
+        } else {
+          if (mounted) {
+            setState(() {
+              videoEntry['status'] = 'failed';
+              videoEntry['error'] = res['error']?.toString() ?? 'Upload failed';
+            });
+          }
         }
       } catch (uploadErr) {
         debugPrint("Video upload error: $uploadErr");
-      }
-
-      if (!_sent) {
-        // Queue for association upon explicit incident activation
-        _pendingMediaUploads.add({
-          'type': 'video',
-          'path': uploadPath,
-        });
+        if (mounted) {
+          setState(() {
+            videoEntry['status'] = 'failed';
+            videoEntry['error'] = uploadErr.toString();
+          });
+        }
       }
     } catch (e) {
       debugPrint("Error handling video: $e");
@@ -739,21 +899,33 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         );
       }
     } finally {
+      _activeUploadKeys.remove(path);
       if (mounted) setState(() => _isUploadingMedia = false);
     }
   }
 
   Future<void> _handleImageTaken(String path) async {
+    if (!mounted) return;
+    if (_activeUploadKeys.contains(path)) {
+      debugPrint("Skipping duplicate image upload for path: $path");
+      return;
+    }
+    _activeUploadKeys.add(path);
     setState(() => _isUploadingMedia = true);
+
     try {
       final bytes = await File(path).readAsBytes();
       final b64 = base64Encode(bytes);
 
       if (!mounted) return;
+      final clientMsgId = _generateClientMessageId();
       final imageEntry = <String, dynamic>{
+        'clientMessageId': clientMsgId,
         'role': 'user',
         'type': 'image',
         'content': b64,
+        'localPath': path,
+        'status': 'uploading',
         'timestamp': DateTime.now().toIso8601String(),
       };
       setState(() {
@@ -765,10 +937,21 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
 
       final targetIncidentId = _incidentId ?? 'DRAFT-${widget.user?.id ?? 0}';
       final payload = {
+        'clientMessageId': clientMsgId,
         'senderId': widget.user?.id,
         'messageContent': 'Image Attachment',
         'messageType': 'image',
       };
+
+      final pendingItem = <String, dynamic>{
+        'clientMessageId': clientMsgId,
+        'type': 'image',
+        'path': path,
+        'uploaded': false,
+      };
+      if (!_sent) {
+        _pendingMediaUploads.add(pendingItem);
+      }
 
       try {
         final res = await ApiService.sendMessage(
@@ -776,19 +959,25 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           payload,
           mediaPath: path,
         );
-        _applyServerAck(imageEntry, res);
-        if (res['error'] != null) {
-          debugPrint("Image send warning: ${res['error']}");
+        if (res['success'] == true) {
+          pendingItem['uploaded'] = true;
+          _applyServerAck(imageEntry, res);
+        } else {
+          if (mounted) {
+            setState(() {
+              imageEntry['status'] = 'failed';
+              imageEntry['error'] = res['error']?.toString() ?? 'Upload failed';
+            });
+          }
         }
       } catch (uploadErr) {
         debugPrint("Image upload error: $uploadErr");
-      }
-
-      if (!_sent) {
-        _pendingMediaUploads.add({
-          'type': 'image',
-          'path': path,
-        });
+        if (mounted) {
+          setState(() {
+            imageEntry['status'] = 'failed';
+            imageEntry['error'] = uploadErr.toString();
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -797,7 +986,62 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
         );
       }
     } finally {
+      _activeUploadKeys.remove(path);
       if (mounted) setState(() => _isUploadingMedia = false);
+    }
+  }
+
+  Future<void> _retryUpload(Map<String, dynamic> msg) async {
+    final localPath = msg['localPath']?.toString();
+    final type = msg['type']?.toString() ?? 'image';
+    final clientMsgId = msg['clientMessageId']?.toString() ?? _generateClientMessageId();
+    final targetIncidentId = _incidentId ?? 'DRAFT-${widget.user?.id ?? 0}';
+
+    if (localPath == null || localPath.isEmpty || _activeUploadKeys.contains(localPath)) return;
+    _activeUploadKeys.add(localPath);
+
+    setState(() {
+      msg['status'] = 'uploading';
+      msg.remove('error');
+    });
+
+    try {
+      final payload = {
+        'clientMessageId': clientMsgId,
+        'senderId': widget.user?.id,
+        'messageContent': '${type == 'video' ? 'Video' : 'Image'} Attachment',
+        'messageType': type,
+      };
+      final res = await ApiService.sendMessage(
+        targetIncidentId,
+        payload,
+        mediaPath: localPath,
+      );
+      if (res['success'] == true) {
+        _applyServerAck(msg, res);
+        for (final item in _pendingMediaUploads) {
+          if (item['clientMessageId'] == clientMsgId || item['path'] == localPath) {
+            item['uploaded'] = true;
+          }
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            msg['status'] = 'failed';
+            msg['error'] = res['error']?.toString() ?? 'Upload failed';
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          msg['status'] = 'failed';
+          msg['error'] = e.toString();
+        });
+      }
+    } finally {
+      _activeUploadKeys.remove(localPath);
+      if (mounted) setState(() {});
     }
   }
 
@@ -879,6 +1123,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   }
 
   Future<void> _sendChatMessage() async {
+    if (_sending || _isSendingText) return;
+
     final txt = _commentCtrl.text.trim();
     
     if (!_sent) {
@@ -892,50 +1138,80 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
       await _doTransmit();
       if (_sent && txt.isNotEmpty) {
+        _isSendingText = true;
+        _commentCtrl.clear();
+        final clientMsgId = _generateClientMessageId();
+        final entry = <String, dynamic>{
+          'clientMessageId': clientMsgId,
+          'role': 'user',
+          'type': 'text',
+          'content': txt,
+          'status': 'sent',
+          'timestamp': DateTime.now().toIso8601String(),
+        };
         setState(() {
-          _chatFeed.add({
-            'role': 'user',
-            'type': 'text',
-            'content': txt,
-            'timestamp': DateTime.now().toIso8601String(),
-          });
+          _chatFeed.add(entry);
           _sortFeed();
         });
-        _commentCtrl.clear();
         _scrollToBottom();
+        try {
+          final res = await ApiService.sendMessage(_incidentId!, {
+            'clientMessageId': clientMsgId,
+            'senderId': widget.user?.id,
+            'messageContent': txt,
+          });
+          _applyServerAck(entry, res);
+        } catch (e) {
+          debugPrint("Failed to send text message: $e");
+        } finally {
+          _isSendingText = false;
+        }
       }
       return;
     }
 
     if (txt.isEmpty) return;
 
+    _isSendingText = true;
+    _commentCtrl.clear();
+
+    final clientMsgId = _generateClientMessageId();
     final entry = <String, dynamic>{
+      'clientMessageId': clientMsgId,
       'role': 'user',
       'type': 'text',
       'content': txt,
+      'status': 'uploading',
       'timestamp': DateTime.now().toIso8601String(),
     };
     setState(() {
       _chatFeed.add(entry);
       _sortFeed();
     });
-    _commentCtrl.clear();
     _scrollToBottom();
 
     if (_incidentId != null) {
       try {
         final res = await ApiService.sendMessage(_incidentId!, {
+          'clientMessageId': clientMsgId,
           'senderId': widget.user?.id,
           'messageContent': txt,
         });
         _applyServerAck(entry, res);
       } catch (e) {
         if (mounted) {
+          setState(() {
+            entry['status'] = 'failed';
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Failed to send message due to network error.')),
           );
         }
+      } finally {
+        _isSendingText = false;
       }
+    } else {
+      _isSendingText = false;
     }
   }
 
@@ -985,6 +1261,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
   // ───────────────────────── Dialogs ─────────────────────────
 
   Future<void> _openCameraDirectly() async {
+    if (_isOpeningPicker || _isUploadingMedia) return;
+    _isOpeningPicker = true;
     try {
       final result = await Navigator.push(
         context,
@@ -1008,6 +1286,8 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           SnackBar(content: Text('Camera error: $e')),
         );
       }
+    } finally {
+      _isOpeningPicker = false;
     }
   }
 
@@ -1754,10 +2034,27 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
     if (type == 'image') {
       final raw = msg['content'].toString();
       final isUrl = raw.startsWith('http') || raw.startsWith('/uploads');
-      final ImageProvider provider = isUrl
-          ? NetworkImage(raw.startsWith('http') ? raw : '${ApiService.baseUrl}$raw')
-          : MemoryImage(base64Decode(raw));
+      ImageProvider provider;
+      if (isUrl) {
+        provider = NetworkImage(raw.startsWith('http') ? raw : '${ApiService.baseUrl}$raw');
+      } else if (msg['localPath'] != null && File(msg['localPath'].toString()).existsSync()) {
+        provider = FileImage(File(msg['localPath'].toString()));
+      } else {
+        try {
+          provider = MemoryImage(base64Decode(raw));
+        } catch (_) {
+          if (File(raw).existsSync()) {
+            provider = FileImage(File(raw));
+          } else {
+            provider = NetworkImage('${ApiService.baseUrl}$raw');
+          }
+        }
+      }
       final side = (maxW * 0.8).clamp(140.0, 240.0);
+      final status = msg['status']?.toString();
+      final isUploading = status == 'uploading';
+      final isFailed = status == 'failed';
+
       final image = GestureDetector(
         onTap: () => _openImage(provider),
         child: Container(
@@ -1768,17 +2065,59 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(13),
-            child: Image(
-              image: provider,
-              width: side,
-              height: side,
-              fit: BoxFit.cover,
-              errorBuilder: (c, e, s) => Container(
-                width: side,
-                height: side,
-                color: _C.chip,
-                child: const Icon(Icons.broken_image_rounded, size: 40, color: _C.muted),
-              ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Image(
+                  image: provider,
+                  width: side,
+                  height: side,
+                  fit: BoxFit.cover,
+                  errorBuilder: (c, e, s) => Container(
+                    width: side,
+                    height: side,
+                    color: _C.chip,
+                    child: const Icon(Icons.broken_image_rounded, size: 40, color: _C.muted),
+                  ),
+                ),
+                if (isUploading)
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black38,
+                      child: const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (isFailed)
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: GestureDetector(
+                      onTap: () => _retryUpload(msg),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD32F2F),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.refresh_rounded, size: 14, color: Colors.white),
+                            const SizedBox(width: 4),
+                            Text('Retry', style: GoogleFonts.outfit(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -1805,15 +2144,64 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
       }
 
       final bubbleWidth = (maxW * 0.8).clamp(180.0, 260.0);
-      final videoBubble = _ChatVideoThumbnailBubble(
-        videoSrc: videoSrc,
-        initialThumbBytes: preThumb,
-        width: bubbleWidth,
-        onTap: () {
-          if (videoSrc.isNotEmpty) {
-            _openVideoPlayer(videoSrc);
-          }
-        },
+      final status = msg['status']?.toString();
+      final isUploading = status == 'uploading';
+      final isFailed = status == 'failed';
+
+      final videoBubble = Stack(
+        alignment: Alignment.center,
+        children: [
+          _ChatVideoThumbnailBubble(
+            videoSrc: videoSrc,
+            initialThumbBytes: preThumb,
+            width: bubbleWidth,
+            onTap: () {
+              if (videoSrc.isNotEmpty) {
+                _openVideoPlayer(videoSrc);
+              }
+            },
+          ),
+          if (isUploading)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+          if (isFailed)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: GestureDetector(
+                onTap: () => _retryUpload(msg),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD32F2F),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.refresh_rounded, size: 14, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text('Retry', style: GoogleFonts.outfit(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       );
 
       if (!isUser) return _botRow(child: videoBubble);
@@ -2059,14 +2447,14 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                   tooltip: 'Upload image',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.image_rounded, color: _C.muted, size: 24),
-                  onPressed: _attachGalleryImage,
+                  onPressed: (_isOpeningPicker || _isUploadingMedia) ? null : _attachGalleryImage,
                 ),
                 IconButton(
                   key: const ValueKey('btn_camera'),
                   tooltip: 'Camera',
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.camera_alt_rounded, color: _C.muted, size: 24),
-                  onPressed: _openCameraDirectly,
+                  onPressed: (_isOpeningPicker || _isUploadingMedia) ? null : _openCameraDirectly,
                 ),
                 const SizedBox(width: 4),
                 Expanded(
@@ -2095,7 +2483,7 @@ class _SosChatScreenState extends State<SosChatScreen> with TickerProviderStateM
                 const SizedBox(width: 6),
                 Builder(
                   builder: (context) {
-                    final canSend = _hasText || (!_sent && _selectedCategory != null);
+                    final canSend = (_hasText || (!_sent && _selectedCategory != null)) && !_sending && !_isSendingText;
                     return Tooltip(
                       message: 'Send',
                       child: AnimatedScale(

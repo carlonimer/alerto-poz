@@ -200,7 +200,7 @@ const dbConfig = {
 const JSON_DB_FILE = path.join(__dirname, 'db.json');
 const INITIAL_JSON_DB = {
     users: [
-        { id: 1, phone: "09998887777", email: "mdrrmo@pozorrubio.gov.ph", password: "$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm", name: "MDRRMO Command Center", type: "mdrrmo_admin", active: 1, otp_code: null, otp_expires: null, otp_type: null }
+        { id: 1, phone: "09998887777", email: "mdrrmo@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "MDRRMO Command Center", type: "mdrrmo_admin", active: 1, otp_code: null, otp_expires: null, otp_type: null }
     ],
     incidents: [],
     responders: [
@@ -352,7 +352,13 @@ async function getDBState() {
         await pool.query(`CREATE TABLE IF NOT EXISTS feedbacks (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, subject VARCHAR(255), category VARCHAR(100), message TEXT, media_path VARCHAR(255), status VARCHAR(50) DEFAULT 'New', created_at BIGINT, updated_at BIGINT)`);
         await pool.query(`CREATE TABLE IF NOT EXISTS incident_events (id INT AUTO_INCREMENT PRIMARY KEY, incident_id VARCHAR(50), type VARCHAR(100), details TEXT, timestamp BIGINT)`);
         await pool.query(`CREATE TABLE IF NOT EXISTS map_settings (user_id INT PRIMARY KEY, map_type VARCHAR(50), live_location TINYINT(1), gps_enabled TINYINT(1), show_traffic TINYINT(1), show_disaster_zones TINYINT(1), show_evacuation_centers TINYINT(1), show_barangay_boundaries TINYINT(1), navigation_preference VARCHAR(50), notification_radius INT, emergency_alert_radius INT, auto_refresh TINYINT(1), dark_mode TINYINT(1), created_at BIGINT, updated_at BIGINT)`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS messages (id INT AUTO_INCREMENT PRIMARY KEY, incident_id VARCHAR(50), sender VARCHAR(100), sender_id INT, message TEXT, media_path VARCHAR(255), timestamp BIGINT)`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS messages (id INT AUTO_INCREMENT PRIMARY KEY, incident_id VARCHAR(50) NOT NULL, sender_id VARCHAR(50) NOT NULL, sender_role VARCHAR(50) NOT NULL DEFAULT 'Citizen App', message_type VARCHAR(20) NOT NULL DEFAULT 'text', message_content TEXT NULL, media_url LONGTEXT NULL, client_message_id VARCHAR(100) NULL, timestamp BIGINT NOT NULL, INDEX(incident_id), INDEX(client_message_id))`);
+        try { await pool.query("ALTER TABLE messages MODIFY COLUMN media_url LONGTEXT NULL"); } catch(e) {}
+        try { await pool.query("ALTER TABLE messages ADD COLUMN client_message_id VARCHAR(100) NULL"); } catch(e) {}
+        try { await pool.query("ALTER TABLE messages ADD COLUMN sender_role VARCHAR(50) NOT NULL DEFAULT 'Citizen App'"); } catch(e) {}
+        try { await pool.query("ALTER TABLE messages ADD COLUMN message_type VARCHAR(20) NOT NULL DEFAULT 'text'"); } catch(e) {}
+        try { await pool.query("ALTER TABLE messages ADD COLUMN message_content TEXT NULL"); } catch(e) {}
+        try { await pool.query("ALTER TABLE messages MODIFY COLUMN sender_id VARCHAR(50) NOT NULL DEFAULT '0'"); } catch(e) {}
 
         // Ensure user profile columns exist
         const [userCols] = await pool.query("SHOW COLUMNS FROM users");
@@ -389,7 +395,17 @@ async function getDBState() {
         const data = fs.readFileSync(JSON_DB_FILE, 'utf8');
         const parsed = JSON.parse(data);
         if (!parsed.incidents) parsed.incidents = parsed.emergencies || [];
+        if (!parsed.messages) parsed.messages = [];
         return parsed;
+    }
+}
+
+async function saveDBState(state) {
+    if (!state) return;
+    try {
+        fs.writeFileSync(JSON_DB_FILE, JSON.stringify(state, null, 4));
+    } catch (e) {
+        console.error("Error saving DB state:", e);
     }
 }
 
@@ -446,12 +462,12 @@ async function addIncident(report) {
             const cat = report.category.toLowerCase();
             if (cat === 'fire') {
                 assigned_agency = 'BFP';
-            } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
+            } else if (cat === 'crime' || cat === 'police') {
                 assigned_agency = 'PNP';
-            } else if (cat === 'report') {
-                assigned_agency = 'MDRRMO';
             } else if (cat === 'barangay') {
                 assigned_agency = 'Barangay';
+            } else {
+                assigned_agency = 'MDRRMO';
             }
         }
         report.assigned_agency = assigned_agency;
@@ -1921,10 +1937,12 @@ app.post('/api/incidents/draft', async (req, res) => {
                     const cat = draftCategory.toLowerCase();
                     if (cat === 'fire') {
                         assigned_agency = 'BFP';
-                    } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
+                    } else if (cat === 'crime' || cat === 'police') {
                         assigned_agency = 'PNP';
                     } else if (cat === 'barangay') {
                         assigned_agency = 'Barangay';
+                    } else {
+                        assigned_agency = 'MDRRMO';
                     }
                 }
 
@@ -2063,10 +2081,12 @@ app.post('/api/incidents/draft', async (req, res) => {
                 const cat = draftCategory.toLowerCase();
                 if (cat === 'fire') {
                     assigned_agency = 'BFP';
-                } else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'roadcrash' || cat === 'road_crash') {
+                } else if (cat === 'crime' || cat === 'police') {
                     assigned_agency = 'PNP';
                 } else if (cat === 'barangay') {
                     assigned_agency = 'Barangay';
+                } else {
+                    assigned_agency = 'MDRRMO';
                 }
             }
 
@@ -2464,7 +2484,8 @@ app.get('/api/incidents/:id/messages', async (req, res) => {
                         media_url: null,
                         timestamp: incTs,
                         sender_profile_image: repProfile,
-                        sender_gender: repGender
+                        sender_gender: repGender,
+                        client_message_id: null
                     };
                     rows.unshift(catMsg);
                     rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
@@ -2475,6 +2496,42 @@ app.get('/api/incidents/:id/messages', async (req, res) => {
             const dbState = await getDBState();
             const allMsgs = dbState.messages || [];
             rows = allMsgs.filter(m => String(m.incident_id) === String(incidentId));
+            
+            const inc = (dbState.incidents || []).find(i => String(i.id) === String(incidentId));
+            if (inc && inc.category && inc.category !== 'draft') {
+                const catUpper = inc.category.toUpperCase();
+                const hasCatMsg = rows.some(m => {
+                    const c = (m.message_content || '').toUpperCase();
+                    return c.includes(`SELECTED EMERGENCY: ${catUpper}`) || c.includes(`SELECTED CATEGORY: ${catUpper}`);
+                });
+                if (!hasCatMsg) {
+                    let repProfile = null;
+                    let repGender = null;
+                    if (inc.reporterId && dbState.users) {
+                        const u = dbState.users.find(usr => String(usr.id) === String(inc.reporterId));
+                        if (u) {
+                            repProfile = u.profile_image || null;
+                            repGender = u.gender || null;
+                        }
+                    }
+                    const rawCreated = inc.createdAt;
+                    const incTs = isNaN(Number(rawCreated)) ? (Date.parse(rawCreated) || Date.now()) : Number(rawCreated);
+                    const catMsg = {
+                        id: `cat-${inc.id}`,
+                        incident_id: inc.id,
+                        sender_id: inc.reporterId ? String(inc.reporterId) : '0',
+                        sender_role: 'Citizen App',
+                        message_type: 'text',
+                        message_content: `Selected Emergency: ${catUpper}`,
+                        media_url: null,
+                        timestamp: incTs,
+                        sender_profile_image: repProfile,
+                        sender_gender: repGender,
+                        client_message_id: null
+                    };
+                    rows.unshift(catMsg);
+                }
+            }
             rows.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
         }
 
@@ -2498,7 +2555,7 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
         const { senderId, senderRole, messageType, messageContent, clientMessageId } = req.body;
         const incidentId = req.params.id;
         
-        let mediaUrl = null;
+        let mediaUrl = req.body.mediaUrl || req.body.media_url || null;
         let finalContent = messageContent || "";
         if (req.file) {
             mediaUrl = `/uploads/chat/${req.file.filename}`;
@@ -2518,9 +2575,20 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
         let userGender = null;
 
         if (useMySQL && pool) {
+            // Check idempotency if clientMessageId is provided
+            if (clientMessageId) {
+                const [existing] = await pool.query(
+                    "SELECT m.*, u.profile_image as sender_profile_image, u.gender as sender_gender FROM messages m LEFT JOIN users u ON BINARY m.sender_id = BINARY CAST(u.id AS CHAR) WHERE m.incident_id = ? AND m.client_message_id = ?",
+                    [incidentId, clientMessageId]
+                );
+                if (existing && existing.length > 0) {
+                    return res.json({ success: true, message: existing[0], duplicate: true });
+                }
+            }
+
             const [result] = await pool.query(
-                "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [incidentId, senderId || '0', senderRole || 'Citizen App', messageType || 'text', finalContent || null, mediaUrl, timestamp]
+                "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, client_message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [incidentId, senderId || '0', senderRole || 'Citizen App', messageType || 'text', finalContent || null, mediaUrl, clientMessageId || null, timestamp]
             );
             messageId = result.insertId;
 
@@ -2536,9 +2604,26 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
             await pool.query("UPDATE incidents SET has_sent_messages = 1 WHERE id = ?", [incidentId]);
         } else {
             // Local JSON DB fallback
-            messageId = Date.now();
             const dbState = await getDBState();
             dbState.messages = dbState.messages || [];
+
+            // Check idempotency if clientMessageId is provided
+            if (clientMessageId) {
+                const existing = dbState.messages.find(m => String(m.incident_id) === String(incidentId) && m.client_message_id === clientMessageId);
+                if (existing) {
+                    return res.json({ success: true, message: existing, duplicate: true });
+                }
+            }
+
+            messageId = Date.now();
+            if (senderId && dbState.users) {
+                const u = dbState.users.find(usr => String(usr.id) === String(senderId));
+                if (u) {
+                    userProfile = u.profile_image || null;
+                    userGender = u.gender || null;
+                }
+            }
+
             const msgObj = {
                 id: messageId,
                 incident_id: incidentId,
@@ -2547,11 +2632,14 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
                 message_type: messageType || 'text',
                 message_content: finalContent || null,
                 media_url: mediaUrl,
-                timestamp: timestamp
+                client_message_id: clientMessageId || null,
+                timestamp: timestamp,
+                sender_profile_image: userProfile,
+                sender_gender: userGender
             };
             dbState.messages.push(msgObj);
             
-            const inc = dbState.incidents.find(i => String(i.id) === String(incidentId));
+            const inc = (dbState.incidents || []).find(i => String(i.id) === String(incidentId));
             if (inc) inc.has_sent_messages = true;
             await saveDBState(dbState);
         }
@@ -3102,7 +3190,7 @@ io.on('connection', async (socket) => {
     // Admin / Dispatcher chat message
     socket.on('dispatcher-chat-message', async (data) => {
         try {
-            const { incidentId, message, media, senderId, senderRole } = data;
+            const { incidentId, message, media, senderId, senderRole, clientMessageId } = data;
             const finalSenderId = senderId || 'ADMIN';
             const finalSenderRole = senderRole || 'Command Center';
             const timestamp = Date.now();
@@ -3116,15 +3204,25 @@ io.on('connection', async (socket) => {
 
             let insertedId = `disp-${timestamp}`;
             if (useMySQL && pool) {
+                if (clientMessageId) {
+                    const [existing] = await pool.query(
+                        "SELECT m.* FROM messages m WHERE m.incident_id = ? AND m.client_message_id = ?",
+                        [incidentId, clientMessageId]
+                    );
+                    if (existing && existing.length > 0) return;
+                }
                 const [result] = await pool.query(
-                    "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [incidentId, finalSenderId, finalSenderRole, msgType, message || (mediaUrl ? `${msgType === 'video' ? 'Video' : 'Image'} Attachment` : null), mediaUrl, timestamp]
+                    "INSERT INTO messages (incident_id, sender_id, sender_role, message_type, message_content, media_url, client_message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [incidentId, finalSenderId, finalSenderRole, msgType, message || (mediaUrl ? `${msgType === 'video' ? 'Video' : 'Image'} Attachment` : null), mediaUrl, clientMessageId || null, timestamp]
                 );
                 insertedId = result.insertId;
                 await pool.query("UPDATE incidents SET has_sent_messages = 1 WHERE id = ?", [incidentId]);
             } else {
                 const dbState = await getDBState();
                 dbState.messages = dbState.messages || [];
+                if (clientMessageId && dbState.messages.some(m => String(m.incident_id) === String(incidentId) && m.client_message_id === clientMessageId)) {
+                    return;
+                }
                 dbState.messages.push({
                     id: insertedId,
                     incident_id: incidentId,
@@ -3133,9 +3231,10 @@ io.on('connection', async (socket) => {
                     message_type: msgType,
                     message_content: message || null,
                     media_url: mediaUrl,
+                    client_message_id: clientMessageId || null,
                     timestamp: timestamp
                 });
-                const inc = dbState.incidents.find(i => String(i.id) === String(incidentId));
+                const inc = (dbState.incidents || []).find(i => String(i.id) === String(incidentId));
                 if (inc) inc.has_sent_messages = true;
                 await saveDBState(dbState);
             }
@@ -3150,7 +3249,8 @@ io.on('connection', async (socket) => {
                 media_url: mediaUrl,
                 timestamp: timestamp,
                 sender_profile_image: null,
-                sender_gender: null
+                sender_gender: null,
+                client_message_id: clientMessageId || null
             };
             io.emit('chat-message-receive', newMsg);
         } catch (e) {

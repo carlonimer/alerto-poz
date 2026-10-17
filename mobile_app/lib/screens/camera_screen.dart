@@ -58,6 +58,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   // Media Preview State
   bool _isPreviewing = false;
+  bool _isConfirming = false;
   String? _capturedPath;
   String? _capturedType; // 'image' or 'video'
   VideoPlayerController? _videoPlayerController;
@@ -417,6 +418,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     setState(() {
       _isPreviewing = false;
+      _isConfirming = false;
       _capturedPath = null;
       _capturedType = null;
       _isVideoPlaying = false;
@@ -424,7 +426,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   void _confirmSendMedia() {
-    if (_capturedPath == null || _capturedType == null) return;
+    if (_isConfirming || _capturedPath == null || _capturedType == null) return;
+    setState(() => _isConfirming = true);
     _videoPlayerController?.pause();
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
@@ -1272,7 +1275,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 const SizedBox(width: 16),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: _confirmSendMedia,
+                    onPressed: _isConfirming ? null : _confirmSendMedia,
                     icon: const Icon(Icons.send_rounded, color: Colors.black),
                     label: Text('Send to Chat', style: GoogleFonts.outfit(color: Colors.black, fontWeight: FontWeight.w800, fontSize: 15)),
                     style: ElevatedButton.styleFrom(

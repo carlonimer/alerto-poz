@@ -232,23 +232,44 @@ class CommandDashboard {
             const file = e.target.files[0];
             if (!file || !this.selectedIncident) return;
             
-            const type = file.type.startsWith("image/") ? "image" : "video";
+            const attachBtn = document.getElementById("btn-admin-attach");
+            const cameraBtn = document.getElementById("btn-admin-camera");
+            if (attachBtn) attachBtn.disabled = true;
+            if (cameraBtn) cameraBtn.disabled = true;
+
+            const isVideo = file.type.startsWith("video/") || file.name.match(/\.(mp4|webm|mov|3gp|mkv|avi)$/i);
+            const type = isVideo ? "video" : "image";
+            const clientMessageId = 'admin-media-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
             const fd = new FormData();
             const senderId = this.user ? (this.user.username || this.user.id || 'ADMIN') : 'ADMIN';
             const senderRole = this.user && this.user.type === 'barangay_admin' ? `Barangay ${this.user.barangay || 'Official'}` : 'Command Center';
             fd.append('senderId', senderId);
             fd.append('senderRole', senderRole);
             fd.append('messageType', type);
+            fd.append('clientMessageId', clientMessageId);
             fd.append('media', file);
             
             try {
-                const res = await fetch(`/api/incidents/${this.selectedIncident.id}/messages`, { method: "POST", body: fd });
-                if (!res.ok) throw new Error("Upload Failed");
+                const token = localStorage.getItem("alerto_admin_token");
+                const headers = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const res = await fetch(`/api/incidents/${this.selectedIncident.id}/messages`, {
+                    method: "POST",
+                    headers,
+                    body: fd
+                });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `Upload failed with status ${res.status}`);
+                }
             } catch (err) {
                 console.error("Media upload error:", err);
+                alert("Failed to upload attachment: " + (err.message || "Network error. Please try again."));
+            } finally {
+                if (attachBtn) attachBtn.disabled = false;
+                if (cameraBtn) cameraBtn.disabled = false;
+                e.target.value = "";
             }
-            
-            e.target.value = "";
         };
 
         document.getElementById("admin-chat-file").addEventListener("change", handleAdminFileUpload);
@@ -325,9 +346,8 @@ class CommandDashboard {
             if (!agency) {
                 const cat = (inc.category || '').toLowerCase();
                 if (cat === 'fire') agency = 'BFP';
-                else if (cat === 'medical' || cat === 'crime' || cat === 'police' || cat === 'road_crash' || cat === 'roadcrash') agency = 'PNP';
+                else if (cat === 'crime' || cat === 'police') agency = 'PNP';
                 else if (cat === 'barangay') agency = 'Barangay';
-                else if (cat === 'report') agency = 'MDRRMO';
                 else agency = 'MDRRMO';
             }
 
@@ -406,54 +426,17 @@ class CommandDashboard {
 
         this.socket.on('chat-message-receive', (msg) => {
             if (this.selectedIncident && String(this.selectedIncident.id) === String(msg.incident_id)) {
-                if (this.seenMessageIds && this.seenMessageIds.has(String(msg.id))) return;
-                if (this.seenMessageIds) this.seenMessageIds.add(String(msg.id));
+                if (!this.seenMessageIds) this.seenMessageIds = new Set();
+                const idKey = msg.id ? String(msg.id) : null;
+                const clientKey = msg.client_message_id ? String(msg.client_message_id) : null;
+                if (idKey && this.seenMessageIds.has(idKey)) return;
+                if (clientKey && this.seenMessageIds.has(clientKey)) return;
+                if (idKey) this.seenMessageIds.add(idKey);
+                if (clientKey) this.seenMessageIds.add(clientKey);
 
                 const feed = document.getElementById("dispatcher-chat-feed");
                 if (feed) {
-                    const firstName = this.selectedIncident.reporter ? this.selectedIncident.reporter.split(' ')[0] : 'Citizen';
-                    const isCitizen = msg.sender_role === 'Citizen App';
-                    const senderName = isCitizen ? firstName : (msg.sender_role || 'Command Center');
-                    const bubbleClass = isCitizen ? 'chat-incoming' : 'chat-outgoing';
-                    
-                    const avatarHtml = !isCitizen ? '' : this.getAvatarHtml(msg.sender_profile_image, msg.sender_gender);
-
-                    let tsHtml = '';
-                    if (msg.timestamp) {
-                        const d = new Date(Number(msg.timestamp));
-                        if (!isNaN(d)) {
-                            tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${!isCitizen ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
-                        }
-                    }
-
-                    let msgHtml = '';
-                    if (msg.message_type === 'text' && msg.message_content) {
-                        msgHtml = `<div class="chat-bubble ${bubbleClass}">${msg.message_content}${tsHtml}</div>`;
-                    } else if (msg.message_type === 'image' && msg.media_url) {
-                        const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
-                        const mt = '0';
-                        msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><img src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block;">${tsHtml}</div>`;
-                    } else if (msg.message_type === 'video' && msg.media_url) {
-                        const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
-                        const mt = '0';
-                        msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block; background: #000;" controls playsinline preload="metadata"></video>${tsHtml}</div>`;
-                    }
-
-                    if (msgHtml) {
-                        if (isAdmin) {
-                            feed.innerHTML += msgHtml;
-                        } else {
-                            feed.innerHTML += `
-                                <div style="display: flex; gap: 4px; align-items: flex-start; align-self: flex-start; margin-top: 12px;">
-                                    <div>${avatarHtml}</div>
-                                    <div style="display: flex; flex-direction: column; align-items: flex-start;">
-                                        <span style="font-size: 14px; color: var(--text-primary); font-weight: 700; margin-bottom: 0px; margin-left: 2px;">${senderName}</span>
-                                        ${msgHtml.replace('margin-top: 12px;', 'margin-top: 0;')}
-                                    </div>
-                                </div>
-                            `;
-                        }
-                    }
+                    feed.insertAdjacentHTML('beforeend', this.buildMessageHtml(msg));
                     feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' });
                 }
             }
@@ -645,6 +628,7 @@ class CommandDashboard {
         else if (this.user.type === 'pnp_admin') endpoint = '/api/pnp/incidents';
         else if (this.user.type === 'mdrrmo_admin') endpoint = '/api/mdrrmo/incidents';
         else if (this.user.type === 'barangay_admin') endpoint = `/api/barangays/${this.user.barangay}/incidents`;
+        else endpoint = '/api/admin/incidents';
 
         if (endpoint) {
             try {
@@ -976,19 +960,90 @@ class CommandDashboard {
         </div>`;
     }
 
+    buildMessageHtml(msg) {
+        if (!msg) return '';
+        const isCitizen = msg.sender_role === 'Citizen App';
+        const isAdmin = !isCitizen;
+        const bubbleClass = isCitizen ? 'chat-incoming' : 'chat-outgoing';
+        
+        const avatarHtml = isCitizen
+            ? this.getAvatarHtml(msg.sender_profile_image || (this.selectedIncident ? this.selectedIncident.profile_image : null), msg.sender_gender || (this.selectedIncident ? this.selectedIncident.gender : null), 32)
+            : '';
+
+        let tsHtml = '';
+        if (msg.timestamp) {
+            const d = new Date(Number(msg.timestamp));
+            if (!isNaN(d.getTime())) {
+                tsHtml = `<div style="font-size: 10px; opacity: 0.75; text-align: ${isAdmin ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
+            }
+        }
+
+        let mediaHtml = '';
+        if (msg.media_url) {
+            const mediaSrc = msg.media_url.startsWith('http') ? msg.media_url : `${window.SERVER_URL || ''}${msg.media_url}`;
+            const isVideo = msg.message_type === 'video' || (msg.media_url && msg.media_url.match(/\.(mp4|webm|mov|3gp|mkv|avi)$/i));
+            if (isVideo) {
+                mediaHtml = `<video src="${mediaSrc}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-bottom: 6px; display: block; background: #000; cursor: pointer;" controls playsinline preload="metadata"></video>`;
+            } else {
+                mediaHtml = `<img src="${mediaSrc}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-bottom: 6px; display: block; cursor: pointer;" alt="Chat attachment" />`;
+            }
+        }
+
+        let contentHtml = '';
+        if (msg.message_content && msg.message_content.trim() !== '') {
+            const escaped = msg.message_content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
+            contentHtml = `<div style="word-break: break-word; line-height: 1.4;">${escaped}</div>`;
+        }
+
+        if (!mediaHtml && !contentHtml) {
+            return '';
+        }
+
+        const bubbleHtml = `<div class="chat-bubble ${bubbleClass}" style="${(!contentHtml && mediaHtml) ? 'background: transparent; padding: 0; box-shadow: none;' : ''}">${mediaHtml}${contentHtml}${tsHtml}</div>`;
+
+        if (isAdmin) {
+            const adminRole = msg.sender_role || 'Command Center';
+            return `
+                <div class="chat-message-row" style="display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; margin-top: 10px; max-width: 85%;">
+                    <span style="font-size: 11px; color: var(--text-secondary); font-weight: 600; margin-bottom: 2px; margin-right: 2px;">${adminRole}</span>
+                    ${bubbleHtml}
+                </div>
+            `;
+        } else {
+            const firstName = (this.selectedIncident && this.selectedIncident.reporter) ? this.selectedIncident.reporter.split(' ')[0] : 'Citizen';
+            return `
+                <div class="chat-message-row" style="display: flex; gap: 8px; align-items: flex-start; align-self: flex-start; margin-top: 10px; max-width: 85%;">
+                    <div>${avatarHtml}</div>
+                    <div style="display: flex; flex-direction: column; align-items: flex-start;">
+                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: 600; margin-bottom: 2px; margin-left: 2px;">${firstName}</span>
+                        ${bubbleHtml}
+                    </div>
+                </div>
+            `;
+        }
+    }
+
     async renderDispatcherChat(inc) {
         const chatContainer = document.getElementById("dispatcher-chat-container");
         const chatFeed = document.getElementById("dispatcher-chat-feed");
         const commsActions = document.getElementById("admin-comms-actions");
+        const chatInputGroup = chatContainer ? chatContainer.querySelector(".chat-input-group") : null;
         
-        if (inc.status === 'resolved' || inc.status === 'cancelled') {
-            chatContainer.style.display = "none";
-            commsActions.style.display = "none";
-            return;
-        }
+        if (!chatContainer || !chatFeed) return;
 
         chatContainer.style.display = "flex";
-        commsActions.style.display = "flex";
+        
+        const isClosed = inc.status === 'resolved' || inc.status === 'cancelled';
+        if (commsActions) {
+            commsActions.style.display = isClosed ? "none" : "flex";
+        }
+        if (chatInputGroup) {
+            chatInputGroup.style.display = isClosed ? "none" : "flex";
+        }
         
         let newFeedHtml = "";
 
@@ -1001,7 +1056,7 @@ class CommandDashboard {
         
         // System initial message
         if (baseDetails) {
-            newFeedHtml += `<div class="chat-bubble chat-incoming"><strong>System:</strong> SOS Received. Details: ${baseDetails}</div>`;
+            newFeedHtml += `<div class="chat-bubble chat-incoming" style="align-self: flex-start; max-width: 85%; margin-top: 6px;"><strong>System:</strong> SOS Received. Details: ${baseDetails}</div>`;
         }
         
         let chatMessages = [];
@@ -1010,55 +1065,23 @@ class CommandDashboard {
         // Fetch new messages from API
         if (inc.id && !inc.id.startsWith("DRAFT-")) {
             try {
-                const response = await fetch(`/api/incidents/${inc.id}/messages`);
+                const token = localStorage.getItem("alerto_admin_token");
+                const headers = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const response = await fetch(`/api/incidents/${inc.id}/messages`, { headers });
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success && data.messages && data.messages.length > 0) {
                         chatMessages = data.messages;
                         data.messages.forEach(msg => {
-                            if (msg.id) this.seenMessageIds.add(String(msg.id));
-                            const isCitizen = msg.sender_role === 'Citizen App';
-                            const senderName = isCitizen ? firstName : (msg.sender_role || 'Command Center');
-                            const bubbleClass = isCitizen ? 'chat-incoming' : 'chat-outgoing';
-                            
-                            const avatarHtml = !isCitizen ? '' : this.getAvatarHtml(msg.sender_profile_image || inc.profile_image, msg.sender_gender || inc.gender, 32);
+                            const idKey = msg.id ? String(msg.id) : null;
+                            const clientKey = msg.client_message_id ? String(msg.client_message_id) : null;
+                            if (idKey && this.seenMessageIds.has(idKey)) return;
+                            if (clientKey && this.seenMessageIds.has(clientKey)) return;
+                            if (idKey) this.seenMessageIds.add(idKey);
+                            if (clientKey) this.seenMessageIds.add(clientKey);
 
-                            let tsHtml = '';
-                            if (msg.timestamp) {
-                                const d = new Date(Number(msg.timestamp));
-                                if (!isNaN(d)) {
-                                    tsHtml = `<div style="font-size: 10px; opacity: 0.7; text-align: ${!isCitizen ? 'right' : 'left'}; margin-top: 6px;">${d.toLocaleDateString('en-US', {month: 'short', day: '2-digit', year: 'numeric'})} &bull; ${d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>`;
-                                }
-                            }
-
-                            let msgHtml = '';
-                            if (msg.message_type === 'text' && msg.message_content) {
-                                msgHtml = `<div class="chat-bubble ${bubbleClass}">${msg.message_content}${tsHtml}</div>`;
-                            } else if (msg.message_type === 'image' && msg.media_url) {
-                                const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
-                                const mt = '0';
-                                msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><img src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block;">${tsHtml}</div>`;
-                            } else if (msg.message_type === 'video' && msg.media_url) {
-                                const styleOverride = 'background: transparent; padding: 0; box-shadow: none;';
-                                const mt = '0';
-                                msgHtml = `<div class="chat-bubble ${bubbleClass}" style="${styleOverride}"><video src="${msg.media_url}" style="max-width: 280px; max-height: 250px; border-radius: 8px; margin-top: ${mt}; display: block; background: #000;" controls playsinline preload="metadata"></video>${tsHtml}</div>`;
-                            }
-
-                            if (msgHtml) {
-                                if (isAdmin) {
-                                    newFeedHtml += msgHtml;
-                                } else {
-                                    newFeedHtml += `
-                                        <div style="display: flex; gap: 4px; align-items: flex-start; align-self: flex-start; margin-top: 12px;">
-                                            <div>${avatarHtml}</div>
-                                            <div style="display: flex; flex-direction: column; align-items: flex-start;">
-                                                <span style="font-size: 14px; color: var(--text-primary); font-weight: 700; margin-bottom: 0px; margin-left: 2px;">${senderName}</span>
-                                                ${msgHtml.replace('margin-top: 12px;', 'margin-top: 0;')}
-                                            </div>
-                                        </div>
-                                    `;
-                                }
-                            }
+                            newFeedHtml += this.buildMessageHtml(msg);
                         });
                     }
                 }
@@ -1090,20 +1113,32 @@ class CommandDashboard {
                 }
 
                 if (isDispatcher) {
-                    newFeedHtml += `<div class="chat-bubble chat-outgoing">${text}</div>`;
-                } else {
-                    const msgHtml = `<div class="chat-bubble chat-incoming">${text}</div>`;
                     newFeedHtml += `
-                        <div style="display: flex; gap: 4px; align-items: flex-start; align-self: flex-start; margin-top: 12px;">
+                        <div class="chat-message-row" style="display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; margin-top: 10px; max-width: 85%;">
+                            <span style="font-size: 11px; color: var(--text-secondary); font-weight: 600; margin-bottom: 2px; margin-right: 2px;">Command Center</span>
+                            <div class="chat-bubble chat-outgoing">${text}</div>
+                        </div>
+                    `;
+                } else {
+                    newFeedHtml += `
+                        <div class="chat-message-row" style="display: flex; gap: 8px; align-items: flex-start; align-self: flex-start; margin-top: 10px; max-width: 85%;">
                             <div>${defaultAvatarHtml}</div>
                             <div style="display: flex; flex-direction: column; align-items: flex-start;">
-                                <span style="font-size: 14px; color: var(--text-primary); font-weight: 700; margin-bottom: 0px; margin-left: 2px;">${firstName}</span>
-                                ${msgHtml.replace('margin-top: 12px;', 'margin-top: 0;')}
+                                <span style="font-size: 12px; color: var(--text-secondary); font-weight: 600; margin-bottom: 2px; margin-left: 2px;">${firstName}</span>
+                                <div class="chat-bubble chat-incoming">${text}</div>
                             </div>
                         </div>
                     `;
                 }
             }
+        }
+
+        if (isClosed) {
+            newFeedHtml += `
+                <div style="text-align: center; font-size: 11px; color: var(--text-secondary); padding: 10px 0; margin-top: 8px; font-style: italic; border-top: 1px dashed var(--border-color, #e5e7eb);">
+                    <i class="fa-solid fa-lock"></i> Incident is ${inc.status} &bull; Chat is closed
+                </div>
+            `;
         }
         
         chatFeed.innerHTML = newFeedHtml;
@@ -1111,13 +1146,18 @@ class CommandDashboard {
     }
 
     async sendDispatcherChat() {
-        if (!this.selectedIncident) return;
+        if (!this.selectedIncident || this.isSendingChat) return;
         const input = document.getElementById("admin-chat-input");
+        const sendBtn = document.getElementById("btn-admin-send");
+        if (!input) return;
         const msg = input.value.trim();
         if (!msg) return;
 
+        this.isSendingChat = true;
+        if (sendBtn) sendBtn.disabled = true;
         input.value = "";
         
+        const clientMessageId = 'admin-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
         const fd = new FormData();
         const senderId = this.user ? (this.user.username || this.user.id || 'ADMIN') : 'ADMIN';
         const senderRole = this.user && this.user.type === 'barangay_admin' ? `Barangay ${this.user.barangay || 'Official'}` : 'Command Center';
@@ -1125,14 +1165,29 @@ class CommandDashboard {
         fd.append('senderRole', senderRole);
         fd.append('messageType', 'text');
         fd.append('messageContent', msg);
+        fd.append('clientMessageId', clientMessageId);
         
         try {
-            await fetch(`/api/incidents/${this.selectedIncident.id}/messages`, {
+            const token = localStorage.getItem("alerto_admin_token");
+            const headers = {};
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(`/api/incidents/${this.selectedIncident.id}/messages`, {
                 method: 'POST',
+                headers,
                 body: fd
             });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || `Server returned ${res.status}`);
+            }
         } catch (err) {
             console.error("Failed to send text message", err);
+            input.value = msg;
+            alert("Failed to send message: " + (err.message || "Network error. Please try again."));
+        } finally {
+            this.isSendingChat = false;
+            if (sendBtn) sendBtn.disabled = false;
+            input.focus();
         }
     }
 

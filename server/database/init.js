@@ -187,11 +187,19 @@ async function initDatabase(pool) {
             sender_role VARCHAR(50) NOT NULL,
             message_type VARCHAR(20) NOT NULL DEFAULT 'text',
             message_content TEXT NULL,
-            media_url VARCHAR(255) NULL,
+            media_url LONGTEXT NULL,
+            client_message_id VARCHAR(100) NULL,
             timestamp BIGINT NOT NULL,
-            INDEX(incident_id)
+            INDEX(incident_id),
+            INDEX(client_message_id)
         );
     `);
+    try { await pool.query("ALTER TABLE messages MODIFY COLUMN media_url LONGTEXT NULL"); } catch(e) {}
+    try { await pool.query("ALTER TABLE messages ADD COLUMN client_message_id VARCHAR(100) NULL"); } catch(e) {}
+    try { await pool.query("ALTER TABLE messages ADD COLUMN sender_role VARCHAR(50) NOT NULL DEFAULT 'Citizen App'"); } catch(e) {}
+    try { await pool.query("ALTER TABLE messages ADD COLUMN message_type VARCHAR(20) NOT NULL DEFAULT 'text'"); } catch(e) {}
+    try { await pool.query("ALTER TABLE messages ADD COLUMN message_content TEXT NULL"); } catch(e) {}
+    try { await pool.query("ALTER TABLE messages MODIFY COLUMN sender_id VARCHAR(50) NOT NULL DEFAULT '0'"); } catch(e) {}
 
     // 7. Responders Table
     await pool.query(`
@@ -322,10 +330,10 @@ async function initDatabase(pool) {
         // Use INSERT IGNORE in case some exist but not others
         await pool.query(`
             INSERT IGNORE INTO users (name, email, phone, password, type, active, barangay) VALUES
-            ('MDRRMO Command Center', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'mdrrmo_admin', 1, NULL),
-            ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'bfp_admin', 1, NULL),
-            ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'pnp_admin', 1, NULL),
-            ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm', 'barangay_admin', 1, 'Buneg');
+            ('MDRRMO Command Center', 'mdrrmo@pozorrubio.gov.ph', '09998887777', '$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa', 'mdrrmo_admin', 1, NULL),
+            ('BFP Admin', 'bfp@pozorrubio.gov.ph', '09998887771', '$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa', 'bfp_admin', 1, NULL),
+            ('PNP Admin', 'pnp@pozorrubio.gov.ph', '09998887772', '$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa', 'pnp_admin', 1, NULL),
+            ('Brgy Buneg Admin', 'buneg@pozorrubio.gov.ph', '09998887773', '$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa', 'barangay_admin', 1, 'Buneg');
         `);
         console.log("Admin panel accounts seeded/updated.");
     }
@@ -338,7 +346,7 @@ async function initDatabase(pool) {
     await pool.query("UPDATE users SET type = 'mdrrmo_admin' WHERE type = 'authority'");
     
     // Force reset all admin passwords to 'admin123' to fix login issues
-    await pool.query("UPDATE users SET password = '$2a$10$uHA89lKJ9z2wwQmccanrtOO6i6SW.gi6YheTvcuRXETSyKQt9G0zm' WHERE email LIKE '%@pozorrubio.gov.ph'");
+    await pool.query("UPDATE users SET password = '$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa' WHERE email LIKE '%@pozorrubio.gov.ph'");
     console.log("Admin passwords forced to admin123.");
 }
 

@@ -348,6 +348,9 @@ class ApiService {
     if (data['messageContent'] != null) {
       request.fields['messageContent'] = data['messageContent'].toString();
     }
+    if (data['clientMessageId'] != null && data['clientMessageId'].toString().isNotEmpty) {
+      request.fields['clientMessageId'] = data['clientMessageId'].toString();
+    }
 
     if (mediaPath != null) {
       request.files.add(await http.MultipartFile.fromPath('media', mediaPath));
