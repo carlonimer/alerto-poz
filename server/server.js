@@ -200,7 +200,12 @@ const dbConfig = {
 const JSON_DB_FILE = path.join(__dirname, 'db.json');
 const INITIAL_JSON_DB = {
     users: [
-        { id: 1, phone: "09998887777", email: "mdrrmo@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "MDRRMO Command Center", type: "mdrrmo_admin", active: 1, otp_code: null, otp_expires: null, otp_type: null }
+        { id: 1, phone: "09998887777", email: "mdrrmo@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "MDRRMO Command Center", type: "mdrrmo_admin", active: 1, otp_code: null, otp_expires: null, otp_type: null },
+        { id: 2, phone: null, email: "carlonimer36@gmail.com", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "Ryzenn Tran", type: "citizen", active: 1, id_verification_status: "Approved", id_verified: 1, otp_code: null, otp_expires: null, otp_type: null },
+        { id: 101, phone: "09998887770", email: "admin@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "MDRRMO Admin", type: "mdrrmo_admin", active: 1, barangay: null },
+        { id: 102, phone: "09998887771", email: "bfp@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "BFP Admin", type: "bfp_admin", active: 1, barangay: null },
+        { id: 103, phone: "09998887772", email: "pnp@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "PNP Admin", type: "pnp_admin", active: 1, barangay: null },
+        { id: 104, phone: "09998887773", email: "buneg@pozorrubio.gov.ph", password: "$2a$10$k6wbWJ.rj6RCXNk77kA05exX1388On0zjFFzBNc.HKd3flkaXxeDa", name: "Brgy Buneg Admin", type: "barangay_admin", active: 1, barangay: "Buneg" }
     ],
     incidents: [],
     responders: [
@@ -1100,6 +1105,119 @@ async function recordUserTermsAcceptance(userId, termsVersion, privacyVersion, r
     return await getUserTermsAcceptance(userId, termsVersion);
 }
 
+function extractHintUserFromRequest(req) {
+    try {
+        const rawHeader = (req && req.headers && req.headers['x-user-context']) || '';
+        if (rawHeader && typeof rawHeader === 'string') {
+            const decoded = Buffer.from(rawHeader, 'base64').toString('utf8');
+            const parsed = JSON.parse(decoded);
+            if (parsed && typeof parsed === 'object') return parsed;
+        }
+        if (req && req.body && req.body.user && typeof req.body.user === 'object') {
+            return req.body.user;
+        }
+    } catch (e) {}
+    return null;
+}
+
+async function resolveOrRestoreSessionUser(userId, req, isSessionToken = false) {
+    const numericId = Number(userId);
+    if (isNaN(numericId) || numericId <= 0) return null;
+
+    const hintUser = extractHintUserFromRequest(req);
+    let user = null;
+
+    if (useMySQL && pool) {
+        try {
+            const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [numericId]);
+            if (rows.length > 0) user = rows[0];
+            if (!user && hintUser && Number(hintUser.id) === numericId && (hintUser.email || hintUser.phone)) {
+                const [byContact] = await pool.query(
+                    "SELECT * FROM users WHERE (email IS NOT NULL AND email = ?) OR (phone IS NOT NULL AND phone = ?) LIMIT 1",
+                    [hintUser.email || '', hintUser.phone || '']
+                );
+                if (byContact.length > 0) user = byContact[0];
+            }
+            if (user && !user.active && isSessionToken) {
+                await pool.query("UPDATE users SET active = 1 WHERE id = ?", [user.id]);
+                user.active = 1;
+            }
+            if (!user && isSessionToken) {
+                const name = (hintUser && hintUser.name) ? String(hintUser.name) : `Citizen #${numericId}`;
+                const email = (hintUser && hintUser.email) ? String(hintUser.email) : null;
+                const phone = (hintUser && hintUser.phone) ? String(hintUser.phone) : null;
+                const type = (hintUser && hintUser.type) ? String(hintUser.type) : 'citizen';
+                const verStatus = (hintUser && (hintUser.verification_status || hintUser.id_verification_status))
+                    ? normalizeVerificationStatus(hintUser.verification_status || hintUser.id_verification_status, true)
+                    : 'Approved';
+                const idVerified = (hintUser && hintUser.id_verified === false) ? 0 : 1;
+                try {
+                    await pool.query(
+                        "INSERT IGNORE INTO users (id, name, email, phone, password, type, active, id_verification_status, id_verified) VALUES (?, ?, ?, ?, '', ?, 1, ?, ?)",
+                        [numericId, name, email, phone, type, verStatus, idVerified]
+                    );
+                    const [inserted] = await pool.query("SELECT * FROM users WHERE id = ?", [numericId]);
+                    if (inserted.length > 0) user = inserted[0];
+                } catch (e) {}
+                if (!user) {
+                    user = {
+                        id: numericId,
+                        name,
+                        email,
+                        phone,
+                        type,
+                        active: 1,
+                        id_verification_status: verStatus,
+                        id_verified: idVerified
+                    };
+                }
+            }
+        } catch (e) {
+            console.error("Error resolving session user in MySQL:", e.message);
+        }
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (!db.users) db.users = [];
+            user = db.users.find(u => Number(u.id) === numericId) || null;
+            if (!user && hintUser && Number(hintUser.id) === numericId && (hintUser.email || hintUser.phone)) {
+                user = db.users.find(u =>
+                    (hintUser.email && u.email === hintUser.email) ||
+                    (hintUser.phone && u.phone === hintUser.phone)
+                ) || null;
+            }
+            if (user && !user.active && isSessionToken) {
+                user.active = 1;
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+            }
+            if (!user && isSessionToken) {
+                const verStatus = (hintUser && (hintUser.verification_status || hintUser.id_verification_status))
+                    ? normalizeVerificationStatus(hintUser.verification_status || hintUser.id_verification_status, true)
+                    : 'Approved';
+                const idVerified = (hintUser && hintUser.id_verified === false) ? 0 : 1;
+                const restoredUser = {
+                    id: numericId,
+                    name: (hintUser && hintUser.name) ? String(hintUser.name) : `Citizen #${numericId}`,
+                    email: (hintUser && hintUser.email) ? String(hintUser.email) : null,
+                    phone: (hintUser && hintUser.phone) ? String(hintUser.phone) : null,
+                    password: '',
+                    type: (hintUser && hintUser.type) ? String(hintUser.type) : 'citizen',
+                    active: 1,
+                    id_verification_status: verStatus,
+                    id_verified: idVerified
+                };
+                db.users.push(restoredUser);
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+                user = restoredUser;
+            }
+        } catch (e) {
+            console.error("Error resolving session user in JSON DB:", e.message);
+        }
+    }
+
+    return user;
+}
+
 async function authenticateMobileUser(req, res, next) {
     try {
         const authHeader = req.headers['authorization'] || '';
@@ -1112,6 +1230,7 @@ async function authenticateMobileUser(req, res, next) {
         }
 
         let userId = null;
+        let isSessionToken = false;
         if (token.startsWith('alerto-session-')) {
             const parts = token.split('-');
             if (parts.length < 4) {
@@ -1123,6 +1242,7 @@ async function authenticateMobileUser(req, res, next) {
                 return res.status(401).json({ success: false, error: "Invalid session token." });
             }
             userId = parsedId;
+            isSessionToken = parsedTs >= 1000000000000;
         } else {
             const jwt = require('jsonwebtoken');
             const { JWT_SECRET } = require('./middleware/auth.js');
@@ -1134,14 +1254,7 @@ async function authenticateMobileUser(req, res, next) {
             }
         }
 
-        let user = null;
-        if (useMySQL && pool) {
-            const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]);
-            if (rows.length > 0) user = rows[0];
-        } else {
-            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
-            user = db.users.find(u => Number(u.id) === Number(userId));
-        }
+        const user = await resolveOrRestoreSessionUser(userId, req, isSessionToken);
 
         if (!user || !user.active) {
             return res.status(401).json({ success: false, error: "User account is inactive or not found." });
@@ -1424,16 +1537,29 @@ app.post('/api/auth/verify-otp', async (req, res) => {
             return res.status(400).json({ error: "OTP validation fields incomplete." });
         }
 
+        const isAuthOtp = (type === 'register' || type === 'login');
         let user = null;
         if (useMySQL) {
-            const [rows] = await pool.query(
-                "SELECT * FROM users WHERE (email = ? OR phone = ?) AND otp_code = ? AND otp_type = ?",
-                [target, target, code, type]
-            );
-            if (rows.length > 0) user = rows[0];
+            if (isAuthOtp) {
+                const [rows] = await pool.query(
+                    "SELECT * FROM users WHERE (email = ? OR phone = ?) AND otp_code = ? AND otp_type IN ('register', 'login')",
+                    [target, target, code]
+                );
+                if (rows.length > 0) user = rows[0];
+            } else {
+                const [rows] = await pool.query(
+                    "SELECT * FROM users WHERE (email = ? OR phone = ?) AND otp_code = ? AND otp_type = ?",
+                    [target, target, code, type]
+                );
+                if (rows.length > 0) user = rows[0];
+            }
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
-            user = db.users.find(u => (u.email === target || u.phone === target) && u.otp_code === code && u.otp_type === type);
+            user = db.users.find(u =>
+                (u.email === target || u.phone === target) &&
+                u.otp_code === code &&
+                (isAuthOtp ? (u.otp_type === 'register' || u.otp_type === 'login') : u.otp_type === type)
+            );
         }
 
         if (!user) {
@@ -1447,27 +1573,24 @@ app.post('/api/auth/verify-otp', async (req, res) => {
         // OTP Validated! Update user state
         let resetToken = null;
         if (useMySQL) {
-            if (type === 'register') {
-                await pool.query("UPDATE users SET active = 1, otp_code = NULL, otp_expires = NULL, otp_type = NULL WHERE id = ?", [user.id]);
-            } else if (type === 'forgot') {
+            if (type === 'forgot') {
                 resetToken = crypto.randomBytes(32).toString('hex');
                 const expires = Date.now() + 15 * 60 * 1000; // 15 mins validity
                 await pool.query("UPDATE users SET otp_code = ?, otp_expires = ?, otp_type = 'reset_token' WHERE id = ?", [resetToken, expires, user.id]);
             } else {
-                await pool.query("UPDATE users SET otp_code = NULL, otp_expires = NULL, otp_type = NULL WHERE id = ?", [user.id]);
+                await pool.query("UPDATE users SET active = 1, otp_code = NULL, otp_expires = NULL, otp_type = NULL WHERE id = ?", [user.id]);
             }
         } else {
             const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
             const u = db.users.find(x => x.id === user.id);
             if (u) {
-                if (type === 'register') u.active = 1;
-                
                 if (type === 'forgot') {
                     resetToken = crypto.randomBytes(32).toString('hex');
                     u.otp_code = resetToken;
                     u.otp_expires = Date.now() + 15 * 60 * 1000;
                     u.otp_type = 'reset_token';
                 } else {
+                    u.active = 1;
                     u.otp_code = null;
                     u.otp_expires = null;
                     u.otp_type = null;
@@ -1476,7 +1599,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
             }
         }
 
-        if (type === 'register') {
+        if (type !== 'forgot') {
             user.active = 1;
         }
 
@@ -1506,15 +1629,13 @@ app.post('/api/auth/validate', async (req, res) => {
         }
         
         const userId = parseInt(parts[2], 10);
-        let user = null;
-
-        if (useMySQL) {
-            const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]);
-            if (rows.length > 0) user = rows[0];
-        } else {
-            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
-            user = db.users.find(u => u.id === userId);
+        const parsedTs = parseInt(parts[3], 10);
+        if (isNaN(userId) || userId <= 0 || isNaN(parsedTs) || parsedTs <= 0) {
+            return res.status(401).json({ valid: false, error: "Malformed token." });
         }
+
+        const isSessionToken = parsedTs >= 1000000000000;
+        const user = await resolveOrRestoreSessionUser(userId, req, isSessionToken);
 
         // Active state check might be 1 (int) or true (boolean)
         if (!user || !user.active) {

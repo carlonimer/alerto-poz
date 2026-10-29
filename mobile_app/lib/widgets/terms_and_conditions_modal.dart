@@ -374,26 +374,46 @@ class _TermsAndConditionsModalState extends State<TermsAndConditionsModal> {
                             if (!_hasScrolledToBottom)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.arrow_downward_rounded,
-                                      size: 15,
-                                      color: Color(0xFFFF5722),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        'Please scroll to the bottom of the agreement to enable the checkbox.',
-                                        key: const Key('scroll_prompt_text'),
-                                        style: GoogleFonts.outfit(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: const Color(0xFFFF5722),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(6),
+                                  onTap: () async {
+                                    if (_scrollController.hasClients) {
+                                      await _scrollController.animateTo(
+                                        _scrollController.position.maxScrollExtent,
+                                        duration: const Duration(milliseconds: 350),
+                                        curve: Curves.easeOut,
+                                      );
+                                    }
+                                    if (mounted) {
+                                      setState(() {
+                                        _hasScrolledToBottom = true;
+                                      });
+                                    }
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 2),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.arrow_downward_rounded,
+                                          size: 15,
+                                          color: Color(0xFFFF5722),
                                         ),
-                                      ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            'Please scroll to the bottom of the agreement to enable the checkbox.',
+                                            key: const Key('scroll_prompt_text'),
+                                            style: GoogleFonts.outfit(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: const Color(0xFFFF5722),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ],
+                                  ),
                                 ),
                               ),
 
@@ -414,7 +434,7 @@ class _TermsAndConditionsModalState extends State<TermsAndConditionsModal> {
                                 child: Row(
                                   children: [
                                     const Icon(
-                                      Icons.wifi_off_rounded,
+                                      Icons.error_outline_rounded,
                                       color: Color(0xFFDC2626),
                                       size: 18,
                                     ),
@@ -434,7 +454,12 @@ class _TermsAndConditionsModalState extends State<TermsAndConditionsModal> {
                                         key: const Key('terms_retry_button'),
                                         onPressed: widget.isSubmitting
                                             ? null
-                                            : widget.onRetryStatus,
+                                            : () {
+                                                setState(() {
+                                                  _hasDeclined = false;
+                                                });
+                                                widget.onRetryStatus!();
+                                              },
                                         style: TextButton.styleFrom(
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 8,

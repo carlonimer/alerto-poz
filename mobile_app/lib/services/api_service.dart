@@ -18,6 +18,10 @@ class ApiService {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
       if (token != null) headers['Authorization'] = 'Bearer $token';
+      final rawUser = prefs.getString('user_data');
+      if (rawUser != null && rawUser.isNotEmpty) {
+        headers['x-user-context'] = base64Encode(utf8.encode(rawUser));
+      }
     }
     return headers;
   }
@@ -122,10 +126,14 @@ class ApiService {
   static Future<Map<String, dynamic>> validateSession() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
+    final user = await getUser();
     final res = await http.post(
       Uri.parse('$baseUrl/api/auth/validate'),
-      headers: await _getHeaders(),
-      body: jsonEncode({'token': token}),
+      headers: await _getHeaders(auth: true),
+      body: jsonEncode({
+        'token': token,
+        if (user != null) 'user': user,
+      }),
     );
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     data['_statusCode'] = res.statusCode;
@@ -171,6 +179,10 @@ class ApiService {
     final token = prefs.getString('auth_token');
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
+    }
+    final rawUser = prefs.getString('user_data');
+    if (rawUser != null && rawUser.isNotEmpty) {
+      request.headers['x-user-context'] = base64Encode(utf8.encode(rawUser));
     }
     final user = await getUser();
     if (user != null && user['id'] != null) {
@@ -256,6 +268,7 @@ class ApiService {
       headers: await _getHeaders(auth: true),
       body: jsonEncode({
         if (user != null && user['id'] != null) 'userId': user['id'],
+        if (user != null) 'user': user,
         'termsVersion': termsVersion,
         'privacyVersion': privacyVersion,
         'accepted': true,
@@ -287,6 +300,10 @@ class ApiService {
     final token = prefs.getString('auth_token');
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
+    }
+    final rawUser = prefs.getString('user_data');
+    if (rawUser != null && rawUser.isNotEmpty) {
+      request.headers['x-user-context'] = base64Encode(utf8.encode(rawUser));
     }
     request.fields['id'] = userId;
     request.files.add(await http.MultipartFile.fromPath('profile_image', filePath));
@@ -476,6 +493,10 @@ class ApiService {
     final token = prefs.getString('auth_token');
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
+    }
+    final rawUser = prefs.getString('user_data');
+    if (rawUser != null && rawUser.isNotEmpty) {
+      request.headers['x-user-context'] = base64Encode(utf8.encode(rawUser));
     }
 
     // Always include senderRole and messageType matching web's postMessagesAndMedia()
