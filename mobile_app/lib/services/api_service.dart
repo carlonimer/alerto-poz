@@ -127,7 +127,144 @@ class ApiService {
       headers: await _getHeaders(),
       body: jsonEncode({'token': token}),
     );
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    data['_statusCode'] = res.statusCode;
+    return data;
+  }
+
+  // ───────── ID Verification ─────────
+
+  static const List<String> validIdTypes = [
+    'Barangay ID',
+    'School ID',
+    'Passport',
+    "Driver's License",
+    'SSS',
+    "Voter's ID",
+    'PhilID (National ID)',
+  ];
+
+  static Future<Map<String, dynamic>> getIdVerificationStatus() async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/id-verification/status'),
+      headers: await _getHeaders(auth: true),
+    );
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    data['_statusCode'] = res.statusCode;
+    return data;
+  }
+
+  static Future<Map<String, dynamic>> submitIdVerification({
+    required String idType,
+    String? frontFilePath,
+    List<int>? frontFileBytes,
+    String? frontFileName,
+    String? backFilePath,
+    List<int>? backFileBytes,
+    String? backFileName,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/id-verification/submit'),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    final user = await getUser();
+    if (user != null && user['id'] != null) {
+      request.fields['userId'] = user['id'].toString();
+    }
+    request.fields['idType'] = idType;
+
+    if (frontFileBytes != null && frontFileName != null) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'front_image',
+          frontFileBytes,
+          filename: frontFileName,
+        ),
+      );
+    } else if (frontFilePath != null && frontFilePath.isNotEmpty) {
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'front_image',
+          frontFilePath,
+          filename: frontFileName,
+        ),
+      );
+    }
+
+    if (backFileBytes != null && backFileName != null) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'back_image',
+          backFileBytes,
+          filename: backFileName,
+        ),
+      );
+    } else if (backFilePath != null && backFilePath.isNotEmpty) {
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'back_image',
+          backFilePath,
+          filename: backFileName,
+        ),
+      );
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    data['_statusCode'] = response.statusCode;
+    return data;
+  }
+
+  static Future<Map<String, dynamic>> checkDashboardAccess() async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/dashboard/access'),
+      headers: await _getHeaders(auth: true),
+    );
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    data['_statusCode'] = res.statusCode;
+    return data;
+  }
+
+  // ───────── Terms & Conditions Agreement ─────────
+
+  static const String currentTermsVersion = 'ALERTO_POZ_TERMS_V1';
+  static const String currentPrivacyVersion = 'ALERTO_POZ_PRIVACY_V1';
+
+  static Future<Map<String, dynamic>> getTermsStatus() async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/user/terms-status'),
+      headers: await _getHeaders(auth: true),
+    );
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    data['_statusCode'] = res.statusCode;
+    return data;
+  }
+
+  static Future<Map<String, dynamic>> acceptTerms({
+    String termsVersion = currentTermsVersion,
+    String privacyVersion = currentPrivacyVersion,
+  }) async {
+    final user = await getUser();
+    final res = await http.post(
+      Uri.parse('$baseUrl/api/user/terms-accept'),
+      headers: await _getHeaders(auth: true),
+      body: jsonEncode({
+        if (user != null && user['id'] != null) 'userId': user['id'],
+        'termsVersion': termsVersion,
+        'privacyVersion': privacyVersion,
+        'accepted': true,
+        'privacyNoticeAcknowledged': true,
+      }),
+    );
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    data['_statusCode'] = res.statusCode;
+    return data;
   }
 
   // ───────── User Profile & Settings ─────────

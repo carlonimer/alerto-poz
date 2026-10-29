@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../models/user.dart';
 import '../services/api_service.dart';
 import 'home_screen.dart';
+import 'id_verification_screen.dart';
 import 'login_screen.dart';
 import 'reset_password_screen.dart';
 
@@ -113,10 +115,24 @@ class _OtpScreenState extends State<OtpScreen> {
               otp: res['reset_token'] ?? _otp,
             )),
           );
-        } else {
+        } else if (widget.otpType == 'registration') {
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            MaterialPageRoute(builder: (_) => const IdVerificationScreen()),
+            (_) => false,
+          );
+        } else {
+          final userMap = (res['user'] is Map<String, dynamic>)
+              ? res['user'] as Map<String, dynamic>
+              : <String, dynamic>{};
+          final user = UserModel.fromJson(userMap);
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (_) => user.isIdApproved
+                  ? const HomeScreen()
+                  : const IdVerificationScreen(),
+            ),
             (_) => false,
           );
         }
@@ -305,13 +321,17 @@ class _OtpScreenState extends State<OtpScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Code expires in ${_formatTime(_expireCountdown)}',
-                          style: GoogleFonts.outfit(
-                            fontSize: 13,
-                            color: const Color(0xFF86868B),
+                        Flexible(
+                          child: Text(
+                            'Code expires in ${_formatTime(_expireCountdown)}',
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.outfit(
+                              fontSize: 13,
+                              color: const Color(0xFF86868B),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                         GestureDetector(
                           onTap: (_resendCountdown == 0 && !_resending) ? _resend : null,
                           child: _resending 

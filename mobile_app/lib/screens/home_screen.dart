@@ -17,6 +17,8 @@ import 'call_screen.dart';
 import 'login_screen.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
+import 'id_verification_screen.dart';
+import '../widgets/terms_and_conditions_modal.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,7 +28,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   UserModel? _user;
   List<dynamic> _incidents = [];
@@ -53,11 +55,21 @@ class _HomeScreenState extends State<HomeScreen>
   String _selectedMapType = 'default';
   bool _showMapTypeMenu = false;
 
+  // Terms and Conditions Agreement state
+  bool _checkingTerms = true;
+  bool _termsAccepted = false;
+  bool _submittingTerms = false;
+  String _requiredTermsVersion = ApiService.currentTermsVersion;
+  String _privacyVersion = ApiService.currentPrivacyVersion;
+  String _termsEffectiveDate = 'October 29, 2026';
+  String? _termsError;
+
   static const LatLng _pozCenter = LatLng(16.1086, 120.5424);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -73,11 +85,19 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     SocketService.off('broadcast-alert');
     SocketService.off('incident-ack');
     _pulseController.dispose();
     _sosTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkTermsStatus();
+    }
   }
 
   Future<void> _loadUser() async {
@@ -90,8 +110,160 @@ class _HomeScreenState extends State<HomeScreen>
           _selectedMapType = user.mapSettings!['map_type'];
         }
       });
+      if (!user.isIdApproved) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const IdVerificationScreen()),
+            (_) => false,
+          );
+        });
+        return;
+      }
       _checkActiveIncident();
     }
+    await _checkTermsStatus();
+    _refreshSessionFromServer();
+  }
+
+  Future<void> _refreshSessionFromServer() async {
+    try {
+      final res = await ApiService.validateSession();
+      if (!mounted) return;
+      if (res['valid'] == true && res['user'] is Map<String, dynamic>) {
+        final remoteUserMap = res['user'] as Map<String, dynamic>;
+        await ApiService.updateUserLocal(remoteUserMap);
+        if (!mounted) return;
+        final updatedUser = UserModel.fromJson(remoteUserMap);
+        setState(() {
+          _user = updatedUser;
+          if (updatedUser.mapSettings != null &&
+              updatedUser.mapSettings!['map_type'] != null) {
+            _selectedMapType = updatedUser.mapSettings!['map_type'];
+          }
+        });
+        if (!updatedUser.isIdApproved) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const IdVerificationScreen()),
+            (_) => false,
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _checkTermsStatus() async {
+    if (!mounted) return;
+    setState(() {
+      _checkingTerms = true;
+      _termsError = null;
+    });
+    try {
+      final res = await ApiService.getTermsStatus();
+      if (!mounted) return;
+      final statusCode = res['_statusCode'] as int? ?? 200;
+      if (statusCode == 200 && res['success'] == true) {
+        final reqVer =
+            res['requiredVersion']?.toString() ?? ApiService.currentTermsVersion;
+        final privVer = res['privacyVersion']?.toString() ??
+            ApiService.currentPrivacyVersion;
+        final effDate =
+            res['effectiveDate']?.toString() ?? 'October 29, 2026';
+        final accepted =
+            res['accepted'] == true && res['acceptedVersion'] == reqVer;
+        setState(() {
+          _requiredTermsVersion = reqVer;
+          _privacyVersion = privVer;
+          _termsEffectiveDate = effDate;
+          _termsAccepted = accepted;
+          _checkingTerms = false;
+          _termsError = null;
+        });
+      } else {
+        setState(() {
+          _termsAccepted = false;
+          _checkingTerms = false;
+          _termsError = res['error']?.toString() ??
+              'Unable to verify agreement status with the server. Please check your connection and retry.';
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _termsAccepted = false;
+        _checkingTerms = false;
+        _termsError =
+            'Unable to verify agreement status with the server. Please check your internet connection and retry.';
+      });
+    }
+  }
+
+  Future<void> _handleAcceptTerms() async {
+    if (_submittingTerms) return;
+    setState(() {
+      _submittingTerms = true;
+      _termsError = null;
+    });
+    try {
+      final res = await ApiService.acceptTerms(
+        termsVersion: _requiredTermsVersion,
+        privacyVersion: _privacyVersion,
+      );
+      if (!mounted) return;
+      final statusCode = res['_statusCode'] as int? ?? 200;
+      final confirmed = statusCode == 200 &&
+          res['success'] == true &&
+          res['accepted'] == true &&
+          res['acceptedVersion'] == _requiredTermsVersion;
+      if (confirmed) {
+        if (_user != null) {
+          final updated = _user!.copyWith(
+            termsAccepted: true,
+            termsAcceptedVersion: _requiredTermsVersion,
+            termsAcceptedAt: res['acceptedAt'] is int
+                ? res['acceptedAt'] as int
+                : int.tryParse(res['acceptedAt']?.toString() ?? ''),
+            requiredTermsVersion: _requiredTermsVersion,
+          );
+          _user = updated;
+          await ApiService.updateUserLocal(updated.toJson());
+        }
+        if (!mounted) return;
+        setState(() {
+          _termsAccepted = true;
+          _submittingTerms = false;
+          _termsError = null;
+        });
+      } else {
+        setState(() {
+          _termsAccepted = false;
+          _submittingTerms = false;
+          _termsError = res['error']?.toString() ??
+              'Could not record your agreement on the server. Please try again.';
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _termsAccepted = false;
+        _submittingTerms = false;
+        _termsError =
+            'Connection error: Could not save your agreement. Please check your internet connection and try again.';
+      });
+    }
+  }
+
+  Future<void> _handleTermsSignOut() async {
+    await ApiService.clearSession();
+    SocketService.disconnect();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
   }
 
   Future<void> _checkActiveIncident() async {
@@ -224,6 +396,15 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _ensureAuthenticated(VoidCallback action) {
+    if (_checkingTerms || !_termsAccepted) return;
+    if (_user != null && !_user!.isIdApproved) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const IdVerificationScreen()),
+        (_) => false,
+      );
+      return;
+    }
     if (_user != null) {
       action();
     } else {
@@ -1264,6 +1445,14 @@ class _HomeScreenState extends State<HomeScreen>
   DateTime? _lastSosTapTime;
 
   void _triggerSos() async {
+    if (_user != null && !_user!.isIdApproved) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const IdVerificationScreen()),
+        (_) => false,
+      );
+      return;
+    }
     final now = DateTime.now();
     // 1. Debounce guard to prevent rapid repeated tap cascades
     if (_lastSosTapTime != null && now.difference(_lastSosTapTime!).inMilliseconds < 1200) {
@@ -1611,107 +1800,148 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        titleSpacing: 16,
-        title: Row(
-          children: [
-            Text('ALERTO -POZ',
-                style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
-            const SizedBox(width: 4),
-            const Icon(Icons.sensors, color: Color(0xFFFF5722), size: 22),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded, color: Colors.black87),
-            onPressed: () {
-              _ensureAuthenticated(() {
-                showModalBottomSheet(
-                  context: context,
-                  backgroundColor: Colors.transparent,
-                  isScrollControlled: true,
-                  builder: (_) => SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.85,
-                    child: HistoryScreen(user: _user!),
+    final bool blockDashboard =
+        _checkingTerms || !_termsAccepted || (_user != null && !_user!.isIdApproved);
+
+    return PopScope(
+      canPop: !blockDashboard,
+      child: Stack(
+        children: [
+          AbsorbPointer(
+            absorbing: blockDashboard,
+            child: Scaffold(
+              backgroundColor: Colors.white,
+              appBar: AppBar(
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                titleSpacing: 16,
+                title: Row(
+                  children: [
+                    Text('ALERTO -POZ',
+                        style: GoogleFonts.outfit(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.black)),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.sensors, color: Color(0xFFFF5722), size: 22),
+                  ],
+                ),
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.history_rounded, color: Colors.black87),
+                    onPressed: () {
+                      _ensureAuthenticated(() {
+                        showModalBottomSheet(
+                          context: context,
+                          backgroundColor: Colors.transparent,
+                          isScrollControlled: true,
+                          builder: (_) => SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.85,
+                            child: HistoryScreen(user: _user!),
+                          ),
+                        );
+                      });
+                    },
                   ),
-                );
-              });
-            },
-          ),
-          IconButton(
-            icon: Badge(
-              isLabelVisible: _broadcasts.isNotEmpty,
-              label: Text(_broadcasts.length.toString()),
-              child: const Icon(Icons.notifications_rounded, color: Colors.black87),
-            ),
-            onPressed: _showAlertsSheet,
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: _user == null
-                ? () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const LoginScreen(),
-                      ),
-                    ).then((_) => _loadData());
-                  }
-                : () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ProfileScreen(
-                          user: _user,
-                          onLogout: () async {
-                            await ApiService.clearSession();
-                            SocketService.disconnect();
-                            if (!mounted) return;
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(builder: (_) => const AuthGate()),
-                              (_) => false,
-                            );
-                          },
-                          onPickImage: _pickProfileImage,
-                          onUserUpdated: (updatedUser) {
-                            setState(() {
-                              _user = updatedUser;
-                              if (updatedUser.mapSettings != null && updatedUser.mapSettings!['map_type'] != null) {
-                                _selectedMapType = updatedUser.mapSettings!['map_type'];
+                  IconButton(
+                    icon: Badge(
+                      isLabelVisible: _broadcasts.isNotEmpty,
+                      label: Text(_broadcasts.length.toString()),
+                      child: const Icon(Icons.notifications_rounded, color: Colors.black87),
+                    ),
+                    onPressed: () {
+                      if (blockDashboard) return;
+                      _showAlertsSheet();
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: blockDashboard
+                        ? null
+                        : (_user == null
+                            ? () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const LoginScreen(),
+                                  ),
+                                ).then((_) => _loadData());
                               }
-                            });
-                            ApiService.updateUserLocal(updatedUser.toJson());
-                          },
+                            : () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ProfileScreen(
+                                      user: _user,
+                                      onLogout: () async {
+                                        await ApiService.clearSession();
+                                        SocketService.disconnect();
+                                        if (!mounted) return;
+                                        Navigator.pushAndRemoveUntil(
+                                          context,
+                                          MaterialPageRoute(builder: (_) => const AuthGate()),
+                                          (_) => false,
+                                        );
+                                      },
+                                      onPickImage: _pickProfileImage,
+                                      onUserUpdated: (updatedUser) {
+                                        setState(() {
+                                          _user = updatedUser;
+                                          if (updatedUser.mapSettings != null && updatedUser.mapSettings!['map_type'] != null) {
+                                            _selectedMapType = updatedUser.mapSettings!['map_type'];
+                                          }
+                                        });
+                                        ApiService.updateUserLocal(updatedUser.toJson());
+                                      },
+                                    ),
+                                  ),
+                                );
+                              }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        'PROFILE',
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: const Color(0xFF1E293B),
                         ),
                       ),
-                    );
-                  },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                ],
               ),
-              child: Text(
-                'PROFILE',
-                style: GoogleFonts.outfit(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: const Color(0xFF1E293B),
+              body: _buildMapTab(),
+            ),
+          ),
+          if (_checkingTerms)
+            Positioned.fill(
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                child: const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFFFF5722),
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 16),
+          if (!_checkingTerms && !_termsAccepted)
+            Positioned.fill(
+              child: TermsAndConditionsModal(
+                termsVersion: _requiredTermsVersion,
+                effectiveDate: _termsEffectiveDate,
+                isSubmitting: _submittingTerms,
+                errorMessage: _termsError,
+                onAccept: _handleAcceptTerms,
+                onSignOut: _handleTermsSignOut,
+                onRetryStatus: _checkTermsStatus,
+              ),
+            ),
         ],
       ),
-      body: _buildMapTab(),
     );
   }
 }

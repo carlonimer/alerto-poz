@@ -490,11 +490,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(
-                            "Already have an account? ",
-                            style: GoogleFonts.outfit(
-                              fontSize: 14,
-                              color: const Color(0xFF94A3B8),
+                          Flexible(
+                            child: Text(
+                              "Already have an account? ",
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.outfit(
+                                fontSize: 14,
+                                color: const Color(0xFF94A3B8),
+                              ),
                             ),
                           ),
                           GestureDetector(

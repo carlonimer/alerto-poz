@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../models/user.dart';
 import '../services/api_service.dart';
 import 'register_screen.dart';
 import 'otp_screen.dart';
 import 'home_screen.dart';
+import 'id_verification_screen.dart';
 import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -64,14 +66,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // Direct login success (no OTP needed)
       if (res['token'] != null) {
+        final userMap = (res['user'] is Map<String, dynamic>)
+            ? res['user'] as Map<String, dynamic>
+            : <String, dynamic>{};
         await ApiService.saveSession(
           token: res['token'] ?? '',
-          user: res['user'] ?? {},
+          user: userMap,
         );
         if (!mounted) return;
+        final user = UserModel.fromJson(userMap);
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          MaterialPageRoute(
+            builder: (_) => user.isIdApproved
+                ? const HomeScreen()
+                : const IdVerificationScreen(),
+          ),
         );
       } else {
         setState(() => _error = res['error'] ?? res['message'] ?? 'Login failed');
@@ -276,47 +286,57 @@ class _LoginScreenState extends State<LoginScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: Checkbox(
-                                  value: _rememberMe,
-                                  onChanged: (v) =>
-                                      setState(() => _rememberMe = v ?? true),
-                                  activeColor: Colors.blue,
-                                  side: const BorderSide(color: Color(0xFF86868B)),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(4),
+                          Flexible(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: Checkbox(
+                                    value: _rememberMe,
+                                    onChanged: (v) =>
+                                        setState(() => _rememberMe = v ?? true),
+                                    activeColor: Colors.blue,
+                                    side: const BorderSide(color: Color(0xFF86868B)),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Remember me',
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'Remember me',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 14,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const ForgotPasswordScreen(),
+                                  ),
+                                );
+                              },
+                              child: Text(
+                                'Forgot password?',
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.outfit(
                                   fontSize: 14,
-                                  color: const Color(0xFF64748B),
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFFFF5722),
                                 ),
-                              ),
-                            ],
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const ForgotPasswordScreen(),
-                                ),
-                              );
-                            },
-                            child: Text(
-                              'Forgot password?',
-                              style: GoogleFonts.outfit(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFFFF5722),
                               ),
                             ),
                           ),
@@ -362,11 +382,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(
-                            "Don't have an account? ",
-                            style: GoogleFonts.outfit(
-                              fontSize: 14,
-                              color: const Color(0xFF94A3B8),
+                          Flexible(
+                            child: Text(
+                              "Don't have an account? ",
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.outfit(
+                                fontSize: 14,
+                                color: const Color(0xFF94A3B8),
+                              ),
                             ),
                           ),
                           GestureDetector(

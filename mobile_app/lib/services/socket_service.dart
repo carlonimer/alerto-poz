@@ -16,8 +16,10 @@ class SocketService {
   static final Map<String, List<EventCallback>> _listeners = {};
 
   static bool get isConnected => _connected;
+  static bool disableConnectionForTesting = false;
 
   static void init() {
+    if (disableConnectionForTesting) return;
     if (_socket != null) return;
 
     _socket = io.io(
@@ -115,6 +117,7 @@ class SocketService {
 
   static void disconnect() {
     _socket?.disconnect();
+    _socket?.dispose();
     _socket = null;
     _connected = false;
   }
@@ -159,6 +162,9 @@ class SocketService {
 
   /// Web: socket.on('profile-updated', (user) => { ... })
   static void onProfileUpdated(EventCallback cb) => on('profile-updated', cb);
+
+  /// Real-time ID verification status change notification
+  static void onIdVerificationUpdated(EventCallback cb) => on('id-verification-updated', cb);
 
   /// Web: socket.on('call-status-updated', (data) => { ... })
   static void onCallStatusUpdated(EventCallback cb) => on('call-status-updated', cb);

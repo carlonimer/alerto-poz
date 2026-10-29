@@ -42,11 +42,70 @@ async function initDatabase(pool) {
         "suffix VARCHAR(20) NULL",
         "birthdate VARCHAR(20) NULL",
         "gender VARCHAR(20) NULL",
-        "address TEXT NULL"
+        "address TEXT NULL",
+        "terms_accepted_version VARCHAR(64) NULL",
+        "terms_accepted_at BIGINT NULL",
+        "privacy_accepted_version VARCHAR(64) NULL",
+        "terms_status VARCHAR(20) NULL",
+        "id_verification_status VARCHAR(30) DEFAULT 'approved'"
     ];
     for (const col of userColumns) {
         try { await pool.query(`ALTER TABLE users ADD COLUMN ${col}`); } catch(e) {}
     }
+
+    // 1.5 User Agreement Acceptances Table
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_agreement_acceptances (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            terms_version VARCHAR(64) NOT NULL,
+            privacy_version VARCHAR(64) NOT NULL DEFAULT 'ALERTO_POZ_PRIVACY_V1',
+            status VARCHAR(20) NOT NULL DEFAULT 'accepted',
+            accepted_at BIGINT NOT NULL,
+            accepted_at_iso VARCHAR(40) NOT NULL,
+            ip_address VARCHAR(100) NULL,
+            user_agent TEXT NULL,
+            UNIQUE KEY uniq_user_terms_version (user_id, terms_version),
+            INDEX idx_user_id (user_id)
+        );
+    `);
+
+    // 1.6 User ID Verifications Table
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS id_verifications (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL UNIQUE,
+            id_type VARCHAR(100) NOT NULL,
+            front_image_path VARCHAR(255) NOT NULL,
+            back_image_path VARCHAR(255) NOT NULL,
+            front_mime_type VARCHAR(50) NULL,
+            back_mime_type VARCHAR(50) NULL,
+            front_file_size INT NULL,
+            back_file_size INT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+            rejection_reason TEXT NULL,
+            submitted_at BIGINT NOT NULL,
+            submitted_at_iso VARCHAR(40) NOT NULL,
+            reviewed_at BIGINT NULL,
+            reviewed_by INT NULL,
+            updated_at BIGINT NOT NULL,
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status)
+        );
+    `);
+
+    // 1.7 Private ID Verification File Storage (Authenticated access only)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS private_id_files (
+            filename VARCHAR(255) PRIMARY KEY,
+            user_id INT NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            data LONGBLOB NOT NULL,
+            created_at BIGINT NOT NULL,
+            INDEX idx_user_id (user_id)
+        );
+    `);
+    try { await pool.query("ALTER TABLE users ADD COLUMN id_verified TINYINT NOT NULL DEFAULT 1"); } catch(e) {}
 
     // 2. Feedbacks Table
     await pool.query(`

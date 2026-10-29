@@ -15,6 +15,21 @@ class UserModel {
   final String gender;
   final String passcode; // "SET" flag from web
   final Map<String, dynamic>? mapSettings;
+  final bool active;
+  final bool idVerified;
+  final String verificationStatus;
+  final String? idType;
+  final String? rejectionReason;
+  final int? idSubmittedAt;
+  final int? idReviewedAt;
+  final bool termsAccepted;
+  final String? termsAcceptedVersion;
+  final int? termsAcceptedAt;
+  final String? requiredTermsVersion;
+
+  bool get isIdApproved =>
+      type != 'citizen' ||
+      (idVerified && verificationStatus.trim().toLowerCase() == 'approved');
 
   const UserModel({
     required this.id,
@@ -33,9 +48,28 @@ class UserModel {
     this.gender = '',
     this.passcode = '',
     this.mapSettings,
+    this.active = true,
+    this.idVerified = true,
+    this.verificationStatus = 'approved',
+    this.idType,
+    this.rejectionReason,
+    this.idSubmittedAt,
+    this.idReviewedAt,
+    this.termsAccepted = false,
+    this.termsAcceptedVersion,
+    this.termsAcceptedAt,
+    this.requiredTermsVersion,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    final activeVal = json['active'];
+    final isActive = activeVal == null ? true : (activeVal == 1 || activeVal == true);
+    final rawVerStatus = (json['verification_status'] ?? json['id_verification_status'])?.toString();
+    final effectiveVerStatus = rawVerStatus ?? (isActive ? 'approved' : 'unsubmitted');
+    final isStatusApproved = effectiveVerStatus.trim().toLowerCase() == 'approved';
+    final isIdVer = json['id_verified'] == null
+        ? (isActive && isStatusApproved)
+        : (json['id_verified'] == true || json['id_verified'] == 1);
     return UserModel(
       id: json['id'] as int? ?? 0,
       name: json['name'] as String? ?? '',
@@ -53,6 +87,21 @@ class UserModel {
       gender: json['gender'] as String? ?? '',
       passcode: json['passcode'] as String? ?? '',
       mapSettings: json['map_settings'] as Map<String, dynamic>?,
+      active: isActive,
+      idVerified: isIdVer,
+      verificationStatus: effectiveVerStatus,
+      idType: (json['id_type'] ?? json['idType'])?.toString(),
+      rejectionReason: (json['rejection_reason'] ?? json['rejectionReason'])?.toString(),
+      idSubmittedAt: json['id_submitted_at'] is int
+          ? json['id_submitted_at'] as int
+          : int.tryParse((json['id_submitted_at'] ?? json['submittedAt'])?.toString() ?? ''),
+      idReviewedAt: json['id_reviewed_at'] is int
+          ? json['id_reviewed_at'] as int
+          : int.tryParse((json['id_reviewed_at'] ?? json['reviewedAt'])?.toString() ?? ''),
+      termsAccepted: json['terms_accepted'] == true || json['terms_accepted'] == 1,
+      termsAcceptedVersion: json['terms_accepted_version']?.toString(),
+      termsAcceptedAt: json['terms_accepted_at'] is int ? json['terms_accepted_at'] as int : int.tryParse(json['terms_accepted_at']?.toString() ?? ''),
+      requiredTermsVersion: json['required_terms_version']?.toString(),
     );
   }
 
@@ -74,6 +123,17 @@ class UserModel {
       'gender': gender,
       'passcode': passcode,
       'map_settings': mapSettings,
+      'active': active ? 1 : 0,
+      'id_verified': idVerified,
+      'verification_status': verificationStatus,
+      'id_type': idType,
+      'rejection_reason': rejectionReason,
+      'id_submitted_at': idSubmittedAt,
+      'id_reviewed_at': idReviewedAt,
+      'terms_accepted': termsAccepted,
+      'terms_accepted_version': termsAcceptedVersion,
+      'terms_accepted_at': termsAcceptedAt,
+      'required_terms_version': requiredTermsVersion,
     };
   }
 
@@ -95,6 +155,18 @@ class UserModel {
     String? gender,
     String? passcode,
     Map<String, dynamic>? mapSettings,
+    bool? active,
+    bool? idVerified,
+    String? verificationStatus,
+    String? idType,
+    String? rejectionReason,
+    bool clearRejectionReason = false,
+    int? idSubmittedAt,
+    int? idReviewedAt,
+    bool? termsAccepted,
+    String? termsAcceptedVersion,
+    int? termsAcceptedAt,
+    String? requiredTermsVersion,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -113,6 +185,17 @@ class UserModel {
       gender: gender ?? this.gender,
       passcode: passcode ?? this.passcode,
       mapSettings: mapSettings ?? this.mapSettings,
+      active: active ?? this.active,
+      idVerified: idVerified ?? this.idVerified,
+      verificationStatus: verificationStatus ?? this.verificationStatus,
+      idType: idType ?? this.idType,
+      rejectionReason: clearRejectionReason ? null : (rejectionReason ?? this.rejectionReason),
+      idSubmittedAt: idSubmittedAt ?? this.idSubmittedAt,
+      idReviewedAt: idReviewedAt ?? this.idReviewedAt,
+      termsAccepted: termsAccepted ?? this.termsAccepted,
+      termsAcceptedVersion: termsAcceptedVersion ?? this.termsAcceptedVersion,
+      termsAcceptedAt: termsAcceptedAt ?? this.termsAcceptedAt,
+      requiredTermsVersion: requiredTermsVersion ?? this.requiredTermsVersion,
     );
   }
 }

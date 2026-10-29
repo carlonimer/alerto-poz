@@ -3,8 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models/user.dart';
+import 'services/api_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/id_verification_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,6 +94,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   bool _loading = true;
   bool _isLoggedIn = false;
+  bool _isIdApproved = true;
 
   @override
   void initState() {
@@ -103,13 +107,22 @@ class _AuthGateState extends State<AuthGate> {
     final token = prefs.getString('auth_token');
     
     if (token != null && token.isNotEmpty) {
+      bool idApproved = true;
+      final userData = await ApiService.getUser();
+      if (userData != null) {
+        final user = UserModel.fromJson(userData);
+        idApproved = user.isIdApproved;
+      }
+      if (!mounted) return;
       setState(() {
         _isLoggedIn = true;
+        _isIdApproved = idApproved;
         _loading = false;
       });
       return;
     }
     
+    if (!mounted) return;
     setState(() {
       _isLoggedIn = false;
       _loading = false;
@@ -126,6 +139,12 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
     }
-    return _isLoggedIn ? const HomeScreen() : const LoginScreen();
+    if (!_isLoggedIn) {
+      return const LoginScreen();
+    }
+    if (!_isIdApproved) {
+      return const IdVerificationScreen();
+    }
+    return const HomeScreen();
   }
 }

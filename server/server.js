@@ -744,13 +744,25 @@ app.post('/api/auth/register', async (req, res) => {
 
             if (existingUser) {
                 // Update unverified user with new details and new OTP
+                try {
+                    await pool.query("ALTER TABLE users ADD COLUMN id_verification_status VARCHAR(30) DEFAULT 'approved'");
+                } catch (e) {}
+                try {
+                    await pool.query("ALTER TABLE users ADD COLUMN id_verified TINYINT NOT NULL DEFAULT 1");
+                } catch (e) {}
                 await pool.query(
-                    "UPDATE users SET name = ?, email = ?, phone = ?, password = ?, otp_code = ?, otp_expires = ?, otp_type = 'register' WHERE id = ?",
+                    "UPDATE users SET name = ?, email = ?, phone = ?, password = ?, otp_code = ?, otp_expires = ?, otp_type = 'register', id_verification_status = 'Unsubmitted', id_verified = 0 WHERE id = ?",
                     [name, email || null, phone || null, hashedPassword, otpCode, otpExpires, existingUser.id]
                 );
             } else {
+                try {
+                    await pool.query("ALTER TABLE users ADD COLUMN id_verification_status VARCHAR(30) DEFAULT 'approved'");
+                } catch (e) {}
+                try {
+                    await pool.query("ALTER TABLE users ADD COLUMN id_verified TINYINT NOT NULL DEFAULT 1");
+                } catch (e) {}
                 await pool.query(
-                    "INSERT INTO users (name, email, phone, password, active, otp_code, otp_expires, otp_type) VALUES (?, ?, ?, ?, 0, ?, ?, 'register')",
+                    "INSERT INTO users (name, email, phone, password, active, otp_code, otp_expires, otp_type, id_verification_status, id_verified) VALUES (?, ?, ?, ?, 0, ?, ?, 'register', 'Unsubmitted', 0)",
                     [name, email || null, phone || null, hashedPassword, otpCode, otpExpires]
                 );
             }
@@ -774,17 +786,23 @@ app.post('/api/auth/register', async (req, res) => {
                 existingUser.otp_code = otpCode;
                 existingUser.otp_expires = otpExpires;
                 existingUser.otp_type = 'register';
+                existingUser.id_verification_status = 'Unsubmitted';
+                existingUser.id_verified = 0;
             } else {
+                const maxId = db.users.reduce((acc, u) => Math.max(acc, Number(u.id) || 0), 0);
                 db.users.push({
-                    id: db.users.length + 1,
+                    id: maxId + 1,
                     name,
                     email: email || null,
                     phone: phone || null,
                     password: hashedPassword,
+                    type: 'citizen',
                     active: 0,
                     otp_code: otpCode,
                     otp_expires: otpExpires,
-                    otp_type: 'register'
+                    otp_type: 'register',
+                    id_verification_status: 'Unsubmitted',
+                    id_verified: 0
                 });
             }
             fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
@@ -933,6 +951,416 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// --- Terms and Conditions Agreement Configuration & Helpers ---
+const DEFAULT_TERMS_VERSION = process.env.TERMS_VERSION || 'ALERTO_POZ_TERMS_V1';
+const DEFAULT_PRIVACY_VERSION = process.env.PRIVACY_VERSION || 'ALERTO_POZ_PRIVACY_V1';
+const DEFAULT_TERMS_EFFECTIVE_DATE = process.env.TERMS_EFFECTIVE_DATE || 'October 29, 2026';
+
+app.locals.currentTermsVersion = DEFAULT_TERMS_VERSION;
+app.locals.currentPrivacyVersion = DEFAULT_PRIVACY_VERSION;
+app.locals.termsEffectiveDate = DEFAULT_TERMS_EFFECTIVE_DATE;
+
+function getCurrentTermsConfig() {
+    return {
+        requiredVersion: app.locals.currentTermsVersion || DEFAULT_TERMS_VERSION,
+        privacyVersion: app.locals.currentPrivacyVersion || DEFAULT_PRIVACY_VERSION,
+        effectiveDate: app.locals.termsEffectiveDate || DEFAULT_TERMS_EFFECTIVE_DATE
+    };
+}
+
+async function ensureAgreementTable() {
+    if (!useMySQL || !pool) return;
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_agreement_acceptances (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            terms_version VARCHAR(64) NOT NULL,
+            privacy_version VARCHAR(64) NOT NULL DEFAULT 'ALERTO_POZ_PRIVACY_V1',
+            status VARCHAR(20) NOT NULL DEFAULT 'accepted',
+            accepted_at BIGINT NOT NULL,
+            accepted_at_iso VARCHAR(40) NOT NULL,
+            ip_address VARCHAR(100) NULL,
+            user_agent TEXT NULL,
+            UNIQUE KEY uniq_user_terms_version (user_id, terms_version),
+            INDEX idx_user_id (user_id)
+        );
+    `);
+}
+
+async function getUserTermsAcceptance(userId, overrideRequiredVersion) {
+    const config = getCurrentTermsConfig();
+    const requiredVersion = overrideRequiredVersion || config.requiredVersion;
+    const privacyVersion = config.privacyVersion;
+    const effectiveDate = config.effectiveDate;
+
+    let matchingRecord = null;
+    let latestRecord = null;
+
+    if (useMySQL && pool) {
+        try {
+            await ensureAgreementTable();
+            const [rows] = await pool.query(
+                "SELECT * FROM user_agreement_acceptances WHERE user_id = ? AND status = 'accepted' ORDER BY accepted_at DESC, id DESC",
+                [userId]
+            );
+            if (rows.length > 0) {
+                latestRecord = rows[0];
+                matchingRecord = rows.find(r => r.terms_version === requiredVersion) || null;
+            }
+        } catch (e) {
+            console.error("Error querying user_agreement_acceptances:", e.message);
+        }
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            const records = (db.agreement_acceptances || [])
+                .filter(r => Number(r.user_id) === Number(userId) && r.status === 'accepted')
+                .sort((a, b) => Number(b.accepted_at || 0) - Number(a.accepted_at || 0));
+            if (records.length > 0) {
+                latestRecord = records[0];
+                matchingRecord = records.find(r => r.terms_version === requiredVersion) || null;
+            }
+        } catch (e) {
+            console.error("Error reading agreement_acceptances from JSON DB:", e.message);
+        }
+    }
+
+    return {
+        userId: Number(userId),
+        requiredVersion,
+        privacyVersion,
+        effectiveDate,
+        accepted: Boolean(matchingRecord),
+        status: matchingRecord ? 'accepted' : 'pending',
+        acceptedVersion: matchingRecord ? matchingRecord.terms_version : (latestRecord ? latestRecord.terms_version : null),
+        acceptedPrivacyVersion: matchingRecord ? matchingRecord.privacy_version : (latestRecord ? latestRecord.privacy_version : null),
+        acceptedAt: matchingRecord ? Number(matchingRecord.accepted_at) : null,
+        acceptedAtIso: matchingRecord ? matchingRecord.accepted_at_iso : null
+    };
+}
+
+async function recordUserTermsAcceptance(userId, termsVersion, privacyVersion, req) {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const ipAddress = (req && (req.headers['x-forwarded-for'] || req.socket?.remoteAddress)) || null;
+    const userAgent = (req && req.headers['user-agent']) || null;
+    const resolvedPrivacyVersion = privacyVersion || getCurrentTermsConfig().privacyVersion;
+
+    if (useMySQL && pool) {
+        await ensureAgreementTable();
+        const [existing] = await pool.query(
+            "SELECT * FROM user_agreement_acceptances WHERE user_id = ? AND terms_version = ? AND status = 'accepted' LIMIT 1",
+            [userId, termsVersion]
+        );
+        if (existing.length === 0) {
+            await pool.query(
+                `INSERT INTO user_agreement_acceptances
+                 (user_id, terms_version, privacy_version, status, accepted_at, accepted_at_iso, ip_address, user_agent)
+                 VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE status = 'accepted', privacy_version = VALUES(privacy_version)`,
+                [userId, termsVersion, resolvedPrivacyVersion, nowMs, nowIso, ipAddress, userAgent]
+            );
+            try {
+                await pool.query(
+                    "UPDATE users SET terms_accepted_version = ?, terms_accepted_at = ?, privacy_accepted_version = ?, terms_status = 'accepted' WHERE id = ?",
+                    [termsVersion, nowMs, resolvedPrivacyVersion, userId]
+                );
+            } catch (e) {}
+            await logActivity(userId, `Accepted Terms and Conditions (${termsVersion})`, req);
+        }
+    } else {
+        const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+        if (!db.agreement_acceptances) db.agreement_acceptances = [];
+        const existing = db.agreement_acceptances.find(
+            r => Number(r.user_id) === Number(userId) && r.terms_version === termsVersion && r.status === 'accepted'
+        );
+        if (!existing) {
+            db.agreement_acceptances.push({
+                id: db.agreement_acceptances.length + 1,
+                user_id: Number(userId),
+                terms_version: termsVersion,
+                privacy_version: resolvedPrivacyVersion,
+                status: 'accepted',
+                accepted_at: nowMs,
+                accepted_at_iso: nowIso,
+                ip_address: ipAddress,
+                user_agent: userAgent
+            });
+            const u = db.users.find(x => Number(x.id) === Number(userId));
+            if (u) {
+                u.terms_accepted_version = termsVersion;
+                u.terms_accepted_at = nowMs;
+                u.privacy_accepted_version = resolvedPrivacyVersion;
+                u.terms_status = 'accepted';
+            }
+            fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+        }
+    }
+
+    return await getUserTermsAcceptance(userId, termsVersion);
+}
+
+async function authenticateMobileUser(req, res, next) {
+    try {
+        const authHeader = req.headers['authorization'] || '';
+        const token = authHeader.startsWith('Bearer ')
+            ? authHeader.slice(7).trim()
+            : (req.headers['x-auth-token'] || '').toString().trim();
+
+        if (!token) {
+            return res.status(401).json({ success: false, error: "Authentication token required." });
+        }
+
+        let userId = null;
+        if (token.startsWith('alerto-session-')) {
+            const parts = token.split('-');
+            if (parts.length < 4) {
+                return res.status(401).json({ success: false, error: "Malformed session token." });
+            }
+            const parsedId = parseInt(parts[2], 10);
+            const parsedTs = parseInt(parts[3], 10);
+            if (isNaN(parsedId) || parsedId <= 0 || isNaN(parsedTs) || parsedTs <= 0) {
+                return res.status(401).json({ success: false, error: "Invalid session token." });
+            }
+            userId = parsedId;
+        } else {
+            const jwt = require('jsonwebtoken');
+            const { JWT_SECRET } = require('./middleware/auth.js');
+            try {
+                const decoded = jwt.verify(token, JWT_SECRET);
+                userId = decoded.id;
+            } catch (jwtErr) {
+                return res.status(401).json({ success: false, error: "Invalid or expired authentication token." });
+            }
+        }
+
+        let user = null;
+        if (useMySQL && pool) {
+            const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]);
+            if (rows.length > 0) user = rows[0];
+        } else {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            user = db.users.find(u => Number(u.id) === Number(userId));
+        }
+
+        if (!user || !user.active) {
+            return res.status(401).json({ success: false, error: "User account is inactive or not found." });
+        }
+
+        req.authUser = user;
+        next();
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+}
+
+// --- ID Verification Configuration, Private Storage & Helpers ---
+const VALID_ID_TYPES = [
+    "Barangay ID",
+    "School ID",
+    "Passport",
+    "Driver's License",
+    "SSS",
+    "Voter's ID",
+    "PhilID (National ID)"
+];
+
+const PRIVATE_ID_UPLOAD_DIR = path.join(__dirname, 'private_uploads', 'id_verifications');
+if (!fs.existsSync(PRIVATE_ID_UPLOAD_DIR)) {
+    fs.mkdirSync(PRIVATE_ID_UPLOAD_DIR, { recursive: true });
+}
+
+const idVerificationStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        if (!fs.existsSync(PRIVATE_ID_UPLOAD_DIR)) {
+            fs.mkdirSync(PRIVATE_ID_UPLOAD_DIR, { recursive: true });
+        }
+        cb(null, PRIVATE_ID_UPLOAD_DIR);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase() || '.png';
+        const uniqueSuffix = Date.now() + '-' + crypto.randomBytes(8).toString('hex');
+        cb(null, `id-doc-${uniqueSuffix}${ext}`);
+    }
+});
+
+const uploadIdVerification = multer({
+    storage: idVerificationStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB maximum
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        const validExt = ['.png', '.jpg', '.jpeg'].includes(ext);
+        const validMime = ['image/png', 'image/jpeg', 'image/jpg'].includes((file.mimetype || '').toLowerCase());
+        const isOctetWithValidExt = file.mimetype === 'application/octet-stream' && validExt;
+
+        if (validExt && (validMime || isOctetWithValidExt)) {
+            cb(null, true);
+        } else {
+            cb(new Error("Invalid file type. Only PNG and JPG/JPEG images are allowed."));
+        }
+    }
+});
+
+function validateIdImageBuffer(filePath, originalName) {
+    try {
+        if (!fs.existsSync(filePath)) {
+            return { valid: false, error: "Uploaded file could not be read." };
+        }
+        const stat = fs.statSync(filePath);
+        if (stat.size <= 0) {
+            return { valid: false, error: "Uploaded image file is empty." };
+        }
+        if (stat.size > 5 * 1024 * 1024) {
+            return { valid: false, error: "File size exceeds the 5 MB maximum limit." };
+        }
+        const ext = path.extname(originalName || filePath).toLowerCase();
+        if (!['.png', '.jpg', '.jpeg'].includes(ext)) {
+            return { valid: false, error: "Invalid file type. Only PNG and JPG/JPEG images are allowed." };
+        }
+        const fd = fs.openSync(filePath, 'r');
+        const header = Buffer.alloc(8);
+        const bytesRead = fs.readSync(fd, header, 0, 8, 0);
+        fs.closeSync(fd);
+        if (bytesRead < 3) {
+            return { valid: false, error: "Invalid or corrupted image file." };
+        }
+        const isPng = bytesRead >= 4 && header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47;
+        const isJpeg = header[0] === 0xFF && header[1] === 0xD8 && header[2] === 0xFF;
+        if (!isPng && !isJpeg) {
+            return { valid: false, error: "Invalid file format. Only genuine PNG and JPG/JPEG images are allowed." };
+        }
+        return {
+            valid: true,
+            size: stat.size,
+            mimeType: isPng ? 'image/png' : 'image/jpeg'
+        };
+    } catch (e) {
+        return { valid: false, error: "Failed to validate uploaded image." };
+    }
+}
+
+function safeUnlinkPrivateFile(filePath) {
+    if (!filePath) return;
+    try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (e) {}
+}
+
+function normalizeVerificationStatus(rawStatus, fallbackApproved = true) {
+    if (!rawStatus) return fallbackApproved ? 'Approved' : 'Unsubmitted';
+    const lower = String(rawStatus).trim().toLowerCase();
+    if (lower === 'pending') return 'Pending';
+    if (lower === 'approved') return 'Approved';
+    if (lower === 'rejected') return 'Rejected';
+    if (lower === 'unsubmitted' || lower === 'not_submitted' || lower === 'none') return 'Unsubmitted';
+    return fallbackApproved ? 'Approved' : 'Unsubmitted';
+}
+
+async function ensureIdVerificationTable() {
+    if (!useMySQL || !pool) return;
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS id_verifications (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL UNIQUE,
+            id_type VARCHAR(100) NOT NULL,
+            front_image_path VARCHAR(255) NOT NULL,
+            back_image_path VARCHAR(255) NOT NULL,
+            front_mime_type VARCHAR(50) NULL,
+            back_mime_type VARCHAR(50) NULL,
+            front_file_size INT NULL,
+            back_file_size INT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+            rejection_reason TEXT NULL,
+            submitted_at BIGINT NOT NULL,
+            submitted_at_iso VARCHAR(40) NOT NULL,
+            reviewed_at BIGINT NULL,
+            reviewed_by INT NULL,
+            updated_at BIGINT NOT NULL,
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status)
+        );
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS private_id_files (
+            filename VARCHAR(255) PRIMARY KEY,
+            user_id INT NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            data LONGBLOB NOT NULL,
+            created_at BIGINT NOT NULL,
+            INDEX idx_user_id (user_id)
+        );
+    `);
+}
+
+async function getUserIdVerification(userOrId) {
+    let user = null;
+    let userId = null;
+
+    if (typeof userOrId === 'object' && userOrId !== null) {
+        user = userOrId;
+        userId = Number(userOrId.id);
+    } else {
+        userId = Number(userOrId);
+    }
+
+    let record = null;
+    if (useMySQL && pool) {
+        try {
+            await ensureIdVerificationTable();
+            if (!user && userId) {
+                const [uRows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]);
+                if (uRows.length > 0) user = uRows[0];
+            }
+            if (userId) {
+                const [rows] = await pool.query("SELECT * FROM id_verifications WHERE user_id = ? LIMIT 1", [userId]);
+                if (rows.length > 0) record = rows[0];
+            }
+        } catch (e) {
+            console.error("Error querying id_verifications:", e.message);
+        }
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (!user && userId) {
+                user = (db.users || []).find(u => Number(u.id) === Number(userId)) || null;
+            }
+            if (userId && db.id_verifications) {
+                record = db.id_verifications.find(r => Number(r.user_id) === Number(userId)) || null;
+            }
+        } catch (e) {
+            console.error("Error reading id_verifications from JSON DB:", e.message);
+        }
+    }
+
+    let status = 'Approved';
+    if (user && user.type && user.type !== 'citizen') {
+        status = 'Approved';
+    } else if (record && record.status) {
+        status = normalizeVerificationStatus(record.status, false);
+    } else if (user && user.id_verification_status) {
+        status = normalizeVerificationStatus(user.id_verification_status, true);
+    } else if (user && user.id_verified !== undefined && user.id_verified !== null) {
+        status = (user.id_verified === 1 || user.id_verified === true) ? 'Approved' : 'Unsubmitted';
+    } else if (user) {
+        status = user.active ? 'Approved' : 'Unsubmitted';
+    }
+
+    const idVerified = status === 'Approved';
+
+    return {
+        userId: Number(userId),
+        status,
+        idVerified,
+        idType: record ? record.id_type : null,
+        rejectionReason: record ? (record.rejection_reason || null) : null,
+        submittedAt: record && record.submitted_at ? Number(record.submitted_at) : null,
+        submittedAtIso: record ? (record.submitted_at_iso || null) : null,
+        reviewedAt: record && record.reviewed_at ? Number(record.reviewed_at) : null,
+        frontImageUrl: record ? record.front_image_path : null,
+        backImageUrl: record ? record.back_image_path : null
+    };
+}
+
 // Helper function to format user consistently
 async function formatUserObject(user) {
     if (!user) return null;
@@ -951,6 +1379,9 @@ async function formatUserObject(user) {
         } catch(e) {}
     }
 
+    const idVerInfo = await getUserIdVerification(user);
+    const termsInfo = await getUserTermsAcceptance(user.id);
+
     return {
         id: user.id,
         name: user.name,
@@ -968,6 +1399,19 @@ async function formatUserObject(user) {
         address: user.address,
         barangay: user.barangay,
         active: user.active,
+        id_verified: idVerInfo.idVerified,
+        verification_status: idVerInfo.status,
+        id_verification_status: idVerInfo.status,
+        id_type: idVerInfo.idType,
+        rejection_reason: idVerInfo.rejectionReason,
+        id_submitted_at: idVerInfo.submittedAt,
+        id_reviewed_at: idVerInfo.reviewedAt,
+        terms_accepted: termsInfo.accepted,
+        terms_accepted_version: termsInfo.acceptedVersion,
+        terms_accepted_at: termsInfo.acceptedAt,
+        privacy_accepted_version: termsInfo.acceptedPrivacyVersion,
+        required_terms_version: termsInfo.requiredVersion,
+        terms_effective_date: termsInfo.effectiveDate,
         map_settings: mapSettings
     };
 }
@@ -1032,6 +1476,10 @@ app.post('/api/auth/verify-otp', async (req, res) => {
             }
         }
 
+        if (type === 'register') {
+            user.active = 1;
+        }
+
         // Return a mock authentication session token
         res.json({
             success: true,
@@ -1081,6 +1529,729 @@ app.post('/api/auth/validate', async (req, res) => {
         res.status(500).json({ valid: false, error: e.message });
     }
 });
+
+// --- Terms and Conditions Agreement Endpoints ---
+const handleGetTermsStatus = async (req, res) => {
+    try {
+        const requestedUserId = req.query.userId || req.query.user_id;
+        if (requestedUserId !== undefined && String(requestedUserId) !== String(req.authUser.id)) {
+            return res.status(403).json({
+                success: false,
+                error: "Forbidden: Cannot access another user's agreement record."
+            });
+        }
+
+        const status = await getUserTermsAcceptance(req.authUser.id);
+        return res.json({
+            success: true,
+            ...status
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+const handlePostTermsAccept = async (req, res) => {
+    try {
+        const bodyUserId = req.body.userId !== undefined ? req.body.userId : req.body.user_id;
+        if (bodyUserId !== undefined && String(bodyUserId) !== String(req.authUser.id)) {
+            return res.status(403).json({
+                success: false,
+                error: "Forbidden: Cannot submit or modify another user's agreement record."
+            });
+        }
+
+        const { accepted, status, termsVersion, version, privacyVersion, privacyNoticeAcknowledged } = req.body;
+        const isAccepted = accepted === true || status === 'accepted';
+        if (!isAccepted) {
+            return res.status(400).json({
+                success: false,
+                error: "Explicit acceptance of the Terms and Conditions is required."
+            });
+        }
+
+        if (privacyNoticeAcknowledged === false) {
+            return res.status(400).json({
+                success: false,
+                error: "Acknowledgment of the Privacy Notice is required."
+            });
+        }
+
+        const config = getCurrentTermsConfig();
+        const submittedVersion = termsVersion || version || config.requiredVersion;
+        if (submittedVersion !== config.requiredVersion) {
+            return res.status(400).json({
+                success: false,
+                error: "Agreement version mismatch. Please review and accept the current Terms and Conditions.",
+                requiredVersion: config.requiredVersion
+            });
+        }
+
+        const result = await recordUserTermsAcceptance(
+            req.authUser.id,
+            config.requiredVersion,
+            privacyVersion || config.privacyVersion,
+            req
+        );
+
+        return res.json({
+            success: true,
+            ...result
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+app.get('/api/user/terms-status', authenticateMobileUser, handleGetTermsStatus);
+app.get('/api/terms/status', authenticateMobileUser, handleGetTermsStatus);
+app.post('/api/user/terms-accept', authenticateMobileUser, handlePostTermsAccept);
+app.post('/api/terms/accept', authenticateMobileUser, handlePostTermsAccept);
+
+// --- ID Verification Endpoints & Backend Access Control ---
+const processingIdSubmissions = new Set();
+
+async function resolveRequestCitizenId(req, explicitUserId) {
+    const authHeader = (req && req.headers && req.headers['authorization']) || '';
+    const token = authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7).trim()
+        : ((req && req.headers && req.headers['x-auth-token']) || '').toString().trim();
+
+    if (token && token.startsWith('alerto-session-')) {
+        const parts = token.split('-');
+        if (parts.length >= 4) {
+            const parsedId = parseInt(parts[2], 10);
+            if (!isNaN(parsedId) && parsedId > 0) {
+                return parsedId;
+            }
+        }
+    }
+    if (explicitUserId !== undefined && explicitUserId !== null && explicitUserId !== '') {
+        const parsed = parseInt(String(explicitUserId), 10);
+        if (!isNaN(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
+async function checkCitizenIdVerificationAccess(req, explicitUserId) {
+    const userId = await resolveRequestCitizenId(req, explicitUserId);
+    if (!userId) return { allowed: true };
+
+    let user = null;
+    if (useMySQL && pool) {
+        const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]);
+        if (rows.length > 0) user = rows[0];
+    } else {
+        const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+        user = (db.users || []).find(u => Number(u.id) === Number(userId)) || null;
+    }
+
+    if (!user) return { allowed: true };
+    if (user.type && user.type !== 'citizen') return { allowed: true };
+
+    const idVerInfo = await getUserIdVerification(user);
+    if (idVerInfo.status !== 'Approved') {
+        return {
+            allowed: false,
+            status: idVerInfo.status,
+            rejectionReason: idVerInfo.rejectionReason,
+            error: "ID verification approval is required before accessing the emergency dashboard and features."
+        };
+    }
+    return { allowed: true };
+}
+
+const handleGetIdVerificationStatus = async (req, res) => {
+    try {
+        const requestedUserId = req.query.userId || req.query.user_id;
+        if (requestedUserId !== undefined && String(requestedUserId) !== String(req.authUser.id)) {
+            return res.status(403).json({
+                success: false,
+                error: "Forbidden: You can only access your own verification status."
+            });
+        }
+
+        const idVerInfo = await getUserIdVerification(req.authUser);
+        const formattedUser = await formatUserObject(req.authUser);
+        return res.json({
+            success: true,
+            userId: idVerInfo.userId,
+            status: idVerInfo.status,
+            idVerified: idVerInfo.idVerified,
+            idType: idVerInfo.idType,
+            rejectionReason: idVerInfo.rejectionReason,
+            submittedAt: idVerInfo.submittedAt,
+            submittedAtIso: idVerInfo.submittedAtIso,
+            reviewedAt: idVerInfo.reviewedAt,
+            validIdTypes: VALID_ID_TYPES,
+            user: formattedUser
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+const handleSubmitIdVerification = (req, res) => {
+    const userId = Number(req.authUser.id);
+    if (processingIdSubmissions.has(userId)) {
+        return res.status(409).json({
+            success: false,
+            error: "An ID verification request is already being processed. Please wait."
+        });
+    }
+    processingIdSubmissions.add(userId);
+
+    const uploadFields = uploadIdVerification.fields([
+        { name: 'front_image', maxCount: 1 },
+        { name: 'frontImage', maxCount: 1 },
+        { name: 'back_image', maxCount: 1 },
+        { name: 'backImage', maxCount: 1 }
+    ]);
+
+    uploadFields(req, res, async (err) => {
+        const cleanupUploadedFiles = () => {
+            if (!req.files) return;
+            Object.values(req.files).forEach(fileArr => {
+                (fileArr || []).forEach(f => safeUnlinkPrivateFile(f.path));
+            });
+        };
+
+        try {
+            if (err) {
+                cleanupUploadedFiles();
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({
+                        success: false,
+                        error: "File size exceeds the 5 MB maximum limit. Please upload PNG or JPG images up to 5 MB."
+                    });
+                }
+                return res.status(400).json({
+                    success: false,
+                    error: err.message || "Invalid file upload."
+                });
+            }
+
+            const bodyUserId = req.body.userId !== undefined ? req.body.userId : req.body.user_id;
+            if (bodyUserId !== undefined && String(bodyUserId) !== String(userId)) {
+                cleanupUploadedFiles();
+                return res.status(403).json({
+                    success: false,
+                    error: "Forbidden: You can only submit ID verification for your own account."
+                });
+            }
+
+            // Check current verification status to prevent duplicate submissions while Pending or already Approved
+            const currentInfo = await getUserIdVerification(req.authUser);
+            if (currentInfo.status === 'Pending') {
+                cleanupUploadedFiles();
+                return res.status(409).json({
+                    success: false,
+                    error: "Your ID verification has already been submitted and is currently Pending review.",
+                    status: 'Pending'
+                });
+            }
+            if (currentInfo.status === 'Approved') {
+                cleanupUploadedFiles();
+                return res.status(400).json({
+                    success: false,
+                    error: "Your ID verification has already been approved.",
+                    status: 'Approved'
+                });
+            }
+
+            const idType = (req.body.idType || req.body.id_type || '').toString().trim();
+            if (!idType || !VALID_ID_TYPES.includes(idType)) {
+                cleanupUploadedFiles();
+                return res.status(400).json({
+                    success: false,
+                    error: "Please select a valid ID Type.",
+                    validIdTypes: VALID_ID_TYPES
+                });
+            }
+
+            const frontFile = (req.files && (req.files['front_image']?.[0] || req.files['frontImage']?.[0])) || null;
+            const backFile = (req.files && (req.files['back_image']?.[0] || req.files['backImage']?.[0])) || null;
+
+            if (!frontFile || !backFile) {
+                cleanupUploadedFiles();
+                return res.status(400).json({
+                    success: false,
+                    error: "Both ID front side and ID back side images are required."
+                });
+            }
+
+            const frontValidation = validateIdImageBuffer(frontFile.path, frontFile.originalname);
+            if (!frontValidation.valid) {
+                cleanupUploadedFiles();
+                return res.status(400).json({
+                    success: false,
+                    error: `ID Front Side: ${frontValidation.error}`
+                });
+            }
+
+            const backValidation = validateIdImageBuffer(backFile.path, backFile.originalname);
+            if (!backValidation.valid) {
+                cleanupUploadedFiles();
+                return res.status(400).json({
+                    success: false,
+                    error: `ID Back Side: ${backValidation.error}`
+                });
+            }
+
+            const nowMs = Date.now();
+            const nowIso = new Date(nowMs).toISOString();
+            const frontUrl = `/api/id-verification/image/${frontFile.filename}`;
+            const backUrl = `/api/id-verification/image/${backFile.filename}`;
+
+            if (useMySQL && pool) {
+                await ensureIdVerificationTable();
+
+                // Clean up previous private files if resubmitting after rejection
+                const [existingRows] = await pool.query("SELECT * FROM id_verifications WHERE user_id = ? LIMIT 1", [userId]);
+                if (existingRows.length > 0) {
+                    const prev = existingRows[0];
+                    for (const oldUrl of [prev.front_image_path, prev.back_image_path]) {
+                        if (oldUrl) {
+                            const oldName = oldUrl.split('/').pop();
+                            safeUnlinkPrivateFile(path.join(PRIVATE_ID_UPLOAD_DIR, oldName));
+                            try { await pool.query("DELETE FROM private_id_files WHERE filename = ?", [oldName]); } catch (e) {}
+                        }
+                    }
+                }
+
+                const frontBuffer = fs.readFileSync(frontFile.path);
+                const backBuffer = fs.readFileSync(backFile.path);
+                await pool.query(
+                    "INSERT INTO private_id_files (filename, user_id, mime_type, data, created_at) VALUES (?, ?, ?, ?, ?)",
+                    [frontFile.filename, userId, frontValidation.mimeType, frontBuffer, nowMs]
+                );
+                await pool.query(
+                    "INSERT INTO private_id_files (filename, user_id, mime_type, data, created_at) VALUES (?, ?, ?, ?, ?)",
+                    [backFile.filename, userId, backValidation.mimeType, backBuffer, nowMs]
+                );
+
+                await pool.query(
+                    `INSERT INTO id_verifications
+                     (user_id, id_type, front_image_path, back_image_path, front_mime_type, back_mime_type, front_file_size, back_file_size, status, rejection_reason, submitted_at, submitted_at_iso, reviewed_at, reviewed_by, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NULL, ?, ?, NULL, NULL, ?)
+                     ON DUPLICATE KEY UPDATE
+                        id_type = VALUES(id_type),
+                        front_image_path = VALUES(front_image_path),
+                        back_image_path = VALUES(back_image_path),
+                        front_mime_type = VALUES(front_mime_type),
+                        back_mime_type = VALUES(back_mime_type),
+                        front_file_size = VALUES(front_file_size),
+                        back_file_size = VALUES(back_file_size),
+                        status = 'Pending',
+                        rejection_reason = NULL,
+                        submitted_at = VALUES(submitted_at),
+                        submitted_at_iso = VALUES(submitted_at_iso),
+                        reviewed_at = NULL,
+                        reviewed_by = NULL,
+                        updated_at = VALUES(updated_at)`,
+                    [
+                        userId,
+                        idType,
+                        frontUrl,
+                        backUrl,
+                        frontValidation.mimeType,
+                        backValidation.mimeType,
+                        frontValidation.size,
+                        backValidation.size,
+                        nowMs,
+                        nowIso,
+                        nowMs
+                    ]
+                );
+
+                await pool.query(
+                    "UPDATE users SET id_verification_status = 'Pending', id_verified = 0, updated_at = ? WHERE id = ?",
+                    [nowMs, userId]
+                );
+                await logActivity(userId, `Submitted ID Verification (${idType})`, req);
+            } else {
+                const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+                if (!db.id_verifications) db.id_verifications = [];
+                const existingIdx = db.id_verifications.findIndex(r => Number(r.user_id) === Number(userId));
+                if (existingIdx > -1) {
+                    const prev = db.id_verifications[existingIdx];
+                    for (const oldUrl of [prev.front_image_path, prev.back_image_path]) {
+                        if (oldUrl) {
+                            const oldName = oldUrl.split('/').pop();
+                            safeUnlinkPrivateFile(path.join(PRIVATE_ID_UPLOAD_DIR, oldName));
+                        }
+                    }
+                    db.id_verifications[existingIdx] = {
+                        ...prev,
+                        id_type: idType,
+                        front_image_path: frontUrl,
+                        back_image_path: backUrl,
+                        front_mime_type: frontValidation.mimeType,
+                        back_mime_type: backValidation.mimeType,
+                        front_file_size: frontValidation.size,
+                        back_file_size: backValidation.size,
+                        status: 'Pending',
+                        rejection_reason: null,
+                        submitted_at: nowMs,
+                        submitted_at_iso: nowIso,
+                        reviewed_at: null,
+                        reviewed_by: null,
+                        updated_at: nowMs
+                    };
+                } else {
+                    db.id_verifications.push({
+                        id: db.id_verifications.length + 1,
+                        user_id: userId,
+                        id_type: idType,
+                        front_image_path: frontUrl,
+                        back_image_path: backUrl,
+                        front_mime_type: frontValidation.mimeType,
+                        back_mime_type: backValidation.mimeType,
+                        front_file_size: frontValidation.size,
+                        back_file_size: backValidation.size,
+                        status: 'Pending',
+                        rejection_reason: null,
+                        submitted_at: nowMs,
+                        submitted_at_iso: nowIso,
+                        reviewed_at: null,
+                        reviewed_by: null,
+                        updated_at: nowMs
+                    });
+                }
+
+                const u = (db.users || []).find(x => Number(x.id) === Number(userId));
+                if (u) {
+                    u.id_verification_status = 'Pending';
+                    u.id_verified = 0;
+                    u.updated_at = nowMs;
+                }
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+            }
+
+            req.authUser.id_verification_status = 'Pending';
+            req.authUser.id_verified = 0;
+            const formattedUser = await formatUserObject(req.authUser);
+
+            io.emit('id-verification-updated', {
+                userId,
+                status: 'Pending',
+                idVerified: false,
+                idType,
+                rejectionReason: null,
+                submittedAt: nowMs
+            });
+
+            return res.json({
+                success: true,
+                title: "ID Verification Submitted",
+                message: "Your ID has been submitted successfully and is awaiting verification. You will be notified when your verification status changes.",
+                status: "Pending",
+                idVerified: false,
+                idType,
+                submittedAt: nowMs,
+                submittedAtIso: nowIso,
+                verification: {
+                    userId,
+                    idType,
+                    status: "Pending",
+                    idVerified: false,
+                    rejectionReason: null,
+                    submittedAt: nowMs,
+                    submittedAtIso: nowIso,
+                    reviewedAt: null
+                },
+                user: formattedUser
+            });
+        } catch (e) {
+            cleanupUploadedFiles();
+            return res.status(500).json({ success: false, error: e.message });
+        } finally {
+            processingIdSubmissions.delete(userId);
+        }
+    });
+};
+
+app.get('/api/id-verification/status', authenticateMobileUser, handleGetIdVerificationStatus);
+app.get('/api/user/id-verification', authenticateMobileUser, handleGetIdVerificationStatus);
+app.post('/api/id-verification/submit', authenticateMobileUser, handleSubmitIdVerification);
+app.post('/api/user/id-verification', authenticateMobileUser, handleSubmitIdVerification);
+
+// Protected Dashboard Access Check Endpoint
+app.get('/api/dashboard/access', authenticateMobileUser, async (req, res) => {
+    try {
+        const access = await checkCitizenIdVerificationAccess(req, req.authUser.id);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                allowed: false,
+                status: access.status,
+                rejectionReason: access.rejectionReason,
+                error: access.error
+            });
+        }
+        return res.json({
+            success: true,
+            allowed: true,
+            status: 'Approved',
+            user: await formatUserObject(req.authUser)
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Authenticated & Authorized Private ID Image Serving Endpoint
+app.get('/api/id-verification/image/:filename', async (req, res) => {
+    try {
+        const filename = path.basename(req.params.filename || '');
+        if (!filename || !filename.startsWith('id-doc-')) {
+            return res.status(400).json({ success: false, error: "Invalid image reference." });
+        }
+
+        const authHeader = req.headers['authorization'] || '';
+        const token = authHeader.startsWith('Bearer ')
+            ? authHeader.slice(7).trim()
+            : (req.headers['x-auth-token'] || '').toString().trim();
+
+        if (!token) {
+            return res.status(401).json({ success: false, error: "Authentication required to access ID verification images." });
+        }
+
+        let isAuthorizedAdmin = false;
+        let callerUserId = null;
+
+        if (token.startsWith('alerto-session-')) {
+            const parts = token.split('-');
+            if (parts.length < 4) {
+                return res.status(401).json({ success: false, error: "Invalid session token." });
+            }
+            callerUserId = parseInt(parts[2], 10);
+            if (isNaN(callerUserId) || callerUserId <= 0) {
+                return res.status(401).json({ success: false, error: "Invalid session token." });
+            }
+        } else {
+            const jwt = require('jsonwebtoken');
+            const { JWT_SECRET } = require('./middleware/auth.js');
+            try {
+                const decoded = jwt.verify(token, JWT_SECRET);
+                const adminRoles = ['mdrrmo_admin', 'bfp_admin', 'pnp_admin', 'barangay_admin', 'authority'];
+                if (decoded && adminRoles.includes(decoded.type)) {
+                    isAuthorizedAdmin = true;
+                } else if (decoded && decoded.id) {
+                    callerUserId = Number(decoded.id);
+                }
+            } catch (e) {
+                return res.status(401).json({ success: false, error: "Invalid or expired token." });
+            }
+        }
+
+        const expectedPath = `/api/id-verification/image/${filename}`;
+        let ownerUserId = null;
+
+        if (useMySQL && pool) {
+            await ensureIdVerificationTable();
+            const [rows] = await pool.query(
+                "SELECT user_id FROM id_verifications WHERE front_image_path = ? OR back_image_path = ? LIMIT 1",
+                [expectedPath, expectedPath]
+            );
+            if (rows.length > 0) ownerUserId = Number(rows[0].user_id);
+        } else {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            const rec = (db.id_verifications || []).find(
+                r => r.front_image_path === expectedPath || r.back_image_path === expectedPath
+            );
+            if (rec) ownerUserId = Number(rec.user_id);
+        }
+
+        if (!ownerUserId) {
+            return res.status(404).json({ success: false, error: "ID verification image not found." });
+        }
+
+        if (!isAuthorizedAdmin && Number(callerUserId) !== Number(ownerUserId)) {
+            return res.status(403).json({
+                success: false,
+                error: "Forbidden: You do not have permission to view this ID verification image."
+            });
+        }
+
+        res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+
+        if (useMySQL && pool) {
+            const [fileRows] = await pool.query(
+                "SELECT mime_type, data FROM private_id_files WHERE filename = ? LIMIT 1",
+                [filename]
+            );
+            if (fileRows.length > 0) {
+                res.setHeader('Content-Type', fileRows[0].mime_type || 'image/png');
+                return res.send(fileRows[0].data);
+            }
+        }
+
+        const localFilePath = path.join(PRIVATE_ID_UPLOAD_DIR, filename);
+        if (!fs.existsSync(localFilePath)) {
+            return res.status(404).json({ success: false, error: "ID verification image file not found." });
+        }
+        const ext = path.extname(filename).toLowerCase();
+        res.setHeader('Content-Type', ext === '.png' ? 'image/png' : 'image/jpeg');
+        return res.sendFile(localFilePath);
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Authorized Administrator ID Verification Review Endpoints
+const ADMIN_ROLES = ['mdrrmo_admin', 'bfp_admin', 'pnp_admin', 'barangay_admin', 'authority'];
+
+app.get('/api/admin/id-verifications', verifyAdmin(ADMIN_ROLES), async (req, res) => {
+    try {
+        const statusFilter = req.query.status ? normalizeVerificationStatus(req.query.status, false) : null;
+        if (useMySQL && pool) {
+            await ensureIdVerificationTable();
+            let query = `
+                SELECT v.*, u.name as user_name, u.email as user_email, u.phone as user_phone, u.barangay as user_barangay
+                FROM id_verifications v
+                LEFT JOIN users u ON v.user_id = u.id
+            `;
+            const params = [];
+            if (statusFilter) {
+                query += " WHERE v.status = ?";
+                params.push(statusFilter);
+            }
+            query += " ORDER BY v.submitted_at DESC";
+            const [rows] = await pool.query(query, params);
+            return res.json({ success: true, verifications: rows });
+        } else {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            let list = (db.id_verifications || []).map(v => {
+                const u = (db.users || []).find(usr => Number(usr.id) === Number(v.user_id));
+                return {
+                    ...v,
+                    user_name: u ? u.name : 'Unknown',
+                    user_email: u ? u.email : null,
+                    user_phone: u ? u.phone : null,
+                    user_barangay: u ? u.barangay : null
+                };
+            });
+            if (statusFilter) {
+                list = list.filter(v => normalizeVerificationStatus(v.status, false) === statusFilter);
+            }
+            list.sort((a, b) => Number(b.submitted_at || 0) - Number(a.submitted_at || 0));
+            return res.json({ success: true, verifications: list });
+        }
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+const handleAdminReviewIdVerification = async (req, res, forcedStatus = null) => {
+    try {
+        const targetUserId = parseInt(req.params.userId, 10);
+        if (isNaN(targetUserId) || targetUserId <= 0) {
+            return res.status(400).json({ success: false, error: "Valid userId parameter is required." });
+        }
+
+        const rawStatus = forcedStatus || req.body.status || req.body.action;
+        if (!rawStatus) {
+            return res.status(400).json({ success: false, error: "Verification status ('Approved' or 'Rejected') is required." });
+        }
+
+        const lower = String(rawStatus).trim().toLowerCase();
+        let nextStatus = null;
+        if (lower === 'approved' || lower === 'approve') {
+            nextStatus = 'Approved';
+        } else if (lower === 'rejected' || lower === 'reject') {
+            nextStatus = 'Rejected';
+        } else {
+            return res.status(400).json({ success: false, error: "Status must be 'Approved' or 'Rejected'." });
+        }
+
+        const rejectionReason = nextStatus === 'Rejected'
+            ? ((req.body.rejectionReason || req.body.rejection_reason || req.body.reason || '').toString().trim() || "Submitted ID did not pass verification review.")
+            : null;
+        const nowMs = Date.now();
+        const adminId = req.admin && req.admin.id ? Number(req.admin.id) : 1;
+
+        let targetUser = null;
+        if (useMySQL && pool) {
+            await ensureIdVerificationTable();
+            const [uRows] = await pool.query("SELECT * FROM users WHERE id = ?", [targetUserId]);
+            if (uRows.length === 0) {
+                return res.status(404).json({ success: false, error: "User account not found." });
+            }
+            targetUser = uRows[0];
+
+            const [vRows] = await pool.query("SELECT * FROM id_verifications WHERE user_id = ? LIMIT 1", [targetUserId]);
+            if (vRows.length === 0) {
+                return res.status(404).json({ success: false, error: "No ID verification submission found for this user." });
+            }
+
+            await pool.query(
+                "UPDATE id_verifications SET status = ?, rejection_reason = ?, reviewed_at = ?, reviewed_by = ?, updated_at = ? WHERE user_id = ?",
+                [nextStatus, rejectionReason, nowMs, adminId, nowMs, targetUserId]
+            );
+            await pool.query(
+                "UPDATE users SET id_verification_status = ?, id_verified = ?, updated_at = ? WHERE id = ?",
+                [nextStatus, nextStatus === 'Approved' ? 1 : 0, nowMs, targetUserId]
+            );
+            targetUser.id_verification_status = nextStatus;
+            targetUser.id_verified = nextStatus === 'Approved' ? 1 : 0;
+        } else {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            targetUser = (db.users || []).find(u => Number(u.id) === Number(targetUserId));
+            if (!targetUser) {
+                return res.status(404).json({ success: false, error: "User account not found." });
+            }
+            if (!db.id_verifications) db.id_verifications = [];
+            const rec = db.id_verifications.find(r => Number(r.user_id) === Number(targetUserId));
+            if (!rec) {
+                return res.status(404).json({ success: false, error: "No ID verification submission found for this user." });
+            }
+
+            rec.status = nextStatus;
+            rec.rejection_reason = rejectionReason;
+            rec.reviewed_at = nowMs;
+            rec.reviewed_by = adminId;
+            rec.updated_at = nowMs;
+
+            targetUser.id_verification_status = nextStatus;
+            targetUser.id_verified = nextStatus === 'Approved' ? 1 : 0;
+            targetUser.updated_at = nowMs;
+            fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+        }
+
+        const formattedUser = await formatUserObject(targetUser);
+        const updatedVerInfo = await getUserIdVerification(targetUser);
+
+        io.emit('id-verification-updated', {
+            userId: targetUserId,
+            status: nextStatus,
+            idVerified: nextStatus === 'Approved',
+            idType: updatedVerInfo.idType,
+            rejectionReason,
+            reviewedAt: nowMs,
+            user: formattedUser
+        });
+        io.emit('profile-updated', formattedUser);
+
+        return res.json({
+            success: true,
+            status: nextStatus,
+            idVerified: nextStatus === 'Approved',
+            rejectionReason,
+            verification: updatedVerInfo,
+            user: formattedUser
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+};
+
+app.post('/api/admin/id-verifications/:userId/review', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res));
+app.put('/api/admin/id-verifications/:userId', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res));
+app.post('/api/admin/id-verifications/:userId/approve', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res, 'Approved'));
+app.post('/api/admin/id-verifications/:userId/reject', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res, 'Rejected'));
 
 // 4. Resend OTP Code
 app.post('/api/auth/resend-otp', async (req, res) => {
@@ -1531,6 +2702,14 @@ app.get('/api/user/history/:id', async (req, res) => {
     try {
         const { id } = req.params;
         if (!id) return res.status(400).json({ error: "User ID required" });
+        const access = await checkCitizenIdVerificationAccess(req, id);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                status: access.status,
+                error: access.error
+            });
+        }
         if (useMySQL) {
             const [rows] = await pool.query("SELECT * FROM incidents WHERE reporterId = ? OR reporterPhone = ? ORDER BY createdAt DESC", [id, id]);
             
@@ -1818,6 +2997,14 @@ app.delete('/api/water_devices/:id', async (req, res) => {
 app.get('/api/incidents/active/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
+        const access = await checkCitizenIdVerificationAccess(req, userId);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                status: access.status,
+                error: access.error
+            });
+        }
         const activeStatuses = ['draft', 'pending', 'dispatching', 'enroute', 'onscene', 'inprogress'];
         
         if (useMySQL) {
@@ -1851,6 +3038,14 @@ app.get('/api/incidents/active/:userId', async (req, res) => {
 app.post('/api/incidents/draft', async (req, res) => {
     try {
         const { reporterId, reporterPhone, lat, lng, reporter, createdAt, forceNew, category, details, media } = req.body;
+        const access = await checkCitizenIdVerificationAccess(req, reporterId);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                status: access.status,
+                error: access.error
+            });
+        }
         let phone = reporterPhone;
         
         if (useMySQL && !phone && reporterId) {
@@ -2174,6 +3369,14 @@ app.get('/api/incidents/active', async (req, res) => {
         if (!userId && !phone) {
             return res.status(400).json({ success: false, error: "Missing userId or phone" });
         }
+        const access = await checkCitizenIdVerificationAccess(req, userId);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                status: access.status,
+                error: access.error
+            });
+        }
         
         const state = await getDBState();
         const activeIncident = (state.incidents || []).find(i => {
@@ -2198,6 +3401,14 @@ app.get('/api/incidents/active', async (req, res) => {
 app.post('/api/incidents', async (req, res) => {
     try {
         let report = req.body;
+        const access = await checkCitizenIdVerificationAccess(req, report ? report.reporterId : null);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                status: access.status,
+                error: access.error
+            });
+        }
         let isNewEmergency = false;
         let oldDraftId = null;
 
@@ -2553,6 +3764,16 @@ app.post('/api/incidents/:id/messages', (req, res, next) => {
 }, async (req, res) => {
     try {
         const { senderId, senderRole, messageType, messageContent, clientMessageId } = req.body;
+        if (!senderRole || senderRole === 'Citizen App') {
+            const access = await checkCitizenIdVerificationAccess(req, senderId);
+            if (!access.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    status: access.status,
+                    error: access.error
+                });
+            }
+        }
         const incidentId = req.params.id;
         
         let mediaUrl = req.body.mediaUrl || req.body.media_url || null;
@@ -2975,6 +4196,15 @@ io.on('connection', async (socket) => {
     // Citizen SOS dispatch & chat
     socket.on('citizen-sos-report', async (report, callback) => {
         try {
+            if (report && report.reporterId) {
+                const access = await checkCitizenIdVerificationAccess(null, report.reporterId);
+                if (!access.allowed) {
+                    if (typeof callback === 'function') {
+                        return callback({ success: false, status: access.status, error: access.error });
+                    }
+                    return;
+                }
+            }
             let isNewEmergency = false;
             let oldDraftId = null;
 
@@ -3353,6 +4583,15 @@ io.on('connection', async (socket) => {
 
 // Boot Database first, then launch Web Server
 const PORT = process.env.PORT || 3000;
+if (require.main === module) {
+    initDatabase().then(() => {
+        server.listen(PORT, () => {
+            console.log(`ALERTO-POZ server running on port ${PORT}`);
+        });
+    });
+}
+module.exports = { app, server, initDatabase };
+if (false)
 initDatabase().then(() => {
     server.listen(PORT, () => {
         console.log(`ALERTO-POZ server running on port ${PORT}`);

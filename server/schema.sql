@@ -290,3 +290,40 @@ CREATE TABLE IF NOT EXISTS messages (
     media_path VARCHAR(255),
     timestamp BIGINT
 );
+
+-- 13. User Agreement Acceptances (Terms and Conditions & Privacy Notice)
+CREATE TABLE IF NOT EXISTS user_agreement_acceptances (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    terms_version VARCHAR(64) NOT NULL,
+    privacy_version VARCHAR(64) NOT NULL DEFAULT 'ALERTO_POZ_PRIVACY_V1',
+    status VARCHAR(20) NOT NULL DEFAULT 'accepted',
+    accepted_at BIGINT NOT NULL,
+    accepted_at_iso VARCHAR(40) NOT NULL,
+    ip_address VARCHAR(100) NULL,
+    user_agent TEXT NULL,
+    UNIQUE KEY uniq_user_terms_version (user_id, terms_version),
+    INDEX idx_user_id (user_id)
+);
+
+-- 14. User ID Verifications
+CREATE TABLE IF NOT EXISTS id_verifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL UNIQUE,
+    id_type VARCHAR(100) NOT NULL,
+    front_image_path VARCHAR(255) NOT NULL,
+    back_image_path VARCHAR(255) NOT NULL,
+    front_mime_type VARCHAR(50) NULL,
+    back_mime_type VARCHAR(50) NULL,
+    front_file_size INT NULL,
+    back_file_size INT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+    rejection_reason TEXT NULL,
+    submitted_at BIGINT NOT NULL,
+    submitted_at_iso VARCHAR(40) NOT NULL,
+    reviewed_at BIGINT NULL,
+    reviewed_by INT NULL,
+    updated_at BIGINT NOT NULL,
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status)
+);
