@@ -100,8 +100,25 @@ class CommandDashboard {
                 if (tabId === 'feedbacks') {
                     this.loadFeedbacks();
                 }
+
+                if (tabId === 'id_verifications') {
+                    this.loadIdVerifications();
+                }
             });
         });
+
+        // ID Verification filters & bindings
+        const idFilter = document.getElementById("id-verif-status-filter");
+        if (idFilter) {
+            idFilter.addEventListener("change", () => this.loadIdVerifications());
+        }
+        const btnRefreshId = document.getElementById("btn-refresh-id-verifs");
+        if (btnRefreshId) {
+            btnRefreshId.addEventListener("click", () => this.loadIdVerifications());
+        }
+        window.dashOpenIdReview = (userId) => this.openIdReviewModal(userId);
+        window.dashQuickApproveId = (userId) => this.submitIdReview(userId, 'approve');
+        window.dashQuickRejectId = (userId) => this.promptRejectId(userId);
 
         // Dispatch console
         this.statusSelector = document.getElementById("incident-status-selector");
@@ -603,6 +620,18 @@ class CommandDashboard {
         this.socket.on('new-checkin-received', (data) => {
             this.handleNewCheckin(data);
         });
+
+        // Listen for citizen ID verification submissions & status updates
+        this.socket.on('id-verification-updated', () => {
+            this.updatePendingIdCount();
+            const activeTab = document.querySelector(".sidebar-nav .nav-btn.active");
+            if (activeTab && activeTab.getAttribute("data-tab") === "id_verifications") {
+                this.loadIdVerifications();
+            }
+        });
+
+        // Initial fetch of pending ID verifications count
+        this.updatePendingIdCount();
     }
 
     updateNetworkUI(connected) {
@@ -2229,6 +2258,332 @@ class CommandDashboard {
             });
         });
     }
+
+    // ID Verifications Management
+    async updatePendingIdCount() {
+        const token = localStorage.getItem("alerto_admin_token");
+        const badge = document.getElementById("badge-pending-id-count");
+        if (!token || !badge) return;
+
+        try {
+            const res = await fetch("/api/admin/id-verifications?status=Pending", {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (data.success && Array.isArray(data.verifications)) {
+                const count = data.verifications.length;
+                if (count > 0) {
+                    badge.textContent = count > 99 ? '99+' : count;
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        } catch (e) {
+            console.error("Failed to update pending ID count:", e);
+        }
+    }
+
+    async loadIdVerifications() {
+        const tbody = document.getElementById("id-verifications-table-body");
+        const filterSelect = document.getElementById("id-verif-status-filter");
+        const token = localStorage.getItem("alerto_admin_token");
+
+        if (!tbody || !token) return;
+
+        const statusFilter = filterSelect ? filterSelect.value : "Pending";
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center" style="padding: 24px; color: var(--text-muted);">
+                    <i class="fa-solid fa-spinner fa-spin" style="margin-right: 8px;"></i> Loading verification requests...
+                </td>
+            </tr>
+        `;
+
+        try {
+            const queryParam = statusFilter && statusFilter !== "ALL" ? `?status=${encodeURIComponent(statusFilter)}` : "";
+            const res = await fetch(`/api/admin/id-verifications${queryParam}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+
+            if (!data.success) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center" style="padding: 24px; color: var(--danger);">
+                            ${data.error || "Failed to load ID verifications."}
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            this.idVerifications = data.verifications || [];
+
+            if (this.idVerifications.length === 0) {
+                const label = statusFilter === "ALL" ? "records" : `${statusFilter.toLowerCase()} submissions`;
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center" style="padding: 32px; color: var(--text-muted);">
+                            <i class="fa-solid fa-id-card" style="font-size: 28px; display: block; margin-bottom: 8px; opacity: 0.5;"></i>
+                            No ${label} found.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = this.idVerifications.map(item => {
+                const dateStr = item.submitted_at 
+                    ? new Date(Number(item.submitted_at)).toLocaleString() 
+                    : "Unknown";
+
+                let statusPill = "";
+                const normStatus = (item.status || "Pending").toLowerCase();
+                if (normStatus === "approved") {
+                    statusPill = `<span class="status-pill active" style="background:#dcfce7; color:#15803d; border-color:#bbf7d0;"><i class="fa-solid fa-circle-check"></i> Approved</span>`;
+                } else if (normStatus === "rejected") {
+                    statusPill = `<span class="status-pill" style="background:#fee2e2; color:#b91c1c; border-color:#fca5a5;"><i class="fa-solid fa-circle-xmark"></i> Rejected</span>`;
+                } else {
+                    statusPill = `<span class="status-pill warning" style="background:#fef3c7; color:#b45309; border-color:#fde68a;"><i class="fa-solid fa-clock"></i> Pending Review</span>`;
+                }
+
+                const userName = item.user_name || "Unknown Citizen";
+                const phone = item.user_phone || "No phone";
+                const email = item.user_email || "";
+                const brgy = item.user_barangay ? `Brgy. ${item.user_barangay}` : "Not set";
+                const idType = item.id_type || "Government ID";
+                const userId = item.user_id;
+
+                return `
+                    <tr>
+                        <td>
+                            <strong style="color: var(--text-primary); display: block;">${userName}</strong>
+                            <small style="color: var(--text-muted);">User ID #${userId}</small>
+                        </td>
+                        <td>
+                            <div style="font-size: 13px;">${phone}</div>
+                            ${email ? `<div style="font-size: 11px; color: var(--text-muted);">${email}</div>` : ""}
+                        </td>
+                        <td><span style="display: inline-block; padding: 2px 8px; background: rgba(0,0,0,0.05); border-radius: 4px; font-size: 12px;">${brgy}</span></td>
+                        <td><span style="font-weight: 600; color: var(--text-primary); font-size: 12px;">${idType}</span></td>
+                        <td style="font-size: 12px; color: var(--text-muted);">${dateStr}</td>
+                        <td>${statusPill}</td>
+                        <td style="text-align: center;">
+                            <div style="display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                                <button class="btn btn-secondary btn-sm" onclick="dashOpenIdReview(${userId})" style="font-size: 11px; padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px;">
+                                    <i class="fa-solid fa-eye"></i> Review
+                                </button>
+                                ${normStatus === 'pending' ? `
+                                    <button class="btn btn-sm" onclick="dashQuickApproveId(${userId})" style="font-size: 11px; padding: 5px 8px; background: #16a34a; color: white; border: none; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Approve ID">
+                                        <i class="fa-solid fa-check"></i>
+                                    </button>
+                                    <button class="btn btn-sm" onclick="dashQuickRejectId(${userId})" style="font-size: 11px; padding: 5px 8px; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Reject ID">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
+
+        } catch (e) {
+            console.error("Failed to load ID verifications:", e);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center" style="padding: 24px; color: var(--danger);">
+                        Error loading ID verifications. Check network or server connection.
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    openIdReviewModal(userId) {
+        const item = (this.idVerifications || []).find(v => Number(v.user_id) === Number(userId));
+        if (!item) {
+            alert("ID verification record not found.");
+            return;
+        }
+
+        const modal = document.getElementById("modal-id-review");
+        const infoContainer = document.getElementById("id-review-user-info");
+        const photosGrid = document.getElementById("id-photos-grid");
+        const rejectContainer = document.getElementById("id-rejection-reason-container");
+        const rejectInput = document.getElementById("id-rejection-reason-input");
+        const actionsContainer = document.getElementById("id-review-actions");
+        const token = localStorage.getItem("alerto_admin_token") || "";
+
+        if (!modal || !infoContainer || !photosGrid || !actionsContainer) return;
+
+        if (rejectContainer) rejectContainer.classList.add("hidden");
+        if (rejectInput) rejectInput.value = item.rejection_reason || "";
+
+        const dateStr = item.submitted_at ? new Date(Number(item.submitted_at)).toLocaleString() : "Unknown";
+        const reviewedDateStr = item.reviewed_at ? new Date(Number(item.reviewed_at)).toLocaleString() : null;
+
+        infoContainer.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 13px;">
+                <div>
+                    <span style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Citizen Name</span>
+                    <strong style="color: var(--text-primary); font-size: 15px;">${item.user_name || "Unknown"}</strong>
+                    <div style="color: var(--text-muted); font-size: 12px;">User ID #${item.user_id}</div>
+                </div>
+                <div>
+                    <span style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Contact Info</span>
+                    <div style="font-weight: 600; color: var(--text-primary);">${item.user_phone || "No phone"}</div>
+                    <div style="color: var(--text-muted); font-size: 12px;">${item.user_email || "No email"}</div>
+                </div>
+                <div>
+                    <span style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Location & ID Type</span>
+                    <div style="font-weight: 600; color: var(--text-primary);">${item.user_barangay ? 'Brgy. ' + item.user_barangay : 'Not set'}</div>
+                    <div style="color: #ea580c; font-weight: 600; font-size: 12px;">${item.id_type || 'Government ID'}</div>
+                </div>
+                <div>
+                    <span style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Current Status</span>
+                    <div style="margin-top: 4px;">
+                        <span class="status-pill ${item.status === 'Approved' ? 'active' : (item.status === 'Rejected' ? '' : 'warning')}" style="padding: 3px 10px; font-size: 12px;">
+                            ${item.status || 'Pending'}
+                        </span>
+                    </div>
+                    <div style="color: var(--text-muted); font-size: 11px; margin-top: 4px;">Submitted: ${dateStr}</div>
+                    ${reviewedDateStr ? `<div style="color: var(--text-muted); font-size: 11px;">Reviewed: ${reviewedDateStr}</div>` : ''}
+                </div>
+            </div>
+            ${item.status === 'Rejected' && item.rejection_reason ? `
+                <div style="margin-top: 12px; padding: 10px 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; font-size: 13px; color: #b91c1c;">
+                    <strong>Previous Rejection Reason:</strong> ${item.rejection_reason}
+                </div>
+            ` : ''}
+        `;
+
+        const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
+        const frontSrc = item.front_image_path ? `${item.front_image_path}${authSuffix}` : '';
+        const backSrc = item.back_image_path ? `${item.back_image_path}${authSuffix}` : '';
+
+        photosGrid.innerHTML = `
+            <div style="border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; background: var(--bg-card); text-align: center;">
+                <div style="font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--text-primary); display: flex; align-items: center; justify-content: center; gap: 6px;">
+                    <i class="fa-solid fa-address-card"></i> Front Side
+                </div>
+                ${frontSrc ? `
+                    <div style="position: relative; overflow: hidden; border-radius: 8px; background: #0f172a; min-height: 220px; display: flex; align-items: center; justify-content: center;">
+                        <img src="${frontSrc}" alt="Front ID" class="id-doc-preview-img" style="max-height: 240px; width: 100%; object-fit: contain; cursor: zoom-in; display: block;" onerror="this.onerror=null; this.src='/assets/placeholder-id.png';" />
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <a href="${frontSrc}" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #2563eb; text-decoration: none;">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Open in new tab
+                        </a>
+                    </div>
+                ` : `<div style="padding: 40px; color: var(--text-muted);">No front photo provided</div>`}
+            </div>
+
+            <div style="border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; background: var(--bg-card); text-align: center;">
+                <div style="font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--text-primary); display: flex; align-items: center; justify-content: center; gap: 6px;">
+                    <i class="fa-solid fa-address-card"></i> Back Side
+                </div>
+                ${backSrc ? `
+                    <div style="position: relative; overflow: hidden; border-radius: 8px; background: #0f172a; min-height: 220px; display: flex; align-items: center; justify-content: center;">
+                        <img src="${backSrc}" alt="Back ID" class="id-doc-preview-img" style="max-height: 240px; width: 100%; object-fit: contain; cursor: zoom-in; display: block;" onerror="this.onerror=null; this.src='/assets/placeholder-id.png';" />
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <a href="${backSrc}" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #2563eb; text-decoration: none;">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Open in new tab
+                        </a>
+                    </div>
+                ` : `<div style="padding: 40px; color: var(--text-muted);">No back photo provided</div>`}
+            </div>
+        `;
+
+        actionsContainer.innerHTML = `
+            <button class="btn btn-secondary" type="button" onclick="document.getElementById('modal-id-review').classList.add('hidden')">
+                Close
+            </button>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-danger" type="button" id="btn-modal-reject-id" style="background: #dc2626; color: white; border: none; padding: 9px 18px; border-radius: 8px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                    <i class="fa-solid fa-circle-xmark"></i> Reject ID
+                </button>
+                <button class="btn btn-primary" type="button" id="btn-modal-approve-id" style="background: #16a34a; color: white; border: none; padding: 9px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                    <i class="fa-solid fa-circle-check"></i> Approve & Verify ID
+                </button>
+            </div>
+        `;
+
+        document.getElementById("btn-modal-approve-id").addEventListener("click", () => {
+            if (confirm(`Are you sure you want to approve and verify the ID of ${item.user_name || 'this citizen'}? They will be granted full access to the emergency network.`)) {
+                this.submitIdReview(userId, 'approve');
+            }
+        });
+
+        document.getElementById("btn-modal-reject-id").addEventListener("click", () => {
+            if (rejectContainer.classList.contains("hidden")) {
+                rejectContainer.classList.remove("hidden");
+                rejectInput.focus();
+                return;
+            }
+            const reason = rejectInput.value.trim();
+            if (!reason) {
+                alert("Please provide a reason for rejecting this ID so the citizen knows what to correct.");
+                rejectInput.focus();
+                return;
+            }
+            if (confirm(`Reject ID verification for ${item.user_name || 'this citizen'} with reason:\n"${reason}"?`)) {
+                this.submitIdReview(userId, 'reject', reason);
+            }
+        });
+
+        modal.classList.remove("hidden");
+    }
+
+    async submitIdReview(userId, action, reason) {
+        const token = localStorage.getItem("alerto_admin_token");
+        if (!token) {
+            alert("Session expired. Please log in again.");
+            return;
+        }
+
+        const endpoint = action === 'approve'
+            ? `/api/admin/id-verifications/${userId}/approve`
+            : `/api/admin/id-verifications/${userId}/reject`;
+
+        const bodyData = action === 'reject' ? { rejectionReason: reason || "ID document rejected." } : {};
+
+        try {
+            const res = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify(bodyData)
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const modal = document.getElementById("modal-id-review");
+                if (modal) modal.classList.add("hidden");
+                await this.updatePendingIdCount();
+                await this.loadIdVerifications();
+            } else {
+                alert(data.error || `Failed to ${action} ID verification.`);
+            }
+        } catch (e) {
+            console.error(`Error submitting ID review (${action}):`, e);
+            alert(`Network error while trying to ${action} ID.`);
+        }
+    }
+
+    promptRejectId(userId) {
+        this.openIdReviewModal(userId);
+        const rejectContainer = document.getElementById("id-rejection-reason-container");
+        const rejectInput = document.getElementById("id-rejection-reason-input");
+        if (rejectContainer && rejectInput) {
+            rejectContainer.classList.remove("hidden");
+            rejectInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            rejectInput.focus();
+        }
+    }
 }
 
 let commandDashboard;
@@ -2321,7 +2676,7 @@ document.addEventListener("click", (e) => {
         return;
     }
 
-    if (e.target.tagName === "IMG" && (e.target.closest(".chat-bubble") || e.target.classList.contains("feedback-media-img"))) {
+    if (e.target.tagName === "IMG" && (e.target.closest(".chat-bubble") || e.target.classList.contains("feedback-media-img") || e.target.classList.contains("id-doc-preview-img"))) {
         const img = document.createElement("img");
         img.src = e.target.src;
         lightboxContainer.innerHTML = "";

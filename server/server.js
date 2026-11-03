@@ -1223,7 +1223,7 @@ async function authenticateMobileUser(req, res, next) {
         const authHeader = req.headers['authorization'] || '';
         const token = authHeader.startsWith('Bearer ')
             ? authHeader.slice(7).trim()
-            : (req.headers['x-auth-token'] || '').toString().trim();
+            : (req.headers['x-auth-token'] || req.query.token || '').toString().trim();
 
         if (!token) {
             return res.status(401).json({ success: false, error: "Authentication token required." });
@@ -2134,7 +2134,7 @@ app.get('/api/id-verification/image/:filename', async (req, res) => {
         const authHeader = req.headers['authorization'] || '';
         const token = authHeader.startsWith('Bearer ')
             ? authHeader.slice(7).trim()
-            : (req.headers['x-auth-token'] || '').toString().trim();
+            : (req.headers['x-auth-token'] || req.query.token || '').toString().trim();
 
         if (!token) {
             return res.status(401).json({ success: false, error: "Authentication required to access ID verification images." });
