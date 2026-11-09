@@ -570,6 +570,40 @@ class ApiService {
     }
   }
 
+  // ───────── Weather Status ─────────
+
+  /// GET /api/weather-status (Public / All users)
+  static Future<Map<String, dynamic>?> getWeatherStatus() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$baseUrl/api/weather-status'),
+        headers: await _getHeaders(auth: false),
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        if (data['success'] == true && data['weather'] != null) {
+          final weather = data['weather'] as Map<String, dynamic>;
+          // Cache locally for offline immediate rendering on app launch
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('cached_weather_status', jsonEncode(weather));
+          return weather;
+        }
+      }
+    } catch (_) {
+      // Fallback to local cache if network offline
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString('cached_weather_status');
+      if (cached != null) {
+        return jsonDecode(cached) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
   // ───────── Session helpers ─────────
 
   static Future<void> saveSession({

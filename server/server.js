@@ -262,6 +262,7 @@ async function initDatabase() {
 
         useMySQL = true;
         console.log(`ALERTO-POZ Database Status: MySQL Database "${dbConfig.database}" Initialized Successfully.`);
+        await ensureWeatherStatusTable();
     } catch (err) {
         useMySQL = false;
         console.warn("ALERTO-POZ Database Status Warning: MySQL Server connection failed.");
@@ -272,6 +273,7 @@ async function initDatabase() {
         if (!fs.existsSync(JSON_DB_FILE)) {
             fs.writeFileSync(JSON_DB_FILE, JSON.stringify(INITIAL_JSON_DB, null, 4));
         }
+        await ensureWeatherStatusTable();
     }
 }
 
@@ -2373,6 +2375,296 @@ app.post('/api/admin/id-verifications/:userId/review', verifyAdmin(ADMIN_ROLES),
 app.put('/api/admin/id-verifications/:userId', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res));
 app.post('/api/admin/id-verifications/:userId/approve', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res, 'Approved'));
 app.post('/api/admin/id-verifications/:userId/reject', verifyAdmin(ADMIN_ROLES), (req, res) => handleAdminReviewIdVerification(req, res, 'Rejected'));
+
+// ==========================================
+// MDRRMO PERSISTENT WEATHER STATUS CONTROL
+// ==========================================
+
+const WEATHER_CONFIG = {
+    NORMAL: {
+        status: 'NORMAL',
+        title: 'NORMAL WEATHER',
+        message: 'Current weather conditions are normal. Continue monitoring official announcements.',
+        color: 'white',
+        level: 'normal',
+        icon: 'fa-sun'
+    },
+    WARNING: {
+        status: 'WARNING',
+        title: 'WEATHER WARNING',
+        message: 'Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.',
+        color: 'blue',
+        level: 'warning',
+        icon: 'fa-cloud-bolt'
+    },
+    EXTREME: {
+        status: 'EXTREME',
+        title: 'EXTREME WEATHER WARNING',
+        message: 'Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.',
+        color: 'red',
+        level: 'extreme',
+        icon: 'fa-triangle-exclamation'
+    }
+};
+
+function normalizeWeatherStatus(raw) {
+    if (!raw) return 'NORMAL';
+    const s = String(raw).trim().toUpperCase();
+    if (s === 'NORMAL' || s === 'WHITE') return 'NORMAL';
+    if (s === 'WARNING' || s === 'WEATHER WARNING' || s === 'BLUE') return 'WARNING';
+    if (s === 'EXTREME' || s === 'EXTREME WEATHER WARNING' || s === 'RED') return 'EXTREME';
+    return null;
+}
+
+async function ensureWeatherStatusTable() {
+    if (useMySQL && pool) {
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS weather_status (
+                    id INT PRIMARY KEY DEFAULT 1,
+                    status VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+                    title VARCHAR(100) NOT NULL DEFAULT 'NORMAL WEATHER',
+                    message TEXT NOT NULL,
+                    color VARCHAR(20) NOT NULL DEFAULT 'white',
+                    updated_by INT NULL,
+                    updated_by_name VARCHAR(150) NULL,
+                    updated_at BIGINT NOT NULL,
+                    updated_at_iso VARCHAR(40) NOT NULL
+                );
+            `);
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS weather_status_logs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    status VARCHAR(20) NOT NULL,
+                    previous_status VARCHAR(20) NULL,
+                    updated_by INT NULL,
+                    updated_by_name VARCHAR(150) NULL,
+                    ip_address VARCHAR(100) NULL,
+                    user_agent TEXT NULL,
+                    created_at BIGINT NOT NULL,
+                    created_at_iso VARCHAR(40) NOT NULL,
+                    INDEX idx_created_at (created_at)
+                );
+            `);
+            const [rows] = await pool.query("SELECT id FROM weather_status WHERE id = 1 LIMIT 1");
+            if (rows.length === 0) {
+                const now = Date.now();
+                const config = WEATHER_CONFIG.NORMAL;
+                await pool.query(
+                    "INSERT INTO weather_status (id, status, title, message, color, updated_by, updated_by_name, updated_at, updated_at_iso) VALUES (1, ?, ?, ?, ?, 1, 'MDRRMO Command Center', ?, ?)",
+                    [config.status, config.title, config.message, config.color, now, new Date(now).toISOString()]
+                );
+            }
+        } catch (e) {
+            console.error("Error in ensureWeatherStatusTable (MySQL):", e.message);
+        }
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            let modified = false;
+            if (!db.weather_status || !db.weather_status.status) {
+                const now = Date.now();
+                const config = WEATHER_CONFIG.NORMAL;
+                db.weather_status = {
+                    id: 1,
+                    status: config.status,
+                    title: config.title,
+                    message: config.message,
+                    color: config.color,
+                    updated_by: 1,
+                    updated_by_name: "MDRRMO Command Center",
+                    updated_at: now,
+                    updated_at_iso: new Date(now).toISOString()
+                };
+                modified = true;
+            }
+            if (!Array.isArray(db.weather_status_logs)) {
+                db.weather_status_logs = [];
+                modified = true;
+            }
+            if (modified) {
+                fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+            }
+        } catch (e) {
+            console.error("Error in ensureWeatherStatusTable (JSON DB):", e.message);
+        }
+    }
+}
+
+async function getCurrentWeatherStatus() {
+    await ensureWeatherStatusTable();
+    if (useMySQL && pool) {
+        try {
+            const [rows] = await pool.query("SELECT * FROM weather_status WHERE id = 1 LIMIT 1");
+            if (rows.length > 0) {
+                const r = rows[0];
+                const cfg = WEATHER_CONFIG[r.status] || WEATHER_CONFIG.NORMAL;
+                return {
+                    id: 1,
+                    status: r.status,
+                    title: r.title || cfg.title,
+                    message: r.message || cfg.message,
+                    color: r.color || cfg.color,
+                    level: cfg.level,
+                    icon: cfg.icon,
+                    updated_by: r.updated_by,
+                    updated_by_name: r.updated_by_name || 'MDRRMO Command Center',
+                    updated_at: Number(r.updated_at),
+                    updated_at_iso: r.updated_at_iso || new Date(Number(r.updated_at)).toISOString()
+                };
+            }
+        } catch (e) {
+            console.error("Error reading weather_status from MySQL:", e.message);
+        }
+    } else {
+        try {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            if (db.weather_status) {
+                const r = db.weather_status;
+                const cfg = WEATHER_CONFIG[r.status] || WEATHER_CONFIG.NORMAL;
+                return {
+                    ...r,
+                    title: r.title || cfg.title,
+                    message: r.message || cfg.message,
+                    color: r.color || cfg.color,
+                    level: cfg.level,
+                    icon: cfg.icon
+                };
+            }
+        } catch (e) {
+            console.error("Error reading weather_status from JSON DB:", e.message);
+        }
+    }
+    const now = Date.now();
+    return {
+        id: 1,
+        ...WEATHER_CONFIG.NORMAL,
+        updated_by: 1,
+        updated_by_name: 'MDRRMO Command Center',
+        updated_at: now,
+        updated_at_iso: new Date(now).toISOString()
+    };
+}
+
+async function setWeatherStatus(newStatusRaw, adminUser, req = null) {
+    const normalized = normalizeWeatherStatus(newStatusRaw);
+    if (!normalized || !WEATHER_CONFIG[normalized]) {
+        throw new Error("Invalid weather status. Allowed values: 'NORMAL', 'WARNING', 'EXTREME'.");
+    }
+
+    await ensureWeatherStatusTable();
+    const current = await getCurrentWeatherStatus();
+    const prevStatus = current ? current.status : 'NORMAL';
+    const config = WEATHER_CONFIG[normalized];
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const adminId = adminUser ? adminUser.id : 1;
+    const adminName = adminUser ? (adminUser.name || `Admin #${adminUser.id}`) : 'MDRRMO Administrator';
+    const ipAddress = req ? (req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || '') : null;
+    const userAgent = req ? (req.headers['user-agent'] || '') : null;
+
+    const updatedData = {
+        id: 1,
+        status: config.status,
+        title: config.title,
+        message: config.message,
+        color: config.color,
+        level: config.level,
+        icon: config.icon,
+        updated_by: adminId,
+        updated_by_name: adminName,
+        updated_at: now,
+        updated_at_iso: nowIso
+    };
+
+    if (useMySQL && pool) {
+        await pool.query(
+            `INSERT INTO weather_status (id, status, title, message, color, updated_by, updated_by_name, updated_at, updated_at_iso)
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                title = VALUES(title),
+                message = VALUES(message),
+                color = VALUES(color),
+                updated_by = VALUES(updated_by),
+                updated_by_name = VALUES(updated_by_name),
+                updated_at = VALUES(updated_at),
+                updated_at_iso = VALUES(updated_at_iso)`,
+            [config.status, config.title, config.message, config.color, adminId, adminName, now, nowIso]
+        );
+
+        await pool.query(
+            "INSERT INTO weather_status_logs (status, previous_status, updated_by, updated_by_name, ip_address, user_agent, created_at, created_at_iso) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [config.status, prevStatus, adminId, adminName, ipAddress, userAgent, now, nowIso]
+        );
+    } else {
+        const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+        db.weather_status = updatedData;
+        if (!Array.isArray(db.weather_status_logs)) db.weather_status_logs = [];
+        db.weather_status_logs.unshift({
+            id: db.weather_status_logs.length + 1,
+            status: config.status,
+            previous_status: prevStatus,
+            updated_by: adminId,
+            updated_by_name: adminName,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            created_at: now,
+            created_at_iso: nowIso
+        });
+        fs.writeFileSync(JSON_DB_FILE, JSON.stringify(db, null, 4));
+    }
+
+    // Broadcast globally in real-time to ALL connected clients (Mobile, Web, Admin)
+    io.emit('weather-status-updated', updatedData);
+
+    return updatedData;
+}
+
+// 1. GET Current Weather Status (Public, for all clients)
+app.get('/api/weather-status', async (req, res) => {
+    try {
+        const weather = await getCurrentWeatherStatus();
+        return res.json({ success: true, weather });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 2. POST Update Weather Status (Protected - MDRRMO Admin & Authority Only)
+app.post('/api/admin/weather-status', verifyAdmin(['mdrrmo_admin', 'authority']), async (req, res) => {
+    try {
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({ success: false, error: "Weather status is required ('NORMAL', 'WARNING', 'EXTREME')." });
+        }
+        const updated = await setWeatherStatus(status, req.admin, req);
+        return res.json({
+            success: true,
+            message: `Weather status successfully updated to ${updated.title}.`,
+            weather: updated
+        });
+    } catch (e) {
+        return res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+// 3. GET Weather Status Audit History (Protected - Admin Roles)
+app.get('/api/admin/weather-status/history', verifyAdmin(ADMIN_ROLES), async (req, res) => {
+    try {
+        await ensureWeatherStatusTable();
+        if (useMySQL && pool) {
+            const [rows] = await pool.query("SELECT * FROM weather_status_logs ORDER BY created_at DESC LIMIT 50");
+            return res.json({ success: true, history: rows });
+        } else {
+            const db = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf8'));
+            const logs = (db.weather_status_logs || []).slice(0, 50);
+            return res.json({ success: true, history: logs });
+        }
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 // 4. Resend OTP Code
 app.post('/api/auth/resend-otp', async (req, res) => {

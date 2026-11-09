@@ -366,6 +366,48 @@ async function initDatabase(pool) {
         );
     `);
 
+    // 11. Persistent Weather Status (Singleton for Pozorrubio)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS weather_status (
+            id INT PRIMARY KEY DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+            title VARCHAR(100) NOT NULL DEFAULT 'NORMAL WEATHER',
+            message TEXT NOT NULL,
+            color VARCHAR(20) NOT NULL DEFAULT 'white',
+            updated_by INT NULL,
+            updated_by_name VARCHAR(150) NULL,
+            updated_at BIGINT NOT NULL,
+            updated_at_iso VARCHAR(40) NOT NULL
+        );
+    `);
+
+    // 12. Weather Status Audit Logs
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS weather_status_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            status VARCHAR(20) NOT NULL,
+            previous_status VARCHAR(20) NULL,
+            updated_by INT NULL,
+            updated_by_name VARCHAR(150) NULL,
+            ip_address VARCHAR(100) NULL,
+            user_agent TEXT NULL,
+            created_at BIGINT NOT NULL,
+            created_at_iso VARCHAR(40) NOT NULL,
+            INDEX idx_created_at (created_at)
+        );
+    `);
+
+    // Seed initial weather status only if empty (never overwrite existing)
+    const [weatherCount] = await pool.query("SELECT COUNT(*) as count FROM weather_status WHERE id = 1");
+    if (weatherCount[0].count === 0) {
+        const nowMs = Date.now();
+        await pool.query(`
+            INSERT INTO weather_status (id, status, title, message, color, updated_by, updated_by_name, updated_at, updated_at_iso)
+            VALUES (1, 'NORMAL', 'NORMAL WEATHER', 'Current weather conditions are normal. Continue monitoring official announcements.', 'white', 1, 'MDRRMO Command Center', ?, ?)
+        `, [nowMs, new Date(nowMs).toISOString()]);
+        console.log("Initial weather status seeded as NORMAL.");
+    }
+
     // Preseed responders table if empty
     const [responderCount] = await pool.query("SELECT COUNT(*) as count FROM responders");
     if (responderCount[0].count === 0) {

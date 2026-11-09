@@ -40,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen>
   int _locationSeq = 0;
   bool _showBroadcastBanner = false;
   Map<String, dynamic>? _latestBroadcast;
+  Map<String, dynamic>? _weatherStatus;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -80,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen>
     _loadUser();
     _initSocket();
     _loadData();
+    _loadWeatherStatus();
     _getMyLocation();
   }
 
@@ -88,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     SocketService.off('broadcast-alert');
     SocketService.off('incident-ack');
+    SocketService.off('weather-status-updated');
     _pulseController.dispose();
     _sosTimer?.cancel();
     super.dispose();
@@ -97,6 +100,7 @@ class _HomeScreenState extends State<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkTermsStatus();
+      _loadWeatherStatus();
     }
   }
 
@@ -275,6 +279,15 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (_) {}
   }
 
+  Future<void> _loadWeatherStatus() async {
+    final weather = await ApiService.getWeatherStatus();
+    if (weather != null && mounted) {
+      setState(() {
+        _weatherStatus = weather;
+      });
+    }
+  }
+
   void _initSocket() {
     SocketService.init();
     SocketService.onBroadcastAdvisory((data) {
@@ -299,6 +312,14 @@ class _HomeScreenState extends State<HomeScreen>
     SocketService.on('new-incident-alert', (data) {
       if (!mounted) return;
       _loadData();
+    });
+    SocketService.on('weather-status-updated', (data) {
+      if (!mounted) return;
+      if (data is Map<String, dynamic>) {
+        setState(() {
+          _weatherStatus = data;
+        });
+      }
     });
     SocketService.onProfileUpdated((data) {
       if (!mounted || _user == null) return;
@@ -799,6 +820,169 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Widget _buildPersistentWeatherCard() {
+    final status = (_weatherStatus?['status'] as String? ?? 'NORMAL').toUpperCase();
+    final String title;
+    final String message;
+    final Color bgColor;
+    final Color textColor;
+    final Color subtextColor;
+    final Color iconBoxColor;
+    final Color iconColor;
+    final IconData iconData;
+    final Color borderColor;
+    final String badgeText;
+    final Color badgeBg;
+    final Color badgeTextColor;
+
+    if (status == 'WARNING') {
+      title = 'WEATHER WARNING';
+      message = _weatherStatus?['message'] as String? ??
+          'Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.';
+      bgColor = const Color(0xFF1D4ED8);
+      textColor = Colors.white;
+      subtextColor = const Color(0xFFE0E7FF);
+      iconBoxColor = Colors.white.withValues(alpha: 0.2);
+      iconColor = Colors.white;
+      iconData = Icons.thunderstorm_rounded;
+      borderColor = const Color(0xFF1E40AF);
+      badgeText = 'WEATHER WARNING';
+      badgeBg = Colors.white.withValues(alpha: 0.25);
+      badgeTextColor = Colors.white;
+    } else if (status == 'EXTREME') {
+      title = 'EXTREME WEATHER WARNING';
+      message = _weatherStatus?['message'] as String? ??
+          'Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.';
+      bgColor = const Color(0xFFDC2626);
+      textColor = Colors.white;
+      subtextColor = const Color(0xFFFEE2E2);
+      iconBoxColor = Colors.white.withValues(alpha: 0.2);
+      iconColor = Colors.white;
+      iconData = Icons.warning_amber_rounded;
+      borderColor = const Color(0xFFB91C1C);
+      badgeText = 'CRITICAL ADVISORY';
+      badgeBg = Colors.white.withValues(alpha: 0.25);
+      badgeTextColor = Colors.white;
+    } else {
+      title = 'NORMAL WEATHER';
+      message = _weatherStatus?['message'] as String? ??
+          'Current weather conditions are normal. Continue monitoring official announcements.';
+      bgColor = Colors.white;
+      textColor = const Color(0xFF0F172A);
+      subtextColor = const Color(0xFF475569);
+      iconBoxColor = const Color(0xFFFEF3C7);
+      iconColor = const Color(0xFFD97706);
+      iconData = Icons.wb_sunny_rounded;
+      borderColor = const Color(0xFFE2E8F0);
+      badgeText = 'MDRRMO WEATHER';
+      badgeBg = const Color(0xFFDCFCE7);
+      badgeTextColor = const Color(0xFF15803D);
+    }
+
+    return Positioned(
+      top: 12,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: iconBoxColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(iconData, color: iconColor, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: badgeBg,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          badgeText,
+                          style: GoogleFonts.outfit(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            color: badgeTextColor,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: status == 'NORMAL' ? const Color(0xFF22C55E) : Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'LIVE',
+                        style: GoogleFonts.outfit(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: subtextColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    title,
+                    style: GoogleFonts.outfit(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: textColor,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  Text(
+                    message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: subtextColor,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMapTab() {
     return Stack(
       children: [
@@ -849,9 +1033,11 @@ class _HomeScreenState extends State<HomeScreen>
             MarkerLayer(markers: _buildMarkers()),
           ],
         ),
+        // Persistent Weather Status Card (Permanently visible 24/7 on Main Dashboard)
+        _buildPersistentWeatherCard(),
         // Search Pill
         Positioned(
-          top: (_showBroadcastBanner && _latestBroadcast != null) ? 100 : 16,
+          top: (_showBroadcastBanner && _latestBroadcast != null) ? 180 : 96,
           left: 16,
           right: 16,
           child: Container(
@@ -897,7 +1083,7 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         // Hazard map pills
         Positioned(
-          top: (_showBroadcastBanner && _latestBroadcast != null) ? 156 : 72,
+          top: (_showBroadcastBanner && _latestBroadcast != null) ? 236 : 152,
           left: 16,
           right: 16,
           child: Row(
@@ -953,16 +1139,16 @@ class _HomeScreenState extends State<HomeScreen>
         // Map Type Popup Menu
         if (_showMapTypeMenu)
           Positioned(
-            top: (_showBroadcastBanner && _latestBroadcast != null) ? 204 : 120,
+            top: (_showBroadcastBanner && _latestBroadcast != null) ? 284 : 200,
             right: 16,
             child: _buildMapTypePopup(),
           ),
         // Broadcast banner
         if (_showBroadcastBanner && _latestBroadcast != null)
           Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
+            top: 96,
+            left: 16,
+            right: 16,
             child: GestureDetector(
               onTap: () => setState(() => _showBroadcastBanner = false),
               child: Container(

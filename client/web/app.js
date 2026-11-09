@@ -72,6 +72,9 @@ class CitizenMobileClient {
         this.checkSession();
         this.initSocket();
         this.initNetworkMonitoring();
+        this.fetchWeatherStatus();
+        window.addEventListener('online', () => this.fetchWeatherStatus());
+        window.addEventListener('focus', () => this.fetchWeatherStatus());
     }
 
     ensureAuthenticated(callback) {
@@ -1430,12 +1433,63 @@ class CitizenMobileClient {
         });
     }
 
+    async fetchWeatherStatus() {
+        try {
+            const res = await fetch(`${SERVER_URL}/api/weather-status`);
+            const data = await res.json();
+            if (data.success && data.weather) {
+                this.renderWeatherStatus(data.weather);
+            }
+        } catch (e) {
+            console.warn("Could not fetch current weather status:", e);
+        }
+    }
+
+    renderWeatherStatus(weather) {
+        if (!weather) return;
+        const banner = document.getElementById("persistent-weather-banner");
+        const titleEl = document.getElementById("weather-banner-title");
+        const msgEl = document.getElementById("weather-banner-message");
+        const iconEl = document.getElementById("weather-banner-icon");
+        const badgeEl = document.getElementById("weather-banner-badge");
+
+        if (!banner) return;
+
+        const status = (weather.status || 'NORMAL').toUpperCase();
+        banner.className = "persistent-weather-banner";
+
+        if (status === 'NORMAL') {
+            banner.classList.add("status-normal");
+            if (titleEl) titleEl.textContent = "NORMAL WEATHER";
+            if (msgEl) msgEl.textContent = weather.message || "Current weather conditions are normal. Continue monitoring official announcements.";
+            if (iconEl) iconEl.className = "fa-solid fa-sun";
+            if (badgeEl) badgeEl.textContent = "MDRRMO WEATHER ADVISORY";
+        } else if (status === 'WARNING') {
+            banner.classList.add("status-warning");
+            if (titleEl) titleEl.textContent = "WEATHER WARNING";
+            if (msgEl) msgEl.textContent = weather.message || "Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.";
+            if (iconEl) iconEl.className = "fa-solid fa-cloud-bolt";
+            if (badgeEl) badgeEl.textContent = "MDRRMO WEATHER WARNING";
+        } else if (status === 'EXTREME') {
+            banner.classList.add("status-extreme");
+            if (titleEl) titleEl.textContent = "EXTREME WEATHER WARNING";
+            if (msgEl) msgEl.textContent = weather.message || "Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.";
+            if (iconEl) iconEl.className = "fa-solid fa-triangle-exclamation";
+            if (badgeEl) badgeEl.textContent = "CRITICAL WEATHER ALERT";
+        }
+    }
+
     initSocket() {
         this.socket = io(SERVER_URL);
 
         this.socket.on('connect', () => {
             console.log("WebSocket connected successfully");
             this.syncOfflineQueue();
+            this.fetchWeatherStatus();
+        });
+
+        this.socket.on('weather-status-updated', (data) => {
+            this.renderWeatherStatus(data);
         });
 
         this.socket.on('init-state', (db) => {

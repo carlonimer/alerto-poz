@@ -70,7 +70,11 @@
         </div>
       </div>
 
-      <div class="system-status-container">
+      <div class="system-status-container" style="display: flex; align-items: center; gap: 12px;">
+        <div class="weather-header-badge" id="header-weather-badge" style="display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; background: var(--bg-card); border: 1px solid var(--border-color); cursor: pointer; transition: all 0.2s;" title="Current Town Weather Status - Click to manage">
+          <i class="fa-solid fa-sun" id="header-weather-icon" style="color: #f59e0b;"></i>
+          <span id="header-weather-text">WEATHER: NORMAL</span>
+        </div>
         <span class="status-pill active" id="server-connection-badge">
           <span class="ping-wave"></span>
           <span class="ping-core"></span>
@@ -111,6 +115,11 @@
         <button class="nav-btn" data-tab="feedbacks">
           <i class="fa-solid fa-comments"></i>
           <span>Feedbacks</span>
+        </button>
+        <button class="nav-btn" data-tab="weather_control" id="nav-btn-weather-control">
+          <i class="fa-solid fa-cloud-sun-rain"></i>
+          <span>Weather Control</span>
+          <span class="badge" id="badge-weather-nav-status" style="margin-left: auto; background: #64748b; color: white; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase;">NORMAL</span>
         </button>
         <button class="nav-btn" data-tab="id_verifications" id="nav-btn-id-verifications">
           <i class="fa-solid fa-id-card"></i>
@@ -934,6 +943,203 @@
           </div>
         </div>
 
+        <!-- Pane 7.6: Weather Status Control -->
+        <div class="tab-pane" id="pane-weather_control">
+          <div class="pane-header" style="margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px;">
+              <div>
+                <h2 style="margin: 0; font-size: 22px; font-weight: 800; color: var(--text-primary); display: flex; align-items: center; gap: 10px;">
+                  <i class="fa-solid fa-cloud-sun-rain" style="color: #0284c7;"></i> WEATHER STATUS CONTROL
+                </h2>
+                <p style="margin: 5px 0 0 0; color: var(--text-secondary); font-size: 13px;">
+                  Command Center municipal weather condition control. The active status permanently displays on the main dashboard of all citizen mobile and web users 24/7.
+                </p>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button class="btn btn-secondary" id="btn-refresh-weather" type="button" style="padding: 8px 14px; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                  <i class="fa-solid fa-arrows-rotate"></i> Refresh Status
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Alert Feedback Container -->
+          <div id="weather-alert-box" class="hidden" style="margin-bottom: 20px; padding: 14px 18px; border-radius: 10px; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: all 0.3s;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <i id="weather-alert-icon" class="fa-solid fa-circle-check"></i>
+              <span id="weather-alert-msg">Status updated successfully.</span>
+            </div>
+            <button type="button" onclick="document.getElementById('weather-alert-box').classList.add('hidden')" style="background: none; border: none; font-size: 18px; cursor: pointer; color: inherit; line-height: 1;">&times;</button>
+          </div>
+
+          <!-- Unauthorized Warning Banner (Visible only for non-MDRRMO admins) -->
+          <div id="weather-unauthorized-banner" class="hidden" style="margin-bottom: 20px; padding: 14px 18px; border-radius: 10px; background: #fff1f2; border: 1px solid #fecdd3; color: #be123c; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 10px;">
+            <i class="fa-solid fa-lock"></i>
+            <span>Read-Only Mode: Weather status controls are restricted strictly to authorized MDRRMO Command Center administrators.</span>
+          </div>
+
+          <!-- Active Weather Status Hero Card -->
+          <div class="weather-hero-card" id="weather-hero-card" style="background: var(--bg-card); border: 2px solid var(--border-color); border-radius: 16px; padding: 24px; margin-bottom: 28px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); transition: all 0.3s;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+              <div style="flex: 1; min-width: 280px;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                  <span style="font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);">Current Active Status</span>
+                  <span id="weather-hero-live-pill" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; background: rgba(34, 197, 94, 0.15); color: #15803d;">
+                    <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; animation: pulse 1.5s infinite;"></span> LIVE ON DASHBOARD
+                  </span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
+                  <div id="weather-hero-icon-box" style="width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 26px; background: #f8fafc; border: 1px solid var(--border-color);">
+                    <i class="fa-solid fa-sun" style="color: #f59e0b;"></i>
+                  </div>
+                  <div>
+                    <h3 id="weather-hero-title" style="margin: 0; font-size: 24px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.5px;">NORMAL WEATHER</h3>
+                    <div id="weather-hero-subtitle" style="font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-top: 2px;">Town of Pozorrubio, Pangasinan</div>
+                  </div>
+                </div>
+                <p id="weather-hero-message" style="margin: 0; font-size: 15px; color: var(--text-primary); background: var(--bg-body); padding: 12px 16px; border-radius: 10px; border-left: 4px solid #16a34a; line-height: 1.5;">
+                  Current weather conditions are normal. Continue monitoring official announcements.
+                </p>
+              </div>
+
+              <!-- Metadata Panel -->
+              <div style="background: var(--bg-body); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px 20px; min-width: 260px;">
+                <div style="font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">Audit Metadata</div>
+                <div style="margin-bottom: 10px;">
+                  <span style="font-size: 12px; color: var(--text-muted); display: block;">Last Updated:</span>
+                  <strong id="weather-hero-time" style="font-size: 13px; color: var(--text-primary);">--:--:--</strong>
+                </div>
+                <div>
+                  <span style="font-size: 12px; color: var(--text-muted); display: block;">Updated By:</span>
+                  <strong id="weather-hero-admin" style="font-size: 13px; color: var(--text-primary);">MDRRMO Command Center</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section: Control Push Buttons -->
+          <div style="margin-bottom: 30px;">
+            <div style="margin-bottom: 14px;">
+              <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-gamepad" style="color: #64748b;"></i> Select Weather Status Push Button
+              </h3>
+              <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-secondary);">
+                Pressing a button will prompt for confirmation and instantly replace the active status for all mobile and web users.
+              </p>
+            </div>
+
+            <!-- 3 Push Buttons Grid -->
+            <div class="weather-buttons-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+              
+              <!-- 1. WHITE BUTTON – NORMAL WEATHER -->
+              <button type="button" class="weather-push-btn" id="btn-weather-normal" onclick="window.dashPromptWeatherChange('NORMAL')" style="position: relative; background: #ffffff; color: #0f172a; border: 3px solid #cbd5e1; border-radius: 16px; padding: 24px 20px; text-align: left; cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 4px 15px rgba(0,0,0,0.06); display: flex; flex-direction: column; justify-content: space-between; min-height: 190px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px;">
+                  <div style="width: 54px; height: 54px; border-radius: 14px; background: #fef3c7; display: flex; align-items: center; justify-content: center; font-size: 28px; color: #d97706; box-shadow: 0 2px 8px rgba(217, 119, 6, 0.2);">
+                    <i class="fa-solid fa-sun"></i>
+                  </div>
+                  <span class="weather-btn-active-badge hidden" id="badge-btn-normal" style="background: #16a34a; color: white; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 6px rgba(22, 163, 74, 0.4);">
+                    <i class="fa-solid fa-check"></i> ACTIVE NOW
+                  </span>
+                </div>
+                <div>
+                  <div style="font-size: 18px; font-weight: 800; letter-spacing: -0.3px; color: #0f172a; margin-bottom: 6px;">
+                    NORMAL WEATHER
+                  </div>
+                  <div style="font-size: 13px; color: #475569; line-height: 1.45;">
+                    Current weather conditions are normal. Continue monitoring official announcements.
+                  </div>
+                </div>
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 11px; font-weight: 700; color: #64748b; display: flex; align-items: center; gap: 6px;">
+                  <i class="fa-solid fa-circle-dot" style="color: #94a3b8;"></i> Button 1 &bull; Standard Weather
+                </div>
+              </button>
+
+              <!-- 2. BLUE BUTTON – WEATHER WARNING -->
+              <button type="button" class="weather-push-btn" id="btn-weather-warning" onclick="window.dashPromptWeatherChange('WARNING')" style="position: relative; background: #1d4ed8; color: #ffffff; border: 3px solid #1e40af; border-radius: 16px; padding: 24px 20px; text-align: left; cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 4px 15px rgba(29, 78, 216, 0.25); display: flex; flex-direction: column; justify-content: space-between; min-height: 190px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px;">
+                  <div style="width: 54px; height: 54px; border-radius: 14px; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 28px; color: #ffffff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);">
+                    <i class="fa-solid fa-cloud-bolt"></i>
+                  </div>
+                  <span class="weather-btn-active-badge hidden" id="badge-btn-warning" style="background: #ffffff; color: #1d4ed8; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);">
+                    <i class="fa-solid fa-check"></i> ACTIVE NOW
+                  </span>
+                </div>
+                <div>
+                  <div style="font-size: 18px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; margin-bottom: 6px;">
+                    WEATHER WARNING
+                  </div>
+                  <div style="font-size: 13px; color: #e0e7ff; line-height: 1.45;">
+                    Weather conditions require public awareness and caution. Stay alert for disturbances.
+                  </div>
+                </div>
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.25); font-size: 11px; font-weight: 700; color: #c7d2fe; display: flex; align-items: center; gap: 6px;">
+                  <i class="fa-solid fa-circle-dot" style="color: #93c5fd;"></i> Button 2 &bull; Cautionary Alert
+                </div>
+              </button>
+
+              <!-- 3. RED BUTTON – EXTREME WEATHER WARNING -->
+              <button type="button" class="weather-push-btn" id="btn-weather-extreme" onclick="window.dashPromptWeatherChange('EXTREME')" style="position: relative; background: #dc2626; color: #ffffff; border: 3px solid #b91c1c; border-radius: 16px; padding: 24px 20px; text-align: left; cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 4px 15px rgba(220, 38, 38, 0.3); display: flex; flex-direction: column; justify-content: space-between; min-height: 190px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px;">
+                  <div style="width: 54px; height: 54px; border-radius: 14px; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 28px; color: #ffffff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                  </div>
+                  <span class="weather-btn-active-badge hidden" id="badge-btn-extreme" style="background: #ffffff; color: #dc2626; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);">
+                    <i class="fa-solid fa-check"></i> ACTIVE NOW
+                  </span>
+                </div>
+                <div>
+                  <div style="font-size: 18px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; margin-bottom: 6px;">
+                    EXTREME WEATHER WARNING
+                  </div>
+                  <div style="font-size: 13px; color: #fee2e2; line-height: 1.45;">
+                    Severe weather conditions require immediate public attention and official MDRRMO response.
+                  </div>
+                </div>
+                <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.25); font-size: 11px; font-weight: 700; color: #fecaca; display: flex; align-items: center; gap: 6px;">
+                  <i class="fa-solid fa-circle-dot" style="color: #fca5a5;"></i> Button 3 &bull; Critical Emergency
+                </div>
+              </button>
+
+            </div>
+          </div>
+
+          <!-- Section: Audit History Log -->
+          <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 20px; margin-top: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+              <div>
+                <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-clock-rotate-left"></i> Weather Status Change Audit History
+                </h4>
+                <p style="margin: 2px 0 0 0; font-size: 12px; color: var(--text-muted);">
+                  Logs every time an authorized MDRRMO administrator changes the global municipal weather status.
+                </p>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="btn-refresh-weather-history" type="button" style="font-size: 12px; padding: 6px 12px;">
+                <i class="fa-solid fa-rotate"></i> Refresh
+              </button>
+            </div>
+            <div class="data-table-wrapper" style="max-height: 280px; overflow-y: auto;">
+              <table class="data-table" style="font-size: 12px;">
+                <thead>
+                  <tr>
+                    <th>Date & Time</th>
+                    <th>New Status</th>
+                    <th>Previous Status</th>
+                    <th>Updated By</th>
+                  </tr>
+                </thead>
+                <tbody id="weather-history-table-body">
+                  <tr>
+                    <td colspan="4" class="text-center" style="padding: 20px; color: var(--text-muted);">
+                      Loading history logs...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Pane 8: Barangay Assistance (Barangay Admin view) -->
         <div class="tab-pane" id="pane-brgy_assist">
           <div class="pane-header">
@@ -1473,6 +1679,44 @@
         </div>
         <div class="modal-actions" style="border-top: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); border-bottom-left-radius: 16px; border-bottom-right-radius: 16px;" id="id-review-actions">
           <!-- Rendered dynamically (Approve, Reject, Close) -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Weather Status Change Confirmation Modal -->
+    <div class="modal-overlay hidden" id="modal-weather-confirm" style="z-index: 99999;">
+      <div class="modal-content" style="max-width: 500px; width: 92%; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); overflow: hidden;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding: 18px 22px; display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b;"></i> Confirm Weather Status Change
+          </h3>
+          <button type="button" class="btn-close" onclick="document.getElementById('modal-weather-confirm').classList.add('hidden')" style="background: none; border: none; font-size: 22px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 22px;">
+          <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.5; color: var(--text-primary);">
+            You are about to change the municipal weather status for <strong>Pozorrubio, Pangasinan</strong> to:
+          </p>
+          <div id="weather-confirm-preview-card" style="padding: 16px; border-radius: 12px; margin-bottom: 18px; border: 2px solid; display: flex; align-items: center; gap: 14px;">
+            <div id="weather-confirm-icon-box" style="width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 22px;">
+              <i class="fa-solid fa-sun"></i>
+            </div>
+            <div>
+              <div id="weather-confirm-title" style="font-size: 16px; font-weight: 800; text-transform: uppercase;">NORMAL WEATHER</div>
+              <div id="weather-confirm-message" style="font-size: 12px; margin-top: 3px; line-height: 1.4;">Current weather conditions are normal.</div>
+            </div>
+          </div>
+          <div style="background: var(--bg-body); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: var(--text-secondary); line-height: 1.45;">
+            <i class="fa-solid fa-tower-broadcast" style="color: #0284c7; margin-right: 4px;"></i>
+            <strong>Permanent Display:</strong> This status will immediately broadcast in real time and permanently stay on the main dashboard of all active citizen mobile and web users until another button is pressed.
+          </div>
+        </div>
+        <div class="modal-actions" style="border-top: 1px solid var(--border-color); padding: 14px 22px; display: flex; justify-content: flex-end; gap: 10px; background: var(--bg-primary);">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-weather-confirm').classList.add('hidden')">
+            Cancel
+          </button>
+          <button type="button" class="btn btn-primary" id="btn-weather-confirm-submit" style="padding: 9px 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;">
+            <i class="fa-solid fa-check"></i> Confirm & Broadcast Status
+          </button>
         </div>
       </div>
     </div>

@@ -104,8 +104,34 @@ class CommandDashboard {
                 if (tabId === 'id_verifications') {
                     this.loadIdVerifications();
                 }
+
+                if (tabId === 'weather_control') {
+                    this.loadWeatherStatus();
+                    this.loadWeatherHistory();
+                }
             });
         });
+
+        // Weather Status Control bindings
+        const btnRefreshWeather = document.getElementById("btn-refresh-weather");
+        if (btnRefreshWeather) {
+            btnRefreshWeather.addEventListener("click", () => {
+                this.loadWeatherStatus();
+                this.loadWeatherHistory();
+            });
+        }
+        const btnRefreshWeatherHist = document.getElementById("btn-refresh-weather-history");
+        if (btnRefreshWeatherHist) {
+            btnRefreshWeatherHist.addEventListener("click", () => this.loadWeatherHistory());
+        }
+        const headerWeatherBadge = document.getElementById("header-weather-badge");
+        if (headerWeatherBadge) {
+            headerWeatherBadge.addEventListener("click", () => {
+                const btnNav = document.getElementById("nav-btn-weather-control");
+                if (btnNav) btnNav.click();
+            });
+        }
+        window.dashPromptWeatherChange = (status) => this.promptWeatherChange(status);
 
         // ID Verification filters & bindings
         const idFilter = document.getElementById("id-verif-status-filter");
@@ -630,8 +656,16 @@ class CommandDashboard {
             }
         });
 
+        // Listen for global weather status updates
+        this.socket.on('weather-status-updated', (data) => {
+            this.handleWeatherUpdate(data);
+        });
+
         // Initial fetch of pending ID verifications count
         this.updatePendingIdCount();
+
+        // Initial fetch of current weather status
+        this.loadWeatherStatus();
     }
 
     updateNetworkUI(connected) {
@@ -2584,6 +2618,325 @@ class CommandDashboard {
             rejectInput.focus();
         }
     }
+
+    // Weather Status Control Implementation
+    async loadWeatherStatus() {
+        try {
+            const res = await fetch("/api/weather-status");
+            const data = await res.json();
+            if (data.success && data.weather) {
+                this.updateWeatherUI(data.weather);
+            }
+        } catch (e) {
+            console.error("Failed to load weather status:", e);
+        }
+    }
+
+    updateWeatherUI(weather) {
+        if (!weather) return;
+        this.currentWeather = weather;
+
+        const status = (weather.status || 'NORMAL').toUpperCase();
+        const title = weather.title || (status + " WEATHER");
+        const message = weather.message || "";
+        const updatedByName = weather.updated_by_name || "MDRRMO Command Center";
+        const dateStr = weather.updated_at ? new Date(Number(weather.updated_at)).toLocaleString() : "--:--:--";
+
+        // 1. Update Header Badge
+        const headerBadge = document.getElementById("header-weather-badge");
+        const headerIcon = document.getElementById("header-weather-icon");
+        const headerText = document.getElementById("header-weather-text");
+        if (headerText && headerIcon) {
+            headerText.textContent = `WEATHER: ${status}`;
+            if (status === 'NORMAL') {
+                headerIcon.className = "fa-solid fa-sun";
+                headerIcon.style.color = "#f59e0b";
+                if (headerBadge) {
+                    headerBadge.style.borderColor = "#cbd5e1";
+                    headerBadge.style.background = "var(--bg-card)";
+                    headerBadge.style.color = "var(--text-primary)";
+                }
+            } else if (status === 'WARNING') {
+                headerIcon.className = "fa-solid fa-cloud-bolt";
+                headerIcon.style.color = "#3b82f6";
+                if (headerBadge) {
+                    headerBadge.style.borderColor = "#93c5fd";
+                    headerBadge.style.background = "#eff6ff";
+                    headerBadge.style.color = "#1d4ed8";
+                }
+            } else if (status === 'EXTREME') {
+                headerIcon.className = "fa-solid fa-triangle-exclamation";
+                headerIcon.style.color = "#ef4444";
+                if (headerBadge) {
+                    headerBadge.style.borderColor = "#fca5a5";
+                    headerBadge.style.background = "#fef2f2";
+                    headerBadge.style.color = "#dc2626";
+                }
+            }
+        }
+
+        // 2. Update Sidebar Nav Badge
+        const navBadge = document.getElementById("badge-weather-nav-status");
+        if (navBadge) {
+            navBadge.textContent = status;
+            if (status === 'NORMAL') {
+                navBadge.style.background = "#16a34a";
+            } else if (status === 'WARNING') {
+                navBadge.style.background = "#2563eb";
+            } else if (status === 'EXTREME') {
+                navBadge.style.background = "#dc2626";
+            }
+        }
+
+        // 3. Update Hero Card
+        const heroTitle = document.getElementById("weather-hero-title");
+        const heroMsg = document.getElementById("weather-hero-message");
+        const heroTime = document.getElementById("weather-hero-time");
+        const heroAdmin = document.getElementById("weather-hero-admin");
+        const heroIconBox = document.getElementById("weather-hero-icon-box");
+        const heroCard = document.getElementById("weather-hero-card");
+
+        if (heroTitle) heroTitle.textContent = title;
+        if (heroMsg) heroMsg.textContent = message;
+        if (heroTime) heroTime.textContent = dateStr;
+        if (heroAdmin) heroAdmin.textContent = updatedByName;
+
+        if (heroCard && heroIconBox) {
+            if (status === 'NORMAL') {
+                heroCard.style.borderColor = "#22c55e";
+                heroIconBox.innerHTML = '<i class="fa-solid fa-sun" style="color: #f59e0b;"></i>';
+                heroIconBox.style.background = "#fef3c7";
+                if (heroMsg) heroMsg.style.borderLeftColor = "#16a34a";
+            } else if (status === 'WARNING') {
+                heroCard.style.borderColor = "#2563eb";
+                heroIconBox.innerHTML = '<i class="fa-solid fa-cloud-bolt" style="color: #1d4ed8;"></i>';
+                heroIconBox.style.background = "#dbeafe";
+                if (heroMsg) heroMsg.style.borderLeftColor = "#1d4ed8";
+            } else if (status === 'EXTREME') {
+                heroCard.style.borderColor = "#dc2626";
+                heroIconBox.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color: #dc2626;"></i>';
+                heroIconBox.style.background = "#fee2e2";
+                if (heroMsg) heroMsg.style.borderLeftColor = "#dc2626";
+            }
+        }
+
+        // 4. Update the 3 Push Buttons Active States
+        const btnNormal = document.getElementById("btn-weather-normal");
+        const btnWarning = document.getElementById("btn-weather-warning");
+        const btnExtreme = document.getElementById("btn-weather-extreme");
+
+        const badgeNormal = document.getElementById("badge-btn-normal");
+        const badgeWarning = document.getElementById("badge-btn-warning");
+        const badgeExtreme = document.getElementById("badge-btn-extreme");
+
+        if (btnNormal && btnWarning && btnExtreme) {
+            // Reset active styles
+            btnNormal.style.outline = "none";
+            btnNormal.style.boxShadow = "0 4px 15px rgba(0,0,0,0.06)";
+            if (badgeNormal) badgeNormal.classList.add("hidden");
+
+            btnWarning.style.outline = "none";
+            btnWarning.style.boxShadow = "0 4px 15px rgba(29, 78, 216, 0.25)";
+            if (badgeWarning) badgeWarning.classList.add("hidden");
+
+            btnExtreme.style.outline = "none";
+            btnExtreme.style.boxShadow = "0 4px 15px rgba(220, 38, 38, 0.3)";
+            if (badgeExtreme) badgeExtreme.classList.add("hidden");
+
+            if (status === 'NORMAL') {
+                btnNormal.style.outline = "4px solid #16a34a";
+                btnNormal.style.boxShadow = "0 0 25px rgba(22, 163, 74, 0.45)";
+                if (badgeNormal) badgeNormal.classList.remove("hidden");
+            } else if (status === 'WARNING') {
+                btnWarning.style.outline = "4px solid #facc15";
+                btnWarning.style.boxShadow = "0 0 25px rgba(37, 99, 235, 0.6)";
+                if (badgeWarning) badgeWarning.classList.remove("hidden");
+            } else if (status === 'EXTREME') {
+                btnExtreme.style.outline = "4px solid #facc15";
+                btnExtreme.style.boxShadow = "0 0 30px rgba(220, 38, 38, 0.7)";
+                if (badgeExtreme) badgeExtreme.classList.remove("hidden");
+            }
+        }
+    }
+
+    promptWeatherChange(targetStatus) {
+        if (this.user.type !== 'mdrrmo_admin' && this.user.type !== 'authority') {
+            alert("Permission Denied: Only authorized MDRRMO Command Center administrators can change the town weather status.");
+            return;
+        }
+
+        const modal = document.getElementById("modal-weather-confirm");
+        const prevCard = document.getElementById("weather-confirm-preview-card");
+        const iconBox = document.getElementById("weather-confirm-icon-box");
+        const titleEl = document.getElementById("weather-confirm-title");
+        const msgEl = document.getElementById("weather-confirm-message");
+        const submitBtn = document.getElementById("btn-weather-confirm-submit");
+
+        if (!modal || !prevCard || !submitBtn) return;
+
+        let title = "NORMAL WEATHER";
+        let message = "Current weather conditions are normal. Continue monitoring official announcements.";
+        let iconHtml = '<i class="fa-solid fa-sun" style="color: #d97706;"></i>';
+        let cardBg = "#ffffff";
+        let cardBorder = "#16a34a";
+        let textColor = "#0f172a";
+        let btnBg = "#16a34a";
+
+        if (targetStatus === 'WARNING') {
+            title = "WEATHER WARNING";
+            message = "Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.";
+            iconHtml = '<i class="fa-solid fa-cloud-bolt" style="color: #ffffff;"></i>';
+            cardBg = "#1d4ed8";
+            cardBorder = "#1e40af";
+            textColor = "#ffffff";
+            btnBg = "#1d4ed8";
+        } else if (targetStatus === 'EXTREME') {
+            title = "EXTREME WEATHER WARNING";
+            message = "Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.";
+            iconHtml = '<i class="fa-solid fa-triangle-exclamation" style="color: #ffffff;"></i>';
+            cardBg = "#dc2626";
+            cardBorder = "#991b1b";
+            textColor = "#ffffff";
+            btnBg = "#dc2626";
+        }
+
+        prevCard.style.background = cardBg;
+        prevCard.style.borderColor = cardBorder;
+        prevCard.style.color = textColor;
+        iconBox.innerHTML = iconHtml;
+        iconBox.style.background = targetStatus === 'NORMAL' ? '#fef3c7' : 'rgba(255,255,255,0.2)';
+        titleEl.textContent = title;
+        msgEl.textContent = message;
+        submitBtn.style.background = btnBg;
+
+        // Clone/rebind submit listener to avoid duplicate clicks
+        const newSubmitBtn = submitBtn.cloneNode(true);
+        submitBtn.parentNode.replaceChild(newSubmitBtn, submitBtn);
+
+        newSubmitBtn.addEventListener("click", () => {
+            this.submitWeatherChange(targetStatus);
+        });
+
+        modal.classList.remove("hidden");
+    }
+
+    async submitWeatherChange(targetStatus) {
+        const modal = document.getElementById("modal-weather-confirm");
+        const token = localStorage.getItem("alerto_admin_token");
+        const alertBox = document.getElementById("weather-alert-box");
+        const alertMsg = document.getElementById("weather-alert-msg");
+        const alertIcon = document.getElementById("weather-alert-icon");
+
+        if (modal) modal.classList.add("hidden");
+
+        if (!token) {
+            alert("Session expired. Please sign in again.");
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/admin/weather-status", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ status: targetStatus })
+            });
+
+            const data = await res.json();
+
+            if (data.success && data.weather) {
+                this.updateWeatherUI(data.weather);
+                this.loadWeatherHistory();
+
+                if (alertBox && alertMsg && alertIcon) {
+                    alertBox.className = "";
+                    alertBox.style.background = "#dcfce7";
+                    alertBox.style.color = "#15803d";
+                    alertBox.style.border = "1px solid #bbf7d0";
+                    alertIcon.className = "fa-solid fa-circle-check";
+                    alertMsg.textContent = `Success: Municipal weather status changed to "${data.weather.title}". All citizen dashboards updated in real time.`;
+                    alertBox.classList.remove("hidden");
+                    setTimeout(() => { if (alertBox) alertBox.classList.add("hidden"); }, 8000);
+                }
+            } else {
+                if (alertBox && alertMsg && alertIcon) {
+                    alertBox.className = "";
+                    alertBox.style.background = "#fee2e2";
+                    alertBox.style.color = "#b91c1c";
+                    alertBox.style.border = "1px solid #fecaca";
+                    alertIcon.className = "fa-solid fa-triangle-exclamation";
+                    alertMsg.textContent = data.error || "Failed to update weather status.";
+                    alertBox.classList.remove("hidden");
+                }
+            }
+        } catch (e) {
+            console.error("Error submitting weather status change:", e);
+            alert("Network error: Could not reach server to change weather status.");
+        }
+    }
+
+    async loadWeatherHistory() {
+        const tbody = document.getElementById("weather-history-table-body");
+        const token = localStorage.getItem("alerto_admin_token");
+        if (!tbody) return;
+
+        try {
+            const res = await fetch("/api/admin/weather-status/history", {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+
+            if (data.success && Array.isArray(data.history)) {
+                if (data.history.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="4" class="text-center" style="padding: 24px; color: var(--text-muted);">
+                                No weather status changes recorded yet.
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = data.history.map(item => {
+                    const dateStr = item.created_at ? new Date(Number(item.created_at)).toLocaleString() : "Unknown";
+                    const statusBadge = item.status === 'NORMAL'
+                        ? `<span class="status-pill active" style="background:#dcfce7; color:#15803d; border-color:#bbf7d0; font-size:11px;">NORMAL</span>`
+                        : (item.status === 'WARNING'
+                            ? `<span class="status-pill warning" style="background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; font-size:11px;">WARNING</span>`
+                            : `<span class="status-pill" style="background:#fee2e2; color:#dc2626; border-color:#fca5a5; font-size:11px;">EXTREME</span>`);
+
+                    const prevBadge = item.previous_status
+                        ? `<span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">${item.previous_status}</span>`
+                        : `<span style="color:var(--text-muted); font-size:11px;">Initial</span>`;
+
+                    return `
+                        <tr>
+                            <td style="color:var(--text-primary); font-weight:600;">${dateStr}</td>
+                            <td>${statusBadge}</td>
+                            <td>${prevBadge}</td>
+                            <td style="color:var(--text-primary);">${item.updated_by_name || 'MDRRMO Officer'}</td>
+                        </tr>
+                    `;
+                }).join("");
+            }
+        } catch (e) {
+            console.error("Failed to load weather history:", e);
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="4" class="text-center" style="padding: 20px; color: var(--danger);">Failed to load history.</td></tr>`;
+            }
+        }
+    }
+
+    handleWeatherUpdate(data) {
+        this.updateWeatherUI(data);
+        const activeTab = document.querySelector(".sidebar-nav .nav-btn.active");
+        if (activeTab && activeTab.getAttribute("data-tab") === "weather_control") {
+            this.loadWeatherHistory();
+        }
+    }
 }
 
 let commandDashboard;
@@ -2640,6 +2993,29 @@ function initAuthGateway() {
                 } else if (data.user.type === 'bfp_admin' || data.user.type === 'pnp_admin') {
                     const broadcastTab = document.getElementById("nav-btn-broadcast");
                     if (broadcastTab) broadcastTab.style.display = 'none';
+                }
+
+                // Weather control permissions
+                if (data.user.type !== 'mdrrmo_admin' && data.user.type !== 'authority') {
+                    const banner = document.getElementById("weather-unauthorized-banner");
+                    if (banner) banner.classList.remove("hidden");
+                    const btns = document.querySelectorAll(".weather-push-btn");
+                    btns.forEach(b => {
+                        b.disabled = true;
+                        b.style.opacity = "0.55";
+                        b.style.cursor = "not-allowed";
+                        b.title = "Restricted to MDRRMO Command Center";
+                    });
+                } else {
+                    const banner = document.getElementById("weather-unauthorized-banner");
+                    if (banner) banner.classList.add("hidden");
+                    const btns = document.querySelectorAll(".weather-push-btn");
+                    btns.forEach(b => {
+                        b.disabled = false;
+                        b.style.opacity = "1";
+                        b.style.cursor = "pointer";
+                        b.title = "";
+                    });
                 }
 
                 // Hide gateway and show dashboard
