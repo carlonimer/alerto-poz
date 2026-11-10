@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
@@ -41,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _showBroadcastBanner = false;
   Map<String, dynamic>? _latestBroadcast;
   Map<String, dynamic>? _weatherStatus;
+  bool _isWeatherMinimized = false;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -280,12 +282,26 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadWeatherStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isMin = prefs.getBool('is_weather_minimized') ?? false;
     final weather = await ApiService.getWeatherStatus();
-    if (weather != null && mounted) {
+    if (mounted) {
       setState(() {
-        _weatherStatus = weather;
+        _isWeatherMinimized = isMin;
+        if (weather != null) {
+          _weatherStatus = weather;
+        }
       });
     }
+  }
+
+  Future<void> _toggleWeatherMinimized() async {
+    final newMin = !_isWeatherMinimized;
+    setState(() {
+      _isWeatherMinimized = newMin;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_weather_minimized', newMin);
   }
 
   void _initSocket() {
@@ -879,6 +895,87 @@ class _HomeScreenState extends State<HomeScreen>
       badgeTextColor = const Color(0xFF15803D);
     }
 
+    if (_isWeatherMinimized) {
+      return Positioned(
+        top: 12,
+        left: 16,
+        right: 16,
+        child: GestureDetector(
+          onTap: _toggleWeatherMinimized,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor, width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                ScaleTransition(
+                  scale: _pulseAnimation,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: iconBoxColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(iconData, color: iconColor, size: 16),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: badgeBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    badgeText,
+                    style: GoogleFonts.outfit(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w800,
+                      color: badgeTextColor,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: textColor,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: Icon(Icons.keyboard_arrow_down_rounded, color: textColor, size: 22),
+                  onPressed: _toggleWeatherMinimized,
+                  tooltip: 'Expand Weather Alert',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final updaterName = _weatherStatus?['updated_by_name'] ?? 'MDRRMO Command Center';
     return Positioned(
       top: 12,
       left: 16,
@@ -897,85 +994,136 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: iconBoxColor,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(iconData, color: iconColor, size: 24),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: badgeBg,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          badgeText,
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: badgeBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    badgeText,
+                    style: GoogleFonts.outfit(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: badgeTextColor,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: status == 'NORMAL' ? const Color(0xFF22C55E) : Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'LIVE',
+                  style: GoogleFonts.outfit(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: subtextColor,
+                  ),
+                ),
+                const Spacer(),
+                InkWell(
+                  onTap: _toggleWeatherMinimized,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: iconBoxColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Minimize',
                           style: GoogleFonts.outfit(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            color: badgeTextColor,
-                            letterSpacing: 0.5,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: textColor,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: status == 'NORMAL' ? const Color(0xFF22C55E) : Colors.white,
+                        const SizedBox(width: 2),
+                        Icon(Icons.keyboard_arrow_up_rounded, color: textColor, size: 16),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                ScaleTransition(
+                  scale: _pulseAnimation,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: iconBoxColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(iconData, color: iconColor, size: 24),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.outfit(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: textColor,
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      const SizedBox(width: 4),
                       Text(
-                        'LIVE',
+                        message,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.outfit(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                           color: subtextColor,
+                          height: 1.25,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    title,
-                    style: GoogleFonts.outfit(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: textColor,
-                      letterSpacing: -0.2,
-                    ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.access_time_rounded, size: 11, color: subtextColor),
+                const SizedBox(width: 4),
+                Text(
+                  'Updated: Today • $updaterName',
+                  style: GoogleFonts.outfit(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w500,
+                    color: subtextColor,
                   ),
-                  Text(
-                    message,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.outfit(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: subtextColor,
-                      height: 1.25,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1037,7 +1185,9 @@ class _HomeScreenState extends State<HomeScreen>
         _buildPersistentWeatherCard(),
         // Search Pill
         Positioned(
-          top: (_showBroadcastBanner && _latestBroadcast != null) ? 180 : 96,
+          top: _isWeatherMinimized
+              ? 64
+              : ((_showBroadcastBanner && _latestBroadcast != null) ? 190 : 134),
           left: 16,
           right: 16,
           child: Container(

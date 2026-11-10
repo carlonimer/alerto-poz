@@ -69,6 +69,11 @@ class CitizenMobileClient {
 
         this.initDOM();
         this.setupMapSettings();
+        this.isWeatherMinimized = false;
+        try {
+            this.isWeatherMinimized = localStorage.getItem("alerto_weather_minimized") === "true";
+        } catch (_) {}
+        this.initWeatherControls();
         this.checkSession();
         this.initSocket();
         this.initNetworkMonitoring();
@@ -1445,37 +1450,162 @@ class CitizenMobileClient {
         }
     }
 
+    initWeatherControls() {
+        const banner = document.getElementById("persistent-weather-banner");
+        const minBtn = document.getElementById("weather-minimize-btn");
+        const expBtn = document.getElementById("weather-expand-btn");
+        const miniStrip = document.getElementById("weather-minimized-strip");
+
+        if (minBtn) {
+            minBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.setWeatherMinimized(true);
+            });
+        }
+
+        if (expBtn) {
+            expBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.setWeatherMinimized(false);
+            });
+        }
+
+        if (miniStrip) {
+            miniStrip.addEventListener("click", (e) => {
+                if (e.target.closest("#weather-expand-btn")) return;
+                this.setWeatherMinimized(false);
+            });
+        }
+
+        this.applyWeatherMinimizedState();
+    }
+
+    setWeatherMinimized(minimized) {
+        this.isWeatherMinimized = Boolean(minimized);
+        try {
+            localStorage.setItem("alerto_weather_minimized", this.isWeatherMinimized ? "true" : "false");
+        } catch (_) {}
+        this.applyWeatherMinimizedState();
+    }
+
+    applyWeatherMinimizedState() {
+        const banner = document.getElementById("persistent-weather-banner");
+        if (!banner) return;
+        if (this.isWeatherMinimized) {
+            banner.classList.remove("is-expanded");
+            banner.classList.add("is-minimized");
+        } else {
+            banner.classList.remove("is-minimized");
+            banner.classList.add("is-expanded");
+        }
+    }
+
+    getWeatherAnimatedSvg(status) {
+        if (status === 'WARNING') {
+            return `
+                <svg class="weather-svg-animated warning-cloud-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Weather Warning - Cloud and Rain">
+                    <path class="cloud-floating" d="M18 42C13.58 42 10 38.42 10 34C10 29.86 13.14 26.46 17.2 26.06C18.66 19.16 24.72 14 32 14C40.06 14 46.72 20.08 47.68 28.02C51.32 28.78 54 31.98 54 36C54 40.42 50.42 44 46 44H18" fill="currentColor" fill-opacity="0.94"/>
+                    <line class="raindrop raindrop-1" x1="22" y1="48" x2="19" y2="56" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    <line class="raindrop raindrop-2" x1="32" y1="48" x2="29" y2="58" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    <line class="raindrop raindrop-3" x1="42" y1="48" x2="39" y2="56" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    <g class="warning-badge-pulse">
+                        <circle cx="48" cy="22" r="9" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2"/>
+                        <line x1="48" y1="17" x2="48" y2="23" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="48" cy="27" r="1.2" fill="#FFFFFF"/>
+                    </g>
+                </svg>`;
+        } else if (status === 'EXTREME') {
+            return `
+                <svg class="weather-svg-animated extreme-alert-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Extreme Weather Warning - Alert Triangle and Lightning">
+                    <path class="alert-triangle-pulse" d="M32 7L58 51C59.5 53.6 57.6 57 54.5 57H9.5C6.4 57 4.5 53.6 6 51L32 7Z" fill="#DC2626" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+                    <line x1="32" y1="23" x2="32" y2="38" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round"/>
+                    <circle cx="32" cy="47" r="2.8" fill="#FFFFFF"/>
+                    <path class="lightning-flash-spark" d="M44 12L36 26H42L34 40L46 24H40L44 12Z" fill="#FDE047" stroke="#991B1B" stroke-width="1.5" stroke-linejoin="round"/>
+                </svg>`;
+        }
+        // Default: NORMAL (Sun)
+        return `
+            <svg class="weather-svg-animated sun-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Normal Weather - Sun">
+                <g class="sun-rays-group">
+                    <line x1="32" y1="6" x2="32" y2="15" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="32" y1="49" x2="32" y2="58" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="6" y1="32" x2="15" y2="32" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="49" y1="32" x2="58" y2="32" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="13.6" y1="13.6" x2="20" y2="20" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="44" y1="44" x2="50.4" y2="50.4" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="13.6" y1="50.4" x2="20" y2="44" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <line x1="44" y1="20" x2="50.4" y2="13.6" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                </g>
+                <circle class="sun-core-pulse" cx="32" cy="32" r="14" fill="currentColor"/>
+            </svg>`;
+    }
+
+    formatWeatherTimestamp(weather) {
+        if (!weather) return "Updated: Today • MDRRMO Command Center";
+        let dateObj = null;
+        if (weather.updated_at_iso) {
+            dateObj = new Date(weather.updated_at_iso);
+        } else if (weather.updated_at) {
+            dateObj = new Date(weather.updated_at);
+        }
+        if (dateObj && !isNaN(dateObj.getTime())) {
+            const timeStr = dateObj.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+            const dateStr = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+            const updater = weather.updated_by_name || 'MDRRMO Command Center';
+            return `Updated: ${dateStr}, ${timeStr} • ${updater}`;
+        }
+        return `Updated: Today • MDRRMO Command Center`;
+    }
+
     renderWeatherStatus(weather) {
         if (!weather) return;
         const banner = document.getElementById("persistent-weather-banner");
         const titleEl = document.getElementById("weather-banner-title");
+        const miniTitleEl = document.getElementById("weather-mini-title");
         const msgEl = document.getElementById("weather-banner-message");
-        const iconEl = document.getElementById("weather-banner-icon");
+        const iconBox = document.getElementById("weather-banner-icon-box");
+        const miniIconBox = document.getElementById("weather-mini-icon-box");
         const badgeEl = document.getElementById("weather-banner-badge");
+        const miniBadgeEl = document.getElementById("weather-mini-badge");
+        const timestampEl = document.getElementById("weather-banner-timestamp");
 
         if (!banner) return;
 
         const status = (weather.status || 'NORMAL').toUpperCase();
-        banner.className = "persistent-weather-banner";
+        
+        // Preserve current minimized / expanded state
+        const isMin = this.isWeatherMinimized;
+        banner.className = `persistent-weather-banner ${isMin ? 'is-minimized' : 'is-expanded'}`;
+
+        const animatedSvg = this.getWeatherAnimatedSvg(status);
+        if (iconBox) iconBox.innerHTML = animatedSvg;
+        if (miniIconBox) miniIconBox.innerHTML = animatedSvg;
+
+        if (timestampEl) {
+            timestampEl.textContent = this.formatWeatherTimestamp(weather);
+        }
 
         if (status === 'NORMAL') {
             banner.classList.add("status-normal");
             if (titleEl) titleEl.textContent = "NORMAL WEATHER";
+            if (miniTitleEl) miniTitleEl.textContent = "NORMAL WEATHER";
             if (msgEl) msgEl.textContent = weather.message || "Current weather conditions are normal. Continue monitoring official announcements.";
-            if (iconEl) iconEl.className = "fa-solid fa-sun";
-            if (badgeEl) badgeEl.textContent = "MDRRMO WEATHER ADVISORY";
+            if (badgeEl) badgeEl.textContent = "POZORRUBIO WEATHER";
+            if (miniBadgeEl) miniBadgeEl.textContent = "MDRRMO";
         } else if (status === 'WARNING') {
             banner.classList.add("status-warning");
             if (titleEl) titleEl.textContent = "WEATHER WARNING";
+            if (miniTitleEl) miniTitleEl.textContent = "WEATHER WARNING";
             if (msgEl) msgEl.textContent = weather.message || "Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.";
-            if (iconEl) iconEl.className = "fa-solid fa-cloud-bolt";
-            if (badgeEl) badgeEl.textContent = "MDRRMO WEATHER WARNING";
+            if (badgeEl) badgeEl.textContent = "WEATHER WARNING";
+            if (miniBadgeEl) miniBadgeEl.textContent = "WARNING";
         } else if (status === 'EXTREME') {
             banner.classList.add("status-extreme");
             if (titleEl) titleEl.textContent = "EXTREME WEATHER WARNING";
+            if (miniTitleEl) miniTitleEl.textContent = "EXTREME WEATHER WARNING";
             if (msgEl) msgEl.textContent = weather.message || "Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.";
-            if (iconEl) iconEl.className = "fa-solid fa-triangle-exclamation";
-            if (badgeEl) badgeEl.textContent = "CRITICAL WEATHER ALERT";
+            if (badgeEl) badgeEl.textContent = "CRITICAL ADVISORY";
+            if (miniBadgeEl) miniBadgeEl.textContent = "EXTREME";
         }
     }
 

@@ -427,61 +427,117 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     background-color: #d1d1d6;
 }
 
-/* Persistent Global Weather Status Banner (Non-Dismissible 24/7 Display) */
+/* Persistent Global Weather Status Card (Non-Dismissible 24/7 Display, Expand/Collapse) */
 .persistent-weather-banner {
     position: absolute;
     top: 60px;
     left: 14px;
     right: 14px;
+    max-width: 620px;
+    margin: 0 auto;
     z-index: 101;
-    border-radius: 16px;
-    padding: 10px 14px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: auto;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
 }
 
-.weather-banner-icon-box {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
+/* EXPANDED STATE */
+.persistent-weather-banner.is-expanded {
+    border-radius: 18px;
+    padding: 12px 14px;
+}
+.persistent-weather-banner.is-expanded .weather-minimized-strip {
+    display: none !important;
+}
+.persistent-weather-banner.is-expanded .weather-expanded-body {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    flex-shrink: 0;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.weather-banner-content {
-    flex: 1;
-    min-width: 0;
+/* MINIMIZED STATE (Compact Horizontal Banner) */
+.persistent-weather-banner.is-minimized {
+    border-radius: 24px;
+    padding: 6px 12px;
+    cursor: pointer;
 }
-
-.weather-banner-header-row {
+.persistent-weather-banner.is-minimized .weather-minimized-strip {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 2px;
+    gap: 10px;
+    width: 100%;
+}
+.persistent-weather-banner.is-minimized .weather-expanded-body {
+    display: none !important;
 }
 
+/* Minimized Strip Internals */
+.weather-mini-icon-box {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.weather-mini-title-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.weather-mini-badge {
+    font-size: 8.5px;
+    font-weight: 800;
+    padding: 2px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.weather-mini-title {
+    font-size: 12.5px;
+    font-weight: 800;
+    letter-spacing: -0.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Expanded Card Internals */
+.weather-card-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.weather-badge-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
 .weather-banner-badge {
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 800;
     letter-spacing: 0.5px;
     text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
 }
-
 .weather-banner-live-indicator {
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 700;
     display: inline-flex;
     align-items: center;
     gap: 4px;
 }
-
 .weather-pulse-dot {
     width: 6px;
     height: 6px;
@@ -490,82 +546,341 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     display: inline-block;
     animation: pulse 1.5s infinite;
 }
-
+.weather-card-main-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.weather-banner-icon-box {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+    position: relative;
+    overflow: visible;
+}
+.weather-banner-content {
+    flex: 1;
+    min-width: 0;
+}
 .weather-banner-title {
     margin: 0;
-    font-size: 14px;
+    font-size: 14.5px;
     font-weight: 800;
     letter-spacing: -0.2px;
     line-height: 1.2;
 }
-
 .weather-banner-message {
-    margin: 2px 0 0 0;
+    margin: 3px 0 0 0;
     font-size: 11.5px;
     line-height: 1.35;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: inherit;
+    opacity: 0.92;
+}
+.weather-card-bottom-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 6px;
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 600;
+}
+.weather-timestamp-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    opacity: 0.85;
 }
 
-/* 1. NORMAL WEATHER: White/light background, dark readable text, sun icon */
+/* Universal Toggle Button (Minimize & Expand) */
+.weather-toggle-btn {
+    border: none;
+    outline: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+}
+.weather-toggle-btn:hover {
+    transform: translateY(-1px);
+}
+.weather-toggle-btn:active {
+    transform: scale(0.96);
+}
+
+/* 1. NORMAL WEATHER: White/light background, dark text, sun icon */
 .persistent-weather-banner.status-normal {
     background: #ffffff;
-    border: 1.5px solid #e2e8f0;
+    border: 1.5px solid #fed7aa;
     color: #0f172a;
+    box-shadow: 0 6px 22px rgba(245, 158, 11, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
 }
-.persistent-weather-banner.status-normal .weather-banner-icon-box {
+.persistent-weather-banner.status-normal .weather-banner-icon-box,
+.persistent-weather-banner.status-normal .weather-mini-icon-box {
     background: #fef3c7;
     color: #d97706;
+    border: 1px solid #fde68a;
 }
-.persistent-weather-banner.status-normal .weather-banner-title {
+.persistent-weather-banner.status-normal .weather-banner-title,
+.persistent-weather-banner.status-normal .weather-mini-title {
     color: #0f172a;
 }
 .persistent-weather-banner.status-normal .weather-banner-message {
     color: #334155;
 }
-.persistent-weather-banner.status-normal .weather-banner-badge {
+.persistent-weather-banner.status-normal .weather-banner-badge,
+.persistent-weather-banner.status-normal .weather-mini-badge {
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+}
+.persistent-weather-banner.status-normal .weather-banner-live-indicator {
     color: #16a34a;
 }
-
-/* 2. WEATHER WARNING: Blue background, white readable text, cloud/warning icon */
-.persistent-weather-banner.status-warning {
-    background: #1d4ed8;
-    border: 1.5px solid #1e40af;
-    color: #ffffff;
+.persistent-weather-banner.status-normal .weather-toggle-btn {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #475569;
 }
-.persistent-weather-banner.status-warning .weather-banner-icon-box {
+.persistent-weather-banner.status-normal .weather-toggle-btn:hover {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+.persistent-weather-banner.status-normal .weather-card-bottom-row {
+    border-top: 1px solid #f1f5f9;
+    color: #64748b;
+}
+
+/* 2. WEATHER WARNING: Royal blue gradient, white text, cloud/warning icon */
+.persistent-weather-banner.status-warning {
+    background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+    border: 1.5px solid #60a5fa;
+    color: #ffffff;
+    box-shadow: 0 8px 26px rgba(29, 78, 216, 0.35);
+}
+.persistent-weather-banner.status-warning .weather-banner-icon-box,
+.persistent-weather-banner.status-warning .weather-mini-icon-box {
     background: rgba(255, 255, 255, 0.2);
     color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
-.persistent-weather-banner.status-warning .weather-banner-title {
+.persistent-weather-banner.status-warning .weather-banner-title,
+.persistent-weather-banner.status-warning .weather-mini-title {
     color: #ffffff;
 }
 .persistent-weather-banner.status-warning .weather-banner-message {
-    color: #e0e7ff;
+    color: #eff6ff;
 }
-.persistent-weather-banner.status-warning .weather-banner-badge {
-    color: #93c5fd;
+.persistent-weather-banner.status-warning .weather-banner-badge,
+.persistent-weather-banner.status-warning .weather-mini-badge {
+    color: #dbeafe;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+}
+.persistent-weather-banner.status-warning .weather-banner-live-indicator {
+    color: #bfdbfe;
+}
+.persistent-weather-banner.status-warning .weather-toggle-btn {
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+.persistent-weather-banner.status-warning .weather-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+.persistent-weather-banner.status-warning .weather-card-bottom-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    color: #bfdbfe;
 }
 
-/* 3. EXTREME WEATHER WARNING: Red background, white readable text, alert triangle icon */
+/* 3. EXTREME WEATHER WARNING: Urgent crimson red gradient, alert triangle icon */
 .persistent-weather-banner.status-extreme {
-    background: #dc2626;
-    border: 1.5px solid #b91c1c;
+    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    border: 1.5px solid #f87171;
     color: #ffffff;
+    box-shadow: 0 8px 30px rgba(220, 38, 38, 0.45);
 }
-.persistent-weather-banner.status-extreme .weather-banner-icon-box {
-    background: rgba(255, 255, 255, 0.2);
+.persistent-weather-banner.status-extreme .weather-banner-icon-box,
+.persistent-weather-banner.status-extreme .weather-mini-icon-box {
+    background: rgba(255, 255, 255, 0.22);
     color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.35);
 }
-.persistent-weather-banner.status-extreme .weather-banner-title {
+.persistent-weather-banner.status-extreme .weather-banner-title,
+.persistent-weather-banner.status-extreme .weather-mini-title {
     color: #ffffff;
 }
 .persistent-weather-banner.status-extreme .weather-banner-message {
     color: #fee2e2;
 }
-.persistent-weather-banner.status-extreme .weather-banner-badge {
-    color: #fca5a5;
+.persistent-weather-banner.status-extreme .weather-banner-badge,
+.persistent-weather-banner.status-extreme .weather-mini-badge {
+    color: #fee2e2;
+    background: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.32);
+}
+.persistent-weather-banner.status-extreme .weather-banner-live-indicator {
+    color: #fecaca;
+}
+.persistent-weather-banner.status-extreme .weather-toggle-btn {
+    background: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    color: #ffffff;
+}
+.persistent-weather-banner.status-extreme .weather-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.34);
+}
+.persistent-weather-banner.status-extreme .weather-card-bottom-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fecaca;
+}
+
+/* Sibling Layout Adjustments for Search Bar & Filter Pills */
+.persistent-weather-banner.is-expanded ~ .floating-search-bar {
+    top: 216px;
+    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.persistent-weather-banner.is-expanded ~ .floating-filter-pills {
+    top: 274px;
+    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.persistent-weather-banner.is-minimized ~ .floating-search-bar {
+    top: 114px;
+    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.persistent-weather-banner.is-minimized ~ .floating-filter-pills {
+    top: 172px;
+    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* High-Quality Animated SVG Icons */
+.weather-svg-animated {
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: visible;
+}
+
+/* 1. Normal Sun Animations */
+.sun-anim {
+    animation: sunFloat 4s ease-in-out infinite;
+}
+.sun-anim .sun-rays-group {
+    transform-origin: 32px 32px;
+    animation: sunRaysSpin 16s linear infinite;
+}
+.sun-anim .sun-core-pulse {
+    transform-origin: 32px 32px;
+    animation: sunCorePulse 3s ease-in-out infinite;
+}
+
+@keyframes sunRaysSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+@keyframes sunCorePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+}
+@keyframes sunFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+}
+
+/* 2. Weather Warning Cloud Animations */
+.warning-cloud-anim {
+    animation: cloudFloat 3.5s ease-in-out infinite;
+}
+.warning-cloud-anim .cloud-floating {
+    transform-origin: 32px 32px;
+}
+.warning-cloud-anim .raindrop {
+    animation: raindropFall 1.2s ease-in infinite;
+}
+.warning-cloud-anim .raindrop-1 {
+    animation-delay: 0s;
+}
+.warning-cloud-anim .raindrop-2 {
+    animation-delay: 0.4s;
+}
+.warning-cloud-anim .raindrop-3 {
+    animation-delay: 0.8s;
+}
+.warning-cloud-anim .warning-badge-pulse {
+    transform-origin: 48px 22px;
+    animation: warningBadgePulse 2s ease-in-out infinite;
+}
+
+@keyframes cloudFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2.5px); }
+}
+@keyframes raindropFall {
+    0% { opacity: 0; transform: translateY(-3px); }
+    40% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(6px); }
+}
+@keyframes warningBadgePulse {
+    0%, 100% { transform: scale(1); opacity: 0.92; }
+    50% { transform: scale(1.12); opacity: 1; }
+}
+
+/* 3. Extreme Warning Triangle Animations */
+.extreme-alert-anim {
+    animation: alertGentleFloat 2.5s ease-in-out infinite;
+}
+.extreme-alert-anim .alert-triangle-pulse {
+    transform-origin: 32px 36px;
+    animation: alertTrianglePulse 2s ease-in-out infinite;
+}
+.extreme-alert-anim .lightning-flash-spark {
+    transform-origin: 38px 24px;
+    animation: lightningSpark 2.8s ease-in-out infinite;
+}
+
+@keyframes alertGentleFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+}
+@keyframes alertTrianglePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.6)); }
+}
+@keyframes lightningSpark {
+    0%, 78%, 100% { opacity: 0.35; transform: scale(0.95); }
+    85%, 92% { opacity: 1; transform: scale(1.1); filter: drop-shadow(0 0 4px #fef08a); }
+}
+
+/* Accessibility: Respect Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    .sun-anim,
+    .sun-anim .sun-rays-group,
+    .sun-anim .sun-core-pulse,
+    .warning-cloud-anim,
+    .warning-cloud-anim .raindrop,
+    .warning-cloud-anim .warning-badge-pulse,
+    .extreme-alert-anim,
+    .extreme-alert-anim .alert-triangle-pulse,
+    .extreme-alert-anim .lightning-flash-spark,
+    .weather-pulse-dot,
+    .persistent-weather-banner {
+        animation: none !important;
+        transition: none !important;
+        transform: none !important;
+    }
 }
 
 /* Floating Search Bar */

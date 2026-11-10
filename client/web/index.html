@@ -754,21 +754,57 @@
             </div>
           </header>
 
-          <!-- Permanent Global Weather Status Banner (24/7 Display, Non-Dismissible) -->
-          <div class="persistent-weather-banner status-normal" id="persistent-weather-banner">
-            <div class="weather-banner-icon-box" id="weather-banner-icon-box">
-              <i class="fa-solid fa-sun" id="weather-banner-icon"></i>
-            </div>
-            <div class="weather-banner-content">
-              <div class="weather-banner-header-row">
-                <span class="weather-banner-badge" id="weather-banner-badge">POZORRUBIO WEATHER</span>
-                <span class="weather-banner-live-indicator"><span class="weather-pulse-dot"></span> LIVE</span>
+          <!-- Permanent Global Weather Status Card (24/7 Display, Non-Dismissible, Expand/Collapse) -->
+          <div class="persistent-weather-banner status-normal is-expanded" id="persistent-weather-banner" role="region" aria-label="Pozorrubio Weather Alert">
+            
+            <!-- MINIMIZED VIEW STRIP (visible when .is-minimized) -->
+            <div class="weather-minimized-strip" id="weather-minimized-strip" title="Click to view full weather advisory details">
+              <div class="weather-mini-icon-box" id="weather-mini-icon-box" aria-hidden="true">
+                <i class="fa-solid fa-sun" id="weather-mini-icon-fallback"></i>
               </div>
-              <h4 class="weather-banner-title" id="weather-banner-title">NORMAL WEATHER</h4>
-              <p class="weather-banner-message" id="weather-banner-message">
-                Current weather conditions are normal. Continue monitoring official announcements.
-              </p>
+              <div class="weather-mini-title-wrap">
+                <span class="weather-mini-badge" id="weather-mini-badge">MDRRMO</span>
+                <span class="weather-mini-title" id="weather-mini-title">NORMAL WEATHER</span>
+              </div>
+              <button class="weather-toggle-btn weather-expand-btn" id="weather-expand-btn" type="button" title="Expand Weather Alert Details" aria-label="Expand Weather Alert Details">
+                <span class="btn-toggle-label">Details</span>
+                <i class="fa-solid fa-chevron-down"></i>
+              </button>
             </div>
+
+            <!-- EXPANDED VIEW CONTAINER (visible when .is-expanded) -->
+            <div class="weather-expanded-body" id="weather-expanded-body">
+              <div class="weather-card-top-row">
+                <div class="weather-badge-group">
+                  <span class="weather-banner-badge" id="weather-banner-badge">POZORRUBIO WEATHER</span>
+                  <span class="weather-banner-live-indicator"><span class="weather-pulse-dot"></span> LIVE</span>
+                </div>
+                <button class="weather-toggle-btn weather-minimize-btn" id="weather-minimize-btn" type="button" title="Minimize Weather Alert" aria-label="Minimize Weather Alert">
+                  <span class="btn-toggle-label">Minimize</span>
+                  <i class="fa-solid fa-chevron-up"></i>
+                </button>
+              </div>
+
+              <div class="weather-card-main-row">
+                <div class="weather-banner-icon-box" id="weather-banner-icon-box" aria-hidden="true">
+                  <i class="fa-solid fa-sun" id="weather-banner-icon"></i>
+                </div>
+                <div class="weather-banner-content">
+                  <h4 class="weather-banner-title" id="weather-banner-title">NORMAL WEATHER</h4>
+                  <p class="weather-banner-message" id="weather-banner-message">
+                    Current weather conditions are normal. Continue monitoring official announcements.
+                  </p>
+                </div>
+              </div>
+
+              <div class="weather-card-bottom-row">
+                <div class="weather-timestamp-box">
+                  <i class="fa-regular fa-clock"></i>
+                  <span id="weather-banner-timestamp">Updated: Today • MDRRMO Command Center</span>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <!-- Floating Search/Location Area -->
