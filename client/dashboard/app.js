@@ -19,6 +19,7 @@ class CommandDashboard {
         
         // Hydrated states from server
         this.incidents = [];
+        this.allIncidents = [];
         this.responders = [];
         this.broadcasts = [];
         this.rescue_vehicles = [];
@@ -97,6 +98,17 @@ class CommandDashboard {
                     badge.textContent = "0";
                 }
                 
+                if (tabId === 'analytics') {
+                    this.updateAnalytics();
+                    if (this.pieChartInstance) {
+                        setTimeout(() => this.pieChartInstance.reflow(), 50);
+                    }
+                }
+
+                if (tabId === 'history') {
+                    this.renderHistoryRecords();
+                }
+
                 if (tabId === 'feedbacks') {
                     this.loadFeedbacks();
                 }
@@ -404,6 +416,55 @@ class CommandDashboard {
         }
     }
 
+    normalizeCategory(inc) {
+        if (!inc) return null;
+        const statusLower = String(inc.status || '').trim().toLowerCase();
+        const raw = String(inc.category || inc.type || '').trim().toLowerCase();
+        if (!raw || raw === 'draft') {
+            return null;
+        }
+        if (raw === 'medical' || raw === 'med' || raw === 'ambulance' || raw === 'health') return 'medical';
+        if (raw === 'fire' || raw === 'bfp') return 'fire';
+        if (raw === 'police' || raw === 'crime' || raw === 'pnp' || raw === 'law enforcement') return 'police';
+        if (raw === 'barangay' || raw === 'brgy') return 'barangay';
+        if (raw === 'roadcrash' || raw === 'road_crash' || raw === 'road crash' || raw === 'road-crash' || raw === 'accident' || raw === 'vehicular' || raw === 'crash') return 'roadcrash';
+        if (raw === 'report' || raw === 'general report' || raw === 'other' || raw === 'flood' || raw === 'rescue' || raw === 'disaster' || raw === 'hardware emergency') return 'report';
+        return statusLower === 'draft' ? null : 'report';
+    }
+
+    formatCategoryLabel(incOrKey) {
+        const labelMap = {
+            medical: 'Medical',
+            fire: 'Fire',
+            police: 'Police',
+            barangay: 'Barangay',
+            roadcrash: 'Road Crash',
+            report: 'Report'
+        };
+        if (typeof incOrKey === 'string') {
+            const norm = this.normalizeCategory({ category: incOrKey, status: 'pending' });
+            return (norm && labelMap[norm]) || incOrKey;
+        }
+        const key = this.normalizeCategory(incOrKey);
+        if (key && labelMap[key]) return labelMap[key];
+        return (incOrKey && (incOrKey.type || incOrKey.category)) || 'Unknown';
+    }
+
+    upsertSharedIncident(incident) {
+        if (!incident || !incident.id) return;
+        const stLower = String(incident.status || '').trim().toLowerCase();
+        const idx = this.allIncidents.findIndex(i => i.id === incident.id);
+        if (stLower === 'draft' && !this.normalizeCategory(incident)) {
+            if (idx !== -1) this.allIncidents.splice(idx, 1);
+            return;
+        }
+        if (idx !== -1) {
+            this.allIncidents[idx] = incident;
+        } else {
+            this.allIncidents.unshift(incident);
+        }
+    }
+
     filterIncidents(incidentsList) {
         if (!this.user || !this.user.type) return incidentsList;
         const role = this.user.type; // bfp_admin, pnp_admin, mdrrmo_admin, barangay_admin
@@ -450,6 +511,9 @@ class CommandDashboard {
 
         // Load initial state database from backend server
         this.socket.on('init-state', async (db) => {
+            if (db && Array.isArray(db.incidents)) {
+                this.allIncidents = db.incidents.filter(i => (i.status || '').toLowerCase() !== 'draft' || Boolean(this.normalizeCategory(i)));
+            }
             // Fetch strictly authorized incidents via API instead of public broadcast
             await this.fetchAdminIncidents();
 
@@ -463,7 +527,12 @@ class CommandDashboard {
 
         // Live report event
         this.socket.on('new-incident-alert', (report) => {
-            // Check if user is allowed to see this
+            // Update shared database view for all accounts (Analytics & Category Reports)
+            this.upsertSharedIncident(report);
+            this.renderHistoryRecords();
+            this.updateAnalytics();
+
+            // Check if user is allowed to manage/respond to this incident
             const filtered = this.filterIncidents([report]);
             if (filtered.length === 0) return;
 
@@ -474,8 +543,6 @@ class CommandDashboard {
             } else {
                 this.incidents.unshift(report);
             }
-            
-            // Notification sound
             
             // Notification sound
             this.playAlertSound();
@@ -493,8 +560,6 @@ class CommandDashboard {
             this.plotIncidentMarker(report);
             
             this.renderLogsTable();
-            this.renderHistoryRecords();
-            this.updateAnalytics();
         });
 
         this.socket.on('chat-message-receive', (msg) => {
@@ -517,16 +582,31 @@ class CommandDashboard {
 
         // State changes forwarded from other clients
         this.socket.on('incident-deleted', (data) => {
+            const allIdx = this.allIncidents.findIndex(i => i.id === data.id);
+            if (allIdx > -1) {
+                this.allIncidents.splice(allIdx, 1);
+            }
             const index = this.incidents.findIndex(i => i.id === data.id);
             if (index > -1) {
                 this.incidents.splice(index, 1);
                 this.renderLogsTable();
-                this.renderHistoryRecords();
-                this.updateAnalytics();
             }
+            this.renderHistoryRecords();
+            this.updateAnalytics();
+        });
+
+        this.socket.on('incident_status_changed', (incident) => {
+            this.upsertSharedIncident(incident);
+            this.renderHistoryRecords();
+            this.updateAnalytics();
         });
 
         this.socket.on('incident-updated', (incident) => {
+            // Always update shared dataset so all accounts see real-time category reports
+            this.upsertSharedIncident(incident);
+            this.renderHistoryRecords();
+            this.updateAnalytics();
+
             const filtered = this.filterIncidents([incident]);
             const idx = this.incidents.findIndex(i => i.id === incident.id);
 
@@ -535,8 +615,6 @@ class CommandDashboard {
                 if (idx !== -1) {
                     this.incidents.splice(idx, 1);
                     this.renderLogsTable();
-                    this.renderHistoryRecords();
-                    this.updateAnalytics();
                     // Also clear markers if any
                     if (this.gpsStreams && this.gpsStreams[incident.id]) {
                         clearInterval(this.gpsStreams[incident.id]);
@@ -572,8 +650,6 @@ class CommandDashboard {
             }
 
             this.renderLogsTable();
-            this.renderHistoryRecords();
-            this.updateAnalytics();
                 
                 // Update marker color if enroute/resolved
                 if (incident.status === 'resolved' || incident.status === 'cancelled' || incident.status === 'closed') {
@@ -740,19 +816,29 @@ class CommandDashboard {
         else if (this.user.type === 'barangay_admin') endpoint = `/api/barangays/${encodeURIComponent(this.user.barangay)}/incidents`;
         else endpoint = '/api/admin/incidents';
 
-        if (endpoint) {
-            try {
-                const res = await fetch(endpoint, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                const data = await res.json();
+        try {
+            const [roleRes, sharedRes] = await Promise.all([
+                endpoint ? fetch(endpoint, { headers: { 'Authorization': `Bearer ${token}` } }) : Promise.resolve(null),
+                fetch('/api/admin/incidents', { headers: { 'Authorization': `Bearer ${token}` } })
+            ]);
+
+            if (sharedRes && sharedRes.ok) {
+                const sharedData = await sharedRes.json();
+                if (Array.isArray(sharedData.incidents)) {
+                    this.allIncidents = sharedData.incidents.filter(i => (i.status || '').toLowerCase() !== 'draft' || Boolean(this.normalizeCategory(i)));
+                }
+            }
+
+            if (roleRes && roleRes.ok) {
+                const data = await roleRes.json();
                 if (data.incidents) {
                     this.incidents = data.incidents;
-                    this.renderAll();
                 }
-            } catch(e) {
-                console.error("Failed to fetch admin incidents", e);
             }
+
+            this.renderAll();
+        } catch(e) {
+            console.error("Failed to fetch admin incidents", e);
         }
         
         // MDRRMO only: Fetch assistance requests
@@ -1754,7 +1840,7 @@ class CommandDashboard {
                             </div>
                         </div>
                     </td>
-                    <td class="capitalize" style="font-size: 13px;">${inc.type || inc.category || 'Unknown'}</td>
+                    <td class="capitalize" style="font-size: 13px;">${this.formatCategoryLabel(inc)}</td>
                     <td class="font-mono" style="font-size: 13px; color: var(--text-secondary);">${Number(inc.lat || 0).toFixed(4)}, ${Number(inc.lng || 0).toFixed(4)}</td>
                     <td style="font-size: 13px;">${latencyHTML}</td>
                     <td>${inc.category === 'Hardware Emergency' ? `<span style="color: var(--danger); font-size: 12px; font-weight: bold; text-transform: uppercase;"><i class="fa-solid fa-triangle-exclamation"></i> Alert!</span>` : `<span class="badge" style="background: ${badgeColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;">${inc.status}</span>`}</td>
@@ -1795,20 +1881,25 @@ class CommandDashboard {
             return 'Pending';
         };
 
-        const filtered = this.incidents.filter(inc => {
+        const sourceIncidents = (this.allIncidents && this.allIncidents.length > 0) ? this.allIncidents : this.incidents;
+
+        const filtered = sourceIncidents.filter(inc => {
             // Search
             if (searchQuery) {
-                const searchStr = `${inc.id} ${inc.name} ${inc.address} ${inc.details}`.toLowerCase();
+                const searchStr = `${inc.id} ${inc.reporter || inc.name || ''} ${inc.barangay || ''} ${inc.address || ''} ${inc.details || inc.description || ''}`.toLowerCase();
                 if (!searchStr.includes(searchQuery)) return false;
             }
             // Status
             const mappedStatus = getMappedStatus(inc.status);
             if (statusFilter !== 'all' && mappedStatus.toLowerCase() !== statusFilter) return false;
             // Type
-            if (typeFilter !== 'all' && inc.category !== typeFilter) return false;
+            if (typeFilter !== 'all' && this.normalizeCategory(inc) !== typeFilter) return false;
             // Date
             if (dateFilter) {
-                const incDate = new Date(inc.timestamp).toISOString().split('T')[0];
+                const ts = inc.createdAt || inc.created_at || inc.timestamp;
+                const dObj = new Date(ts);
+                if (isNaN(dObj.getTime())) return false;
+                const incDate = dObj.toISOString().split('T')[0];
                 if (incDate !== dateFilter) return false;
             }
             return true;
@@ -1816,12 +1907,12 @@ class CommandDashboard {
 
         // Update Summary Cards
         let counts = { pending: 0, resolved: 0, cancelled: 0 };
-        this.incidents.forEach(inc => {
+        sourceIncidents.forEach(inc => {
             const mapped = getMappedStatus(inc.status).toLowerCase();
             if (counts[mapped] !== undefined) counts[mapped]++;
         });
 
-        if (this.histTotal) this.histTotal.textContent = this.incidents.length;
+        if (this.histTotal) this.histTotal.textContent = sourceIncidents.length;
         if (this.histPending) this.histPending.textContent = counts.pending;
         if (this.histResolved) this.histResolved.textContent = counts.resolved;
         if (this.histCancelled) this.histCancelled.textContent = counts.cancelled;
@@ -1841,9 +1932,9 @@ class CommandDashboard {
                 const d = new Date(timestamp);
                 const timeStr = isNaN(d) ? 'Unknown Date' : `${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
                 const reporterName = inc.reporter || inc.name || 'Unknown';
-                const cat = inc.type || inc.category || 'Unknown';
-                let loc = inc.address;
-                if (!loc && inc.lat && inc.lng) loc = `GPS: ${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}`;
+                const cat = this.formatCategoryLabel(inc);
+                let loc = inc.address || (inc.barangay ? `Brgy. ${inc.barangay}` : '');
+                if (!loc && inc.lat && inc.lng) loc = `GPS: ${Number(inc.lat).toFixed(4)}, ${Number(inc.lng).toFixed(4)}`;
                 if (!loc) loc = 'Unknown Location';
                 
                 const hasLocation = !!(inc.lat && inc.lng);
@@ -1852,7 +1943,7 @@ class CommandDashboard {
                 html += `
                     <tr style="transition: all 0.2s ease;">
                         <td class="font-mono text-sm" style="font-weight: 500; color: var(--text-primary); padding: 16px 10px;">${inc.id}</td>
-                        <td style="text-transform: capitalize; padding: 16px 10px; color: var(--text-secondary);"><span style="background: var(--bg-tertiary); padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;">${cat}</span></td>
+                        <td style="padding: 16px 10px; color: var(--text-secondary);"><span style="background: var(--bg-tertiary); padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;">${cat}</span></td>
                         <td style="padding: 16px 10px; color: var(--text-secondary); font-weight: 500;">
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 ${this.getAvatarHtml(inc.profile_image, inc.gender, 24)}
@@ -1916,7 +2007,7 @@ class CommandDashboard {
     }
 
     viewHistoryDetails(id) {
-        const inc = this.incidents.find(i => i.id === id);
+        const inc = (this.allIncidents && this.allIncidents.find(i => i.id === id)) || this.incidents.find(i => i.id === id);
         if (!inc) return;
 
         const getMappedStatus = (rawStatus) => {
@@ -1931,7 +2022,7 @@ class CommandDashboard {
         
         document.getElementById("hist-det-id").textContent = inc.id;
         document.getElementById("hist-det-time").textContent = isNaN(d) ? 'Unknown Date' : `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
-        document.getElementById("hist-det-type").textContent = inc.type || inc.category || 'Unknown';
+        document.getElementById("hist-det-type").textContent = this.formatCategoryLabel(inc);
         
         const severity = inc.severity || 'Normal';
         const sevColor = severity.toLowerCase() === 'critical' ? 'var(--danger)' : 'var(--warning)';
@@ -1943,16 +2034,12 @@ class CommandDashboard {
         const reporterPhone = inc.reporterPhone || inc.phone || 'No Phone';
         document.getElementById("hist-det-reporter").textContent = `${reporterName} (${reporterPhone})`;
         
-        if (this.user && this.user.type === 'barangay_admin') {
-            const coordsStr = (inc.lat && inc.lng) ? ` (${Number(inc.lat).toFixed(6)}, ${Number(inc.lng).toFixed(6)})` : '';
-            const brgyPrefix = inc.barangay ? `Brgy. ${inc.barangay} — ` : '';
-            document.getElementById("hist-det-location").textContent = `${brgyPrefix}${inc.address || 'Reported Location'}${coordsStr}`;
-        } else {
-            document.getElementById("hist-det-location").textContent = inc.address || 'Unknown Location';
-        }
+        const coordsStr = (inc.lat && inc.lng) ? ` (${Number(inc.lat).toFixed(6)}, ${Number(inc.lng).toFixed(6)})` : '';
+        const brgyPrefix = inc.barangay ? `Brgy. ${inc.barangay} — ` : '';
+        document.getElementById("hist-det-location").textContent = `${brgyPrefix}${inc.address || 'Reported Location'}${coordsStr}`;
         
         let formattedDetails = (inc.description || inc.details || "No notes available").replace(/ \| /g, "<br><br>");
-        if (this.user && this.user.type === 'barangay_admin' && inc.media && Array.isArray(inc.media) && inc.media.length > 0) {
+        if (inc.media && Array.isArray(inc.media) && inc.media.length > 0) {
             const mediaItemsHtml = inc.media.map(m => {
                 if (typeof m === 'string' && (m.startsWith('data:video/') || m.endsWith('.mp4') || m.endsWith('.webm'))) {
                     return `<video src="${m}" controls style="width:100px; height:80px; object-fit:cover; border-radius:6px; border:1px solid var(--border-color);"></video>`;
@@ -2222,37 +2309,56 @@ class CommandDashboard {
     }
 
     async updateAnalytics() {
-        try {
-            const res = await fetch("/api/admin/stats");
-            const data = await res.json();
-            if (data.success) {
-                const s = data.stats;
-                document.getElementById("stat-total-users").textContent = s.totalUsers || 0;
-                document.getElementById("stat-active-responders").textContent = `${s.activeResponders || 0} / ${s.totalResponders || 0}`;
-                document.getElementById("stat-total-sos").textContent = s.totalSOS || 0;
-                
-                // Calculate active incidents from local array since backend doesn't provide it
-                const active = this.incidents.filter(i => {
-                    const st = (i.status || '').toLowerCase();
-                    return !['resolved', 'cancelled'].includes(st);
-                }).length;
-                document.getElementById("stat-active-incidents").textContent = `${active} Active`;
-            }
-        } catch (e) {
-            console.warn("Analytics fetch failed:", e);
-        }
+        const sourceIncidents = (this.allIncidents && this.allIncidents.length > 0) ? this.allIncidents : this.incidents;
 
         const counts = { 
             medical: 0, fire: 0, police: 0, barangay: 0,
             roadcrash: 0, report: 0
         };
-        this.incidents.forEach(inc => {
-            if (counts[inc.category] !== undefined) counts[inc.category]++;
+        sourceIncidents.forEach(inc => {
+            const catKey = this.normalizeCategory(inc);
+            if (catKey && counts[catKey] !== undefined) counts[catKey]++;
         });
 
-        const total = this.incidents.length || 1;
+        try {
+            const res = await fetch("/api/admin/stats");
+            const data = await res.json();
+            if (data.success && data.stats) {
+                const s = data.stats;
+                document.getElementById("stat-total-users").textContent = s.totalUsers || 0;
+                document.getElementById("stat-active-responders").textContent = `${s.activeResponders || 0} / ${s.totalResponders || 0}`;
+                document.getElementById("stat-total-sos").textContent = s.totalSOS !== undefined ? s.totalSOS : sourceIncidents.length;
+                
+                const active = s.activeIncidents !== undefined ? s.activeIncidents : sourceIncidents.filter(i => {
+                    const st = (i.status || '').toLowerCase();
+                    return !['resolved', 'cancelled', 'closed', 'draft'].includes(st);
+                }).length;
+                document.getElementById("stat-active-incidents").textContent = `${active} Active`;
+
+                if (s.categoryCounts && typeof s.categoryCounts === 'object') {
+                    Object.keys(counts).forEach(k => {
+                        if (s.categoryCounts[k] !== undefined) {
+                            counts[k] = Number(s.categoryCounts[k]) || 0;
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Analytics fetch failed:", e);
+            const active = sourceIncidents.filter(i => {
+                const st = (i.status || '').toLowerCase();
+                return !['resolved', 'cancelled', 'closed', 'draft'].includes(st);
+            }).length;
+            const totalEl = document.getElementById("stat-total-sos");
+            if (totalEl) totalEl.textContent = sourceIncidents.length;
+            const activeEl = document.getElementById("stat-active-incidents");
+            if (activeEl) activeEl.textContent = `${active} Active`;
+        }
+
+        const totalCategorized = Object.values(counts).reduce((sum, v) => sum + v, 0);
+        const total = totalCategorized || 1;
         Object.keys(counts).forEach(cat => {
-            const pct = Math.round((counts[cat] / total) * 100);
+            const pct = totalCategorized > 0 ? Math.round((counts[cat] / total) * 100) : 0;
             const bar = document.getElementById(`bar-${cat}`);
             const lbl = document.getElementById(`val-${cat}`);
             if (bar && lbl) {
@@ -2263,23 +2369,41 @@ class CommandDashboard {
 
         const pieContainer = document.getElementById("incidents-pie-chart");
         if (pieContainer && window.Highcharts) {
-            const categories = Object.keys(counts);
+            const categoryMeta = [
+                { key: 'medical', label: 'Medical', color: '#ef4444' },
+                { key: 'fire', label: 'Fire', color: '#f97316' },
+                { key: 'police', label: 'Police', color: '#3b82f6' },
+                { key: 'barangay', label: 'Barangay', color: '#10b981' },
+                { key: 'roadcrash', label: 'Road Crash', color: '#8b5cf6' },
+                { key: 'report', label: 'Report', color: '#64748b' }
+            ];
             const hasData = Object.values(counts).some(v => v > 0);
-            const colors = ['#ef4444', '#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#64748b'];
             
             let chartData = [];
             if (hasData) {
-                chartData = categories.map((cat, index) => ({
-                    name: cat.charAt(0).toUpperCase() + cat.slice(1),
-                    y: counts[cat],
-                    color: colors[index % colors.length]
+                chartData = categoryMeta.map(meta => ({
+                    name: meta.label,
+                    y: counts[meta.key] || 0,
+                    color: meta.color
                 }));
             } else {
-                chartData = [{ name: 'No Incidents', y: 1, color: '#334155' }];
+                chartData = categoryMeta.map(meta => ({
+                    name: meta.label,
+                    y: 0,
+                    color: meta.color
+                }));
             }
 
             if (this.pieChartInstance) {
-                this.pieChartInstance.series[0].setData(chartData, true);
+                this.pieChartInstance.update({
+                    tooltip: { enabled: hasData },
+                    plotOptions: {
+                        pie: {
+                            dataLabels: { enabled: hasData }
+                        }
+                    },
+                    series: [{ data: chartData }]
+                }, true, true);
             } else {
                 this.pieChartInstance = Highcharts.chart('incidents-pie-chart', {
                     chart: {
@@ -2314,17 +2438,20 @@ class CommandDashboard {
                             depth: 35,
                             dataLabels: {
                                 enabled: hasData,
-                                format: '<b>{point.name}</b><br>{point.percentage:.1f} %',
+                                formatter: function() {
+                                    if (!this.y || this.y <= 0) return null;
+                                    return '<b>' + this.point.name + '</b><br>' + Highcharts.numberFormat(this.percentage, 1) + ' %';
+                                },
                                 style: { color: '#1e293b', textOutline: 'none', fontWeight: '600' }
                             },
                             showInLegend: true,
                             point: {
                                 events: {
                                     mouseOver: function() {
-                                        if (hasData) this.slice(true, false, true);
+                                        if (this.y > 0) this.slice(true, false, true);
                                     },
                                     mouseOut: function() {
-                                        if (hasData) this.slice(false, false, true);
+                                        if (this.y > 0) this.slice(false, false, true);
                                     }
                                 }
                             }

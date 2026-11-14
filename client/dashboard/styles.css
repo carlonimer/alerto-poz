@@ -866,7 +866,7 @@ body {
 
 .bar-item .val {
     font-weight: bold;
-    width: 15px;
+    min-width: 24px;
     text-align: right;
 }
 

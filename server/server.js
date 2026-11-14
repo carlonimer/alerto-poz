@@ -4592,24 +4592,105 @@ app.post('/api/incidents/:id/cancel', async (req, res) => {
 
 
 
+function normalizeIncidentCategoryKey(inc) {
+    if (!inc) return null;
+    const statusLower = String(inc.status || '').trim().toLowerCase();
+    const raw = String(inc.category || inc.type || '').trim().toLowerCase();
+    if (!raw || raw === 'draft') {
+        return null;
+    }
+    if (raw === 'medical' || raw === 'med' || raw === 'ambulance' || raw === 'health') return 'medical';
+    if (raw === 'fire' || raw === 'bfp') return 'fire';
+    if (raw === 'police' || raw === 'crime' || raw === 'pnp' || raw === 'law enforcement') return 'police';
+    if (raw === 'barangay' || raw === 'brgy') return 'barangay';
+    if (raw === 'roadcrash' || raw === 'road_crash' || raw === 'road crash' || raw === 'road-crash' || raw === 'accident' || raw === 'vehicular' || raw === 'crash') return 'roadcrash';
+    if (raw === 'report' || raw === 'general report' || raw === 'other' || raw === 'flood' || raw === 'rescue' || raw === 'disaster' || raw === 'hardware emergency') return 'report';
+    return statusLower === 'draft' ? null : 'report';
+}
+
 app.get('/api/admin/stats', async (req, res) => {
     try {
-        if (!useMySQL) return res.status(500).json({ error: "MySQL required." });
-        const [[{ totalUsers }]] = await pool.query("SELECT COUNT(*) AS totalUsers FROM users WHERE type='citizen'");
-        const [[{ totalResponders }]] = await pool.query("SELECT COUNT(*) AS totalResponders FROM responders");
-        const [[{ activeResponders }]] = await pool.query("SELECT COUNT(*) AS activeResponders FROM responders WHERE status='available'");
-        const [[{ totalSOS }]] = await pool.query("SELECT COUNT(*) AS totalSOS FROM incidents");
-        const [[{ dispatchingIncidents }]] = await pool.query("SELECT COUNT(*) AS dispatchingIncidents FROM incidents WHERE status='dispatching'");
-        const [[{ resolvedIncidents }]] = await pool.query("SELECT COUNT(*) AS resolvedIncidents FROM incidents WHERE status='resolved'");
-        const [[{ cancelledIncidents }]] = await pool.query("SELECT COUNT(*) AS cancelledIncidents FROM incidents WHERE status='cancelled'");
-        
-        res.json({
-            success: true,
-            stats: {
-                totalUsers, totalResponders, activeResponders, totalSOS, dispatchingIncidents, resolvedIncidents, cancelledIncidents
-            }
-        });
-} catch(e) { res.status(500).json({ error: e.message }); }
+        const categoryCounts = {
+            medical: 0,
+            fire: 0,
+            police: 0,
+            barangay: 0,
+            roadcrash: 0,
+            report: 0
+        };
+
+        if (useMySQL) {
+            const [[{ totalUsers }]] = await pool.query("SELECT COUNT(*) AS totalUsers FROM users WHERE type='citizen'");
+            const [[{ totalResponders }]] = await pool.query("SELECT COUNT(*) AS totalResponders FROM responders");
+            const [[{ activeResponders }]] = await pool.query("SELECT COUNT(*) AS activeResponders FROM responders WHERE status='available'");
+            const [[{ totalSOS }]] = await pool.query("SELECT COUNT(*) AS totalSOS FROM incidents WHERE status IS NULL OR LOWER(status) != 'draft'");
+            const [[{ activeIncidents }]] = await pool.query("SELECT COUNT(*) AS activeIncidents FROM incidents WHERE status IS NULL OR LOWER(status) NOT IN ('resolved', 'cancelled', 'closed', 'draft')");
+            const [[{ dispatchingIncidents }]] = await pool.query("SELECT COUNT(*) AS dispatchingIncidents FROM incidents WHERE LOWER(status)='dispatching'");
+            const [[{ resolvedIncidents }]] = await pool.query("SELECT COUNT(*) AS resolvedIncidents FROM incidents WHERE LOWER(status) IN ('resolved', 'closed')");
+            const [[{ cancelledIncidents }]] = await pool.query("SELECT COUNT(*) AS cancelledIncidents FROM incidents WHERE LOWER(status)='cancelled'");
+
+            const [incidentRows] = await pool.query("SELECT category, status FROM incidents");
+            incidentRows.forEach(inc => {
+                const catKey = normalizeIncidentCategoryKey(inc);
+                if (catKey && categoryCounts[catKey] !== undefined) {
+                    categoryCounts[catKey]++;
+                }
+            });
+
+            return res.json({
+                success: true,
+                stats: {
+                    totalUsers,
+                    totalResponders,
+                    activeResponders,
+                    totalSOS,
+                    activeIncidents,
+                    dispatchingIncidents,
+                    resolvedIncidents,
+                    cancelledIncidents,
+                    categoryCounts
+                }
+            });
+        } else {
+            const state = await getDBState();
+            const users = state.users || [];
+            const responders = state.responders || [];
+            const incidents = state.incidents || [];
+
+            const totalUsers = users.filter(u => (u.type || '').toLowerCase() === 'citizen' || (u.role || '').toUpperCase() === 'CITIZEN' || (!u.type && !u.role)).length;
+            const totalResponders = responders.length;
+            const activeResponders = responders.filter(r => (r.status || '').toLowerCase() === 'available').length;
+
+            const nonDraftIncidents = incidents.filter(i => (i.status || '').toLowerCase() !== 'draft');
+            const totalSOS = nonDraftIncidents.length;
+            const activeIncidents = nonDraftIncidents.filter(i => !['resolved', 'cancelled', 'closed', 'draft'].includes((i.status || '').toLowerCase())).length;
+            const dispatchingIncidents = nonDraftIncidents.filter(i => (i.status || '').toLowerCase() === 'dispatching').length;
+            const resolvedIncidents = nonDraftIncidents.filter(i => ['resolved', 'closed'].includes((i.status || '').toLowerCase())).length;
+            const cancelledIncidents = nonDraftIncidents.filter(i => (i.status || '').toLowerCase() === 'cancelled').length;
+
+            incidents.forEach(inc => {
+                const catKey = normalizeIncidentCategoryKey(inc);
+                if (catKey && categoryCounts[catKey] !== undefined) {
+                    categoryCounts[catKey]++;
+                }
+            });
+
+            return res.json({
+                success: true,
+                stats: {
+                    totalUsers,
+                    totalResponders,
+                    activeResponders,
+                    totalSOS,
+                    activeIncidents,
+                    dispatchingIncidents,
+                    resolvedIncidents,
+                    cancelledIncidents,
+                    categoryCounts
+                }
+            });
+        }
+    } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/admin/feedbacks', async (req, res) => {
