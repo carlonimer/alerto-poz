@@ -721,12 +721,26 @@
         <div class="app-state active" id="state-homepage">
           <!-- Top Header Bar -->
           <header class="app-header-home">
-            <div class="brand-logo-area">
-              <span class="brand-text">ALERTO</span>
-              <span class="brand-text">-POZ</span>
-              <div class="brand-soundwave-icon">
-                <i class="fa-solid fa-tower-broadcast"></i>
+            <div class="header-brand-cluster">
+              <div class="brand-logo-area">
+                <span class="brand-text">ALERTO</span>
+                <span class="brand-text">-POZ</span>
+                <div class="brand-soundwave-icon">
+                  <i class="fa-solid fa-tower-broadcast"></i>
+                </div>
               </div>
+              <!-- Weather Mini Animated Widget Button (Placed right beside ALERTO-POZ Logo) -->
+              <button
+                class="header-weather-widget-btn status-normal is-expanded"
+                id="header-weather-widget-btn"
+                type="button"
+                title="Pozorrubio Weather • Click to view full advisory"
+                aria-label="Toggle Pozorrubio Weather Advisory"
+              >
+                <div class="header-weather-mini-icon" id="header-weather-mini-icon" aria-hidden="true">
+                  <!-- Rendered animated weather SVG inserted by JS -->
+                </div>
+              </button>
             </div>
             <div class="header-action-group">
               <button
@@ -757,16 +771,16 @@
           <!-- Permanent Global Weather Status Card (24/7 Display, Non-Dismissible, Expand/Collapse) -->
           <div class="persistent-weather-banner status-normal is-expanded" id="persistent-weather-banner" role="region" aria-label="Pozorrubio Weather Alert">
             
-            <!-- MINIMIZED VIEW STRIP (visible when .is-minimized) -->
-            <div class="weather-minimized-strip" id="weather-minimized-strip" title="Click to view full weather advisory details">
+            <!-- MINIMIZED VIEW (visible when .is-minimized: ONLY the animated icon is shown) -->
+            <div class="weather-minimized-strip" id="weather-minimized-strip" title="Pozorrubio Weather • Click to expand">
               <div class="weather-mini-icon-box" id="weather-mini-icon-box" aria-hidden="true">
                 <i class="fa-solid fa-sun" id="weather-mini-icon-fallback"></i>
               </div>
-              <div class="weather-mini-title-wrap">
+              <div class="weather-mini-title-wrap" style="display: none;">
                 <span class="weather-mini-badge" id="weather-mini-badge">MDRRMO</span>
                 <span class="weather-mini-title" id="weather-mini-title">NORMAL WEATHER</span>
               </div>
-              <button class="weather-toggle-btn weather-expand-btn" id="weather-expand-btn" type="button" title="Expand Weather Alert Details" aria-label="Expand Weather Alert Details">
+              <button class="weather-toggle-btn weather-expand-btn" id="weather-expand-btn" type="button" title="Expand Weather Alert Details" aria-label="Expand Weather Alert Details" style="display: none;">
                 <span class="btn-toggle-label">Details</span>
                 <i class="fa-solid fa-chevron-down"></i>
               </button>
@@ -779,10 +793,16 @@
                   <span class="weather-banner-badge" id="weather-banner-badge">POZORRUBIO WEATHER</span>
                   <span class="weather-banner-live-indicator"><span class="weather-pulse-dot"></span> LIVE</span>
                 </div>
-                <button class="weather-toggle-btn weather-minimize-btn" id="weather-minimize-btn" type="button" title="Minimize Weather Alert" aria-label="Minimize Weather Alert">
-                  <span class="btn-toggle-label">Minimize</span>
-                  <i class="fa-solid fa-chevron-up"></i>
-                </button>
+                <div class="weather-card-header-actions">
+                  <div class="weather-card-brand-tag" title="ALERTO-POZ MDRRMO Official Advisory">
+                    <i class="fa-solid fa-tower-broadcast"></i>
+                    <span>ALERTO-POZ</span>
+                  </div>
+                  <button class="weather-toggle-btn weather-minimize-btn" id="weather-minimize-btn" type="button" title="Minimize Weather Alert" aria-label="Minimize Weather Alert">
+                    <span class="btn-toggle-label">Minimize</span>
+                    <i class="fa-solid fa-chevron-up"></i>
+                  </button>
+                </div>
               </div>
 
               <div class="weather-card-main-row">

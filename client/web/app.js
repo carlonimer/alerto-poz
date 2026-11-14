@@ -1455,6 +1455,14 @@ class CitizenMobileClient {
         const minBtn = document.getElementById("weather-minimize-btn");
         const expBtn = document.getElementById("weather-expand-btn");
         const miniStrip = document.getElementById("weather-minimized-strip");
+        const headerBtn = document.getElementById("header-weather-widget-btn");
+
+        if (headerBtn) {
+            headerBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.setWeatherMinimized(!this.isWeatherMinimized);
+            });
+        }
 
         if (minBtn) {
             minBtn.addEventListener("click", (e) => {
@@ -1472,10 +1480,18 @@ class CitizenMobileClient {
 
         if (miniStrip) {
             miniStrip.addEventListener("click", (e) => {
-                if (e.target.closest("#weather-expand-btn")) return;
                 this.setWeatherMinimized(false);
             });
         }
+
+        // Render initial default animated weather icons
+        const headerIconBox = document.getElementById("header-weather-mini-icon");
+        const iconBox = document.getElementById("weather-banner-icon-box");
+        const miniIconBox = document.getElementById("weather-mini-icon-box");
+        const defaultSvg = this.getWeatherAnimatedSvg('NORMAL');
+        if (headerIconBox && !headerIconBox.innerHTML.trim()) headerIconBox.innerHTML = defaultSvg;
+        if (iconBox && !iconBox.innerHTML.trim()) iconBox.innerHTML = defaultSvg;
+        if (miniIconBox && !miniIconBox.innerHTML.trim()) miniIconBox.innerHTML = defaultSvg;
 
         this.applyWeatherMinimizedState();
     }
@@ -1490,53 +1506,124 @@ class CitizenMobileClient {
 
     applyWeatherMinimizedState() {
         const banner = document.getElementById("persistent-weather-banner");
-        if (!banner) return;
+        const headerBtn = document.getElementById("header-weather-widget-btn");
         if (this.isWeatherMinimized) {
-            banner.classList.remove("is-expanded");
-            banner.classList.add("is-minimized");
+            if (banner) {
+                banner.classList.remove("is-expanded");
+                banner.classList.add("is-minimized");
+            }
+            if (headerBtn) {
+                headerBtn.classList.add("is-minimized");
+                headerBtn.classList.remove("is-expanded");
+                headerBtn.setAttribute("title", "Pozorrubio Weather Advisory • Click to expand");
+            }
         } else {
-            banner.classList.remove("is-minimized");
-            banner.classList.add("is-expanded");
+            if (banner) {
+                banner.classList.remove("is-minimized");
+                banner.classList.add("is-expanded");
+            }
+            if (headerBtn) {
+                headerBtn.classList.remove("is-minimized");
+                headerBtn.classList.add("is-expanded");
+                headerBtn.setAttribute("title", "Pozorrubio Weather Advisory • Click to collapse");
+            }
         }
     }
 
     getWeatherAnimatedSvg(status) {
         if (status === 'WARNING') {
             return `
-                <svg class="weather-svg-animated warning-cloud-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Weather Warning - Cloud and Rain">
-                    <path class="cloud-floating" d="M18 42C13.58 42 10 38.42 10 34C10 29.86 13.14 26.46 17.2 26.06C18.66 19.16 24.72 14 32 14C40.06 14 46.72 20.08 47.68 28.02C51.32 28.78 54 31.98 54 36C54 40.42 50.42 44 46 44H18" fill="currentColor" fill-opacity="0.94"/>
-                    <line class="raindrop raindrop-1" x1="22" y1="48" x2="19" y2="56" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                    <line class="raindrop raindrop-2" x1="32" y1="48" x2="29" y2="58" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                    <line class="raindrop raindrop-3" x1="42" y1="48" x2="39" y2="56" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                <svg class="weather-svg-animated warning-cloud-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Weather Warning - Cloud, Rain and Warning Pulse">
+                    <defs>
+                        <linearGradient id="alerto-cloud-grad" x1="10%" y1="0%" x2="90%" y2="100%">
+                            <stop offset="0%" stop-color="#93C5FD"/>
+                            <stop offset="50%" stop-color="#3B82F6"/>
+                            <stop offset="100%" stop-color="#1D4ED8"/>
+                        </linearGradient>
+                        <linearGradient id="alerto-rain-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#BAE6FD" stop-opacity="0.3"/>
+                            <stop offset="100%" stop-color="#38BDF8" stop-opacity="1"/>
+                        </linearGradient>
+                        <radialGradient id="alerto-warn-glow" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.8"/>
+                            <stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/>
+                        </radialGradient>
+                    </defs>
+                    <circle class="warning-ambient-pulse" cx="46" cy="22" r="14" fill="url(#alerto-warn-glow)"/>
+                    <g class="cloud-floating">
+                        <path d="M19 43C14.58 43 11 39.42 11 35C11 30.95 14.02 27.6 18.01 27.08C19.42 20.3 25.35 15.2 32.5 15.2C40.4 15.2 46.95 21.18 47.9 28.98C51.48 29.74 54.1 32.88 54.1 36.65C54.1 40.98 50.58 44.5 46.25 44.5L19 43Z" fill="url(#alerto-cloud-grad)"/>
+                        <path d="M22 26.5C26 19.5 37 19.5 43 25" stroke="#DBEAFE" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.65"/>
+                    </g>
+                    <line class="raindrop raindrop-1" x1="22" y1="46" x2="19" y2="55" stroke="url(#alerto-rain-grad)" stroke-width="3" stroke-linecap="round"/>
+                    <line class="raindrop raindrop-2" x1="32" y1="47" x2="29" y2="57" stroke="url(#alerto-rain-grad)" stroke-width="3.2" stroke-linecap="round"/>
+                    <line class="raindrop raindrop-3" x1="42" y1="46" x2="39" y2="55" stroke="url(#alerto-rain-grad)" stroke-width="3" stroke-linecap="round"/>
                     <g class="warning-badge-pulse">
-                        <circle cx="48" cy="22" r="9" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2"/>
-                        <line x1="48" y1="17" x2="48" y2="23" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
-                        <circle cx="48" cy="27" r="1.2" fill="#FFFFFF"/>
+                        <circle cx="48" cy="20" r="9" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2.2"/>
+                        <line x1="48" y1="15" x2="48" y2="21" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+                        <circle cx="48" cy="25" r="1.4" fill="#FFFFFF"/>
                     </g>
                 </svg>`;
         } else if (status === 'EXTREME') {
             return `
-                <svg class="weather-svg-animated extreme-alert-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Extreme Weather Warning - Alert Triangle and Lightning">
-                    <path class="alert-triangle-pulse" d="M32 7L58 51C59.5 53.6 57.6 57 54.5 57H9.5C6.4 57 4.5 53.6 6 51L32 7Z" fill="#DC2626" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
-                    <line x1="32" y1="23" x2="32" y2="38" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round"/>
-                    <circle cx="32" cy="47" r="2.8" fill="#FFFFFF"/>
-                    <path class="lightning-flash-spark" d="M44 12L36 26H42L34 40L46 24H40L44 12Z" fill="#FDE047" stroke="#991B1B" stroke-width="1.5" stroke-linejoin="round"/>
+                <svg class="weather-svg-animated extreme-alert-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Extreme Weather - Disaster Warning Triangle and Lightning">
+                    <defs>
+                        <linearGradient id="alerto-extreme-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#EF4444"/>
+                            <stop offset="60%" stop-color="#DC2626"/>
+                            <stop offset="100%" stop-color="#991B1B"/>
+                        </linearGradient>
+                        <linearGradient id="alerto-bolt-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#FFF59D"/>
+                            <stop offset="50%" stop-color="#FACC15"/>
+                            <stop offset="100%" stop-color="#EAB308"/>
+                        </linearGradient>
+                        <radialGradient id="alerto-radar-glow" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stop-color="#EF4444" stop-opacity="0.7"/>
+                            <stop offset="100%" stop-color="#EF4444" stop-opacity="0"/>
+                        </radialGradient>
+                    </defs>
+                    <circle class="extreme-radar-ping" cx="32" cy="33" r="26" fill="url(#alerto-radar-glow)"/>
+                    <g class="alert-triangle-pulse">
+                        <path d="M32 6.5L58.5 50.5C59.9 52.9 58.2 56 55.4 56H8.6C5.8 56 4.1 52.9 5.5 50.5L32 6.5Z" fill="url(#alerto-extreme-grad)" stroke="#FFFFFF" stroke-width="2.8" stroke-linejoin="round"/>
+                        <path d="M32 11L54 48H10L32 11Z" stroke="#7F1D1D" stroke-width="1.2" stroke-opacity="0.4" fill="none"/>
+                    </g>
+                    <path class="lightning-flash-spark" d="M34 16L24 33H33L29 48L42 30H33L37 16H34Z" fill="url(#alerto-bolt-grad)" stroke="#FFFFFF" stroke-width="1.2" stroke-linejoin="round"/>
                 </svg>`;
         }
-        // Default: NORMAL (Sun)
+        // Default: NORMAL (Radiant 3D Golden Sun with rotating beams and warm corona)
         return `
-            <svg class="weather-svg-animated sun-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Normal Weather - Sun">
+            <svg class="weather-svg-animated sun-anim" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Normal Weather - Radiant Sun">
+                <defs>
+                    <radialGradient id="alerto-sun-core" cx="35%" cy="35%" r="65%">
+                        <stop offset="0%" stop-color="#FFF275"/>
+                        <stop offset="45%" stop-color="#FFAA00"/>
+                        <stop offset="100%" stop-color="#FF6B00"/>
+                    </radialGradient>
+                    <linearGradient id="alerto-sun-ray" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#FFE066"/>
+                        <stop offset="100%" stop-color="#FF8C00"/>
+                    </linearGradient>
+                    <radialGradient id="alerto-sun-glow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="#FFB703" stop-opacity="0.6"/>
+                        <stop offset="70%" stop-color="#FB8500" stop-opacity="0.15"/>
+                        <stop offset="100%" stop-color="#FB8500" stop-opacity="0"/>
+                    </radialGradient>
+                </defs>
+                <circle class="sun-ambient-glow" cx="32" cy="32" r="24" fill="url(#alerto-sun-glow)"/>
                 <g class="sun-rays-group">
-                    <line x1="32" y1="6" x2="32" y2="15" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="32" y1="49" x2="32" y2="58" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="6" y1="32" x2="15" y2="32" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="49" y1="32" x2="58" y2="32" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="13.6" y1="13.6" x2="20" y2="20" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="44" y1="44" x2="50.4" y2="50.4" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="13.6" y1="50.4" x2="20" y2="44" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
-                    <line x1="44" y1="20" x2="50.4" y2="13.6" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>
+                    <rect x="30" y="4" width="4" height="9" rx="2" fill="url(#alerto-sun-ray)"/>
+                    <rect x="30" y="51" width="4" height="9" rx="2" fill="url(#alerto-sun-ray)"/>
+                    <rect x="4" y="30" width="9" height="4" rx="2" fill="url(#alerto-sun-ray)"/>
+                    <rect x="51" y="30" width="9" height="4" rx="2" fill="url(#alerto-sun-ray)"/>
+                    <rect x="12" y="12" width="4" height="8" rx="2" transform="rotate(-45 14 16)" fill="url(#alerto-sun-ray)"/>
+                    <rect x="44" y="44" width="4" height="8" rx="2" transform="rotate(-45 46 48)" fill="url(#alerto-sun-ray)"/>
+                    <rect x="44" y="12" width="4" height="8" rx="2" transform="rotate(45 46 16)" fill="url(#alerto-sun-ray)"/>
+                    <rect x="12" y="44" width="4" height="8" rx="2" transform="rotate(45 14 48)" fill="url(#alerto-sun-ray)"/>
                 </g>
-                <circle class="sun-core-pulse" cx="32" cy="32" r="14" fill="currentColor"/>
+                <circle class="sun-core-pulse" cx="32" cy="32" r="14.5" fill="url(#alerto-sun-core)"/>
+                <ellipse class="sun-specular" cx="28" cy="27" rx="4.5" ry="3" fill="#FFFFFF" fill-opacity="0.45" transform="rotate(-25 28 27)"/>
+                <circle class="sun-sparkle sun-sparkle-1" cx="49" cy="18" r="1.5" fill="#FFF7B2"/>
+                <circle class="sun-sparkle sun-sparkle-2" cx="15" cy="46" r="1.2" fill="#FFF7B2"/>
             </svg>`;
     }
 
@@ -1565,42 +1652,49 @@ class CitizenMobileClient {
         const msgEl = document.getElementById("weather-banner-message");
         const iconBox = document.getElementById("weather-banner-icon-box");
         const miniIconBox = document.getElementById("weather-mini-icon-box");
+        const headerIconBox = document.getElementById("header-weather-mini-icon");
+        const headerBtn = document.getElementById("header-weather-widget-btn");
         const badgeEl = document.getElementById("weather-banner-badge");
         const miniBadgeEl = document.getElementById("weather-mini-badge");
         const timestampEl = document.getElementById("weather-banner-timestamp");
-
-        if (!banner) return;
 
         const status = (weather.status || 'NORMAL').toUpperCase();
         
         // Preserve current minimized / expanded state
         const isMin = this.isWeatherMinimized;
-        banner.className = `persistent-weather-banner ${isMin ? 'is-minimized' : 'is-expanded'}`;
+        if (banner) {
+            banner.className = `persistent-weather-banner ${isMin ? 'is-minimized' : 'is-expanded'}`;
+        }
 
         const animatedSvg = this.getWeatherAnimatedSvg(status);
         if (iconBox) iconBox.innerHTML = animatedSvg;
         if (miniIconBox) miniIconBox.innerHTML = animatedSvg;
+        if (headerIconBox) headerIconBox.innerHTML = animatedSvg;
+
+        if (headerBtn) {
+            headerBtn.className = `header-weather-widget-btn status-${status.toLowerCase()} ${isMin ? 'is-minimized' : 'is-expanded'}`;
+        }
 
         if (timestampEl) {
             timestampEl.textContent = this.formatWeatherTimestamp(weather);
         }
 
         if (status === 'NORMAL') {
-            banner.classList.add("status-normal");
+            if (banner) banner.classList.add("status-normal");
             if (titleEl) titleEl.textContent = "NORMAL WEATHER";
             if (miniTitleEl) miniTitleEl.textContent = "NORMAL WEATHER";
             if (msgEl) msgEl.textContent = weather.message || "Current weather conditions are normal. Continue monitoring official announcements.";
             if (badgeEl) badgeEl.textContent = "POZORRUBIO WEATHER";
             if (miniBadgeEl) miniBadgeEl.textContent = "MDRRMO";
         } else if (status === 'WARNING') {
-            banner.classList.add("status-warning");
+            if (banner) banner.classList.add("status-warning");
             if (titleEl) titleEl.textContent = "WEATHER WARNING";
             if (miniTitleEl) miniTitleEl.textContent = "WEATHER WARNING";
             if (msgEl) msgEl.textContent = weather.message || "Weather warning is currently in effect in Pozorrubio. Please stay alert and take necessary precautions.";
             if (badgeEl) badgeEl.textContent = "WEATHER WARNING";
             if (miniBadgeEl) miniBadgeEl.textContent = "WARNING";
         } else if (status === 'EXTREME') {
-            banner.classList.add("status-extreme");
+            if (banner) banner.classList.add("status-extreme");
             if (titleEl) titleEl.textContent = "EXTREME WEATHER WARNING";
             if (miniTitleEl) miniTitleEl.textContent = "EXTREME WEATHER WARNING";
             if (msgEl) msgEl.textContent = weather.message || "Extreme weather warning is currently in effect in Pozorrubio. Stay safe and follow official instructions from the MDRRMO.";
