@@ -2,20 +2,25 @@ const { verifyAdmin } = require('./middleware/auth.js');
 
 module.exports = function(app, getDBState, pool, useMySQL) {
 
+    const normalizeBrgy = (val) => String(val || '').trim().replace(/^(barangay|brgy\.?)\s+/i, '').trim().toLowerCase();
+
     const filterIncidents = (incidents, assigned_agency, barangay = null) => {
         return (incidents || []).filter(i => {
             let agency = i.assigned_agency;
+            const cat = (i.category || '').toLowerCase();
             if (!agency) {
-                const cat = (i.category || '').toLowerCase();
                 if (cat === 'fire') agency = 'BFP';
                 else if (cat === 'crime' || cat === 'police') agency = 'PNP';
                 else if (cat === 'barangay') agency = 'Barangay';
                 else agency = 'MDRRMO';
             }
-            if (barangay) {
-                const incBrgy = (i.barangay || '').trim().toLowerCase();
-                const targetBrgy = String(barangay).trim().toLowerCase();
-                return incBrgy === targetBrgy || (agency === 'Barangay' && (!i.barangay || incBrgy === targetBrgy));
+            if (barangay || assigned_agency === 'Barangay') {
+                const incBrgy = normalizeBrgy(i.barangay);
+                const targetBrgy = normalizeBrgy(barangay);
+                return (agency === 'Barangay' || cat === 'barangay') && Boolean(incBrgy) && incBrgy === targetBrgy;
+            }
+            if (assigned_agency === 'MDRRMO') {
+                return agency === 'MDRRMO' || agency === 'Barangay';
             }
             if (assigned_agency && assigned_agency !== 'ALL') {
                 if (agency !== assigned_agency) return false;
@@ -50,13 +55,13 @@ module.exports = function(app, getDBState, pool, useMySQL) {
 
     app.get('/api/barangays/:id/incidents', verifyAdmin(['barangay_admin']), async (req, res) => {
         // Enforce the user can only fetch their own barangay (case-insensitive check)
-        const userBrgy = (req.admin.barangay || '').trim().toLowerCase();
-        const paramBrgy = decodeURIComponent(req.params.id || '').trim().toLowerCase();
+        const userBrgy = normalizeBrgy(req.admin.barangay);
+        const paramBrgy = normalizeBrgy(decodeURIComponent(req.params.id || ''));
         if (userBrgy !== paramBrgy) {
             return res.status(403).json({ error: "Access denied to other barangay's incidents." });
         }
         const state = await getDBState();
-        res.json({ incidents: filterIncidents(state.incidents, 'Barangay', req.params.id) });
+        res.json({ incidents: filterIncidents(state.incidents, 'Barangay', req.admin.barangay) });
     });
 
     // MDRRMO Assistance Requests

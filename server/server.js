@@ -434,9 +434,26 @@ async function registerUser(phone, pin, name) {
     }
 }
 
+function normalizeBarangayName(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    let cleaned = raw.trim().replace(/^(barangay|brgy\.?)\s+/i, '').trim();
+    if (!cleaned) return null;
+    if (barangayService && Array.isArray(barangayService.barangaysData)) {
+        const exact = barangayService.barangaysData.find(b => b.name.toLowerCase() === cleaned.toLowerCase());
+        if (exact) return exact.name;
+        const partial = barangayService.barangaysData.find(b => cleaned.toLowerCase().includes(b.name.toLowerCase()));
+        if (partial) return partial.name;
+    }
+    return cleaned;
+}
+
 async function addIncident(report) {
-    // Authoritatively resolve and verify barangay from GPS coordinates
-    if (report.lat && report.lng) {
+    if (report.barangay) {
+        report.barangay = normalizeBarangayName(report.barangay) || report.barangay;
+    }
+
+    // 1. Authoritatively resolve barangay from GPS only if not explicitly selected/provided by user
+    if (!report.barangay && report.lat && report.lng) {
         const pozBgy = barangayService.findPozorrubioBarangay(Number(report.lat), Number(report.lng));
         if (pozBgy && pozBgy.name) {
             console.log(`[Incident Location] GPS (${report.lat}, ${report.lng}) mapped authoritatively to Barangay: ${pozBgy.name}`);
@@ -444,12 +461,63 @@ async function addIncident(report) {
         }
     }
 
-    if (useMySQL) {
-        // Fallback: Try to get reporter's barangay if missing
-        if (!report.barangay && report.reporterPhone) {
-            const [u] = await pool.query("SELECT barangay FROM users WHERE phone = ?", [report.reporterPhone]);
-            if (u.length > 0 && u[0].barangay) report.barangay = u[0].barangay;
+    // 2. Fallback: Try to get reporter's barangay from user profile if missing
+    if (!report.barangay && (report.reporterPhone || report.reporterId)) {
+        if (useMySQL && pool) {
+            if (report.reporterPhone) {
+                const [u] = await pool.query("SELECT barangay, address FROM users WHERE phone = ?", [report.reporterPhone]);
+                if (u.length > 0) report.barangay = normalizeBarangayName(u[0].barangay || u[0].address);
+            }
+            if (!report.barangay && report.reporterId) {
+                const [u] = await pool.query("SELECT barangay, address FROM users WHERE id = ?", [report.reporterId]);
+                if (u.length > 0) report.barangay = normalizeBarangayName(u[0].barangay || u[0].address);
+            }
+        } else {
+            try {
+                const dbState = await getDBState();
+                const u = (dbState.users || []).find(user => 
+                    (report.reporterPhone && user.phone === report.reporterPhone) ||
+                    (report.reporterId && String(user.id) === String(report.reporterId))
+                );
+                if (u) report.barangay = normalizeBarangayName(u.barangay || u.address);
+            } catch(e) {}
         }
+    }
+
+    // 3. Determine assigned agency based on category (evaluated for both MySQL and JSON DB)
+    let assigned_agency = 'MDRRMO'; // default
+    if (report.category) {
+        const cat = report.category.toLowerCase();
+        if (cat === 'fire') {
+            assigned_agency = 'BFP';
+        } else if (cat === 'crime' || cat === 'police') {
+            assigned_agency = 'PNP';
+        } else if (cat === 'barangay') {
+            assigned_agency = 'Barangay';
+        } else {
+            assigned_agency = 'MDRRMO';
+        }
+    }
+    report.assigned_agency = assigned_agency;
+
+    // 4. Ensure timestamps are BIGINT
+    let safeCreatedAt = Date.now();
+    if (report.createdAt) {
+        if (typeof report.createdAt === 'number') {
+            safeCreatedAt = report.createdAt;
+        } else if (typeof report.createdAt === 'string') {
+            const parsed = Number(report.createdAt);
+            if (!isNaN(parsed) && parsed > 0) {
+                safeCreatedAt = parsed;
+            } else {
+                const dateParsed = Date.parse(report.createdAt);
+                safeCreatedAt = !isNaN(dateParsed) ? dateParsed : Date.now();
+            }
+        }
+    }
+    report.createdAt = safeCreatedAt;
+
+    if (useMySQL) {
         // Try to resolve reporterId from reporterPhone if not provided
         let reporterId = report.reporterId || null;
         if (!reporterId && report.reporterPhone) {
@@ -463,40 +531,8 @@ async function addIncident(report) {
             if (u.length > 0 && u[0].phone) report.reporterPhone = u[0].phone;
         }
 
-        // Determine assigned agency based on category
-        let assigned_agency = 'MDRRMO'; // default
-        if (report.category) {
-            const cat = report.category.toLowerCase();
-            if (cat === 'fire') {
-                assigned_agency = 'BFP';
-            } else if (cat === 'crime' || cat === 'police') {
-                assigned_agency = 'PNP';
-            } else if (cat === 'barangay') {
-                assigned_agency = 'Barangay';
-            } else {
-                assigned_agency = 'MDRRMO';
-            }
-        }
-        report.assigned_agency = assigned_agency;
-
-        let safeCreatedAt = Date.now();
-        if (report.createdAt) {
-            if (typeof report.createdAt === 'number') {
-                safeCreatedAt = report.createdAt;
-            } else if (typeof report.createdAt === 'string') {
-                const parsed = Number(report.createdAt);
-                if (!isNaN(parsed) && parsed > 0) {
-                    safeCreatedAt = parsed;
-                } else {
-                    const dateParsed = Date.parse(report.createdAt);
-                    safeCreatedAt = !isNaN(dateParsed) ? dateParsed : Date.now();
-                }
-            }
-        }
-        report.createdAt = safeCreatedAt;
-
         await pool.query(
-            "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
+            "INSERT INTO incidents (id, category, details, media, lat, lng, reporter, reporterPhone, reporterId, createdAt, networkReceivedAt, barangay, status, assignedUnit, responseProgress, assigned_agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), details = VALUES(details), media = VALUES(media), lat = COALESCE(VALUES(lat), lat), lng = COALESCE(VALUES(lng), lng), barangay = COALESCE(VALUES(barangay), barangay), status = VALUES(status), assignedUnit = VALUES(assignedUnit), responseProgress = VALUES(responseProgress), assigned_agency = VALUES(assigned_agency)",
             [report.id, report.category || null, report.details, JSON.stringify(report.media || []), report.lat, report.lng, report.reporter, report.reporterPhone, reporterId, report.createdAt, report.networkReceivedAt, report.barangay || null, report.status, report.assignedUnit, report.responseProgress || null, report.assigned_agency]
         );
     } else {
@@ -3532,10 +3568,14 @@ app.post('/api/incidents/draft', async (req, res) => {
                 await conn.query("DELETE FROM incidents WHERE id = ?", [draftId]);
 
                 // Authoritative barangay resolution
-                let barangay = req.body.barangay || null;
-                if (lat && lng) {
+                let barangay = normalizeBarangayName(req.body.barangay) || req.body.barangay || null;
+                if (!barangay && lat && lng) {
                     const pozBgy = barangayService.findPozorrubioBarangay(Number(lat), Number(lng));
                     if (pozBgy && pozBgy.name) barangay = pozBgy.name;
+                }
+                if (!barangay && reporterId) {
+                    const [uRows] = await conn.query("SELECT barangay, address FROM users WHERE id = ?", [reporterId]);
+                    if (uRows.length > 0) barangay = normalizeBarangayName(uRows[0].barangay || uRows[0].address);
                 }
 
                 // Determine assigned agency based on category (if provided)
@@ -3677,10 +3717,14 @@ app.post('/api/incidents/draft', async (req, res) => {
             db.incidents = db.incidents.filter(i => i.id !== draftId);
             db.incident_events = db.incident_events.filter(e => e.incident_id !== draftId);
 
-            let barangay = req.body.barangay || null;
-            if (lat && lng) {
+            let barangay = normalizeBarangayName(req.body.barangay) || req.body.barangay || null;
+            if (!barangay && lat && lng) {
                 const pozBgy = barangayService.findPozorrubioBarangay(Number(lat), Number(lng));
                 if (pozBgy && pozBgy.name) barangay = pozBgy.name;
+            }
+            if (!barangay && reporterId && db.users) {
+                const u = db.users.find(usr => String(usr.id) === String(reporterId));
+                if (u) barangay = normalizeBarangayName(u.barangay || u.address);
             }
 
             let assigned_agency = 'MDRRMO';
@@ -4325,6 +4369,10 @@ app.put('/api/incidents/:id', async (req, res) => {
 
             await pool.query("UPDATE incidents SET status=?, assignedUnit=?, assignedVehicle=?, assignedResponders=?, resolutionDate=?, notes=?, responseProgress=? WHERE id=?", 
                 [finalStatus, finalAssignedUnit, finalAssignedVehicle, finalAssignedResponders, finalResolutionDate, finalNotes, finalResponseProgress, req.params.id]);
+            
+            if (finalStatus !== oldInc.status) {
+                await recordIncidentEvent(req.params.id, req.params.id, `Status updated to ${finalStatus}`, oldInc.status, finalStatus, req.body.updatedBy || 'Barangay Official');
+            }
             
             if (oldUnit && oldUnit !== finalAssignedUnit) {
                 await pool.query("UPDATE responders SET status='available', lat = COALESCE(base_lat, lat), lng = COALESCE(base_lng, lng) WHERE id=?", [oldUnit]);

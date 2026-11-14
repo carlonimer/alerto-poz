@@ -373,21 +373,48 @@ class CommandDashboard {
         
         window.dashViewHistoryDetails = (id) => this.viewHistoryDetails(id);
         window.dashViewMapLocation = (lat, lng, id) => this.viewMapLocation(lat, lng, id);
+        window.dashAcknowledgeIncident = (id) => this.acknowledgeIncident(id);
+
+        if (this.user && this.user.type === 'barangay_admin') {
+            this.setupBarangayAccountUI();
+        }
 
         // Auto-refresh analytics every 10 seconds
         setInterval(() => this.updateAnalytics(), 10000);
     }
 
+    setupBarangayAccountUI() {
+        const logsTabSpan = document.querySelector(".nav-btn[data-tab='logs'] span:not(.badge-count)");
+        if (logsTabSpan) logsTabSpan.textContent = "Emergency Reports";
+        const logsHeading = document.querySelector("#pane-logs h3");
+        if (logsHeading && this.user && this.user.barangay) {
+            logsHeading.textContent = `Barangay ${this.user.barangay} Emergency Reports`;
+        }
+        const statusFilter = document.getElementById("logs-filter-status");
+        if (statusFilter && !statusFilter.querySelector("option[value='acknowledged']")) {
+            const ackOpt = document.createElement("option");
+            ackOpt.value = "acknowledged";
+            ackOpt.textContent = "Acknowledged";
+            const pendingOpt = statusFilter.querySelector("option[value='pending']");
+            if (pendingOpt && pendingOpt.nextSibling) {
+                statusFilter.insertBefore(ackOpt, pendingOpt.nextSibling);
+            } else {
+                statusFilter.appendChild(ackOpt);
+            }
+        }
+    }
+
     filterIncidents(incidentsList) {
         if (!this.user || !this.user.type) return incidentsList;
         const role = this.user.type; // bfp_admin, pnp_admin, mdrrmo_admin, barangay_admin
-        const brgy = this.user.barangay;
+        const normalizeBrgy = (val) => String(val || '').trim().replace(/^(barangay|brgy\.?)\s+/i, '').trim().toLowerCase();
+        const brgy = normalizeBrgy(this.user.barangay);
 
         return incidentsList.filter(inc => {
             // Map legacy null assigned_agency based on category
             let agency = inc.assigned_agency;
+            const cat = (inc.category || '').toLowerCase();
             if (!agency) {
-                const cat = (inc.category || '').toLowerCase();
                 if (cat === 'fire') agency = 'BFP';
                 else if (cat === 'crime' || cat === 'police') agency = 'PNP';
                 else if (cat === 'barangay') agency = 'Barangay';
@@ -396,8 +423,11 @@ class CommandDashboard {
 
             if (role === 'bfp_admin') return agency === 'BFP';
             if (role === 'pnp_admin') return agency === 'PNP';
-            if (role === 'barangay_admin') return inc.barangay === brgy;
-            if (role === 'mdrrmo_admin') return agency === 'MDRRMO';
+            if (role === 'barangay_admin') {
+                const incBrgy = normalizeBrgy(inc.barangay);
+                return (agency === 'Barangay' || cat === 'barangay') && Boolean(incBrgy) && incBrgy === brgy;
+            }
+            if (role === 'mdrrmo_admin') return agency === 'MDRRMO' || agency === 'Barangay';
             
             return true;
         });
@@ -527,6 +557,18 @@ class CommandDashboard {
                 this.incidents.unshift(incident);
                 // Also plot the marker since it wasn't there before
                 this.plotIncidentMarker(incident);
+                if (this.user && this.user.type === 'barangay_admin') {
+                    this.playAlertSound();
+                    const logTab = document.querySelector("[data-tab='logs']");
+                    if (logTab && !logTab.classList.contains("active")) {
+                        const badge = document.getElementById("unread-count");
+                        if (badge) {
+                            let count = (parseInt(badge.textContent) || 0) + 1;
+                            badge.textContent = count;
+                            badge.classList.remove("hidden");
+                        }
+                    }
+                }
             }
 
             this.renderLogsTable();
@@ -534,7 +576,7 @@ class CommandDashboard {
             this.updateAnalytics();
                 
                 // Update marker color if enroute/resolved
-                if (incident.status === 'resolved' || incident.status === 'cancelled') {
+                if (incident.status === 'resolved' || incident.status === 'cancelled' || incident.status === 'closed') {
                     if (this.gpsStreams && this.gpsStreams[incident.id]) {
                         clearInterval(this.gpsStreams[incident.id]);
                         delete this.gpsStreams[incident.id];
@@ -565,7 +607,8 @@ class CommandDashboard {
                                 if (!this.map.hasLayer(marker)) marker.addTo(this.map);
                             }
                         } else {
-                            if (incident.status === 'pending' || incident.status === 'new') {
+                            const isBrgyActive = this.user && this.user.type === 'barangay_admin' && ['pending', 'new', 'acknowledged', 'dispatching'].includes((incident.status || '').toLowerCase());
+                            if (incident.status === 'pending' || incident.status === 'new' || isBrgyActive) {
                                 if (!this.map.hasLayer(marker)) marker.addTo(this.map);
                             } else {
                                 if (this.map.hasLayer(marker)) this.map.removeLayer(marker);
@@ -590,10 +633,14 @@ class CommandDashboard {
                     }
                 }
                 
-                // Chat auto-update
-                if (this.selectedIncident && this.selectedIncident.id === incident.id && incident.status !== 'resolved') {
+                // Chat & details auto-update
+                if (this.selectedIncident && this.selectedIncident.id === incident.id && incident.status !== 'resolved' && incident.status !== 'closed') {
                     this.selectedIncident = incident;
-                    this.renderDispatcherChat(incident);
+                    if (this.user && this.user.type === 'barangay_admin') {
+                        this.selectIncidentForDispatch(incident.id);
+                    } else {
+                        this.renderDispatcherChat(incident);
+                    }
                 }
         });
 
@@ -690,7 +737,7 @@ class CommandDashboard {
         if (this.user.type === 'bfp_admin') endpoint = '/api/bfp/incidents';
         else if (this.user.type === 'pnp_admin') endpoint = '/api/pnp/incidents';
         else if (this.user.type === 'mdrrmo_admin') endpoint = '/api/mdrrmo/incidents';
-        else if (this.user.type === 'barangay_admin') endpoint = `/api/barangays/${this.user.barangay}/incidents`;
+        else if (this.user.type === 'barangay_admin') endpoint = `/api/barangays/${encodeURIComponent(this.user.barangay)}/incidents`;
         else endpoint = '/api/admin/incidents';
 
         if (endpoint) {
@@ -854,7 +901,8 @@ class CommandDashboard {
                 marker.addTo(this.map);
             }
         } else {
-            if (inc.status === 'pending' || inc.status === 'new') {
+            const isBrgyActive = this.user && this.user.type === 'barangay_admin' && ['pending', 'new', 'acknowledged', 'dispatching'].includes((inc.status || '').toLowerCase());
+            if (inc.status === 'pending' || inc.status === 'new' || isBrgyActive) {
                 marker.addTo(this.map);
             }
         }
@@ -901,36 +949,133 @@ class CommandDashboard {
         const detailsContainer = document.getElementById("incident-details-box");
         const time = new Date(inc.createdAt).toLocaleTimeString();
         
-        detailsContainer.innerHTML = `
-            <div class="incident-summary-card">
-                <div class="summary-row">
-                    <span class="summary-label">Incident ID:</span>
-                    <span class="summary-val font-mono">${inc.id}</span>
+        if (this.user && this.user.type === 'barangay_admin') {
+            const incDate = new Date(inc.createdAt);
+            const dateFormatted = isNaN(incDate) ? 'Unknown Date' : `${incDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} • ${incDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+            const coordsFormatted = (inc.lat && inc.lng) ? `${Number(inc.lat).toFixed(6)}, ${Number(inc.lng).toFixed(6)}` : 'No GPS';
+            const locationDisplay = [inc.barangay ? `Barangay ${inc.barangay}` : '', inc.address].filter(Boolean).join(', ') || 'Pozorrubio, Pangasinan';
+            const descriptionText = inc.details || inc.description || 'No emergency description provided.';
+
+            let mediaItems = [];
+            if (Array.isArray(inc.media)) {
+                mediaItems = inc.media;
+            } else if (typeof inc.media === 'string') {
+                try {
+                    const parsed = JSON.parse(inc.media);
+                    if (Array.isArray(parsed)) mediaItems = parsed;
+                    else if (parsed) mediaItems = [parsed];
+                } catch(e) {
+                    if (inc.media.trim()) mediaItems = [inc.media.trim()];
+                }
+            }
+
+            let attachmentsHtml = '';
+            if (mediaItems.length > 0) {
+                attachmentsHtml = '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px;">';
+                mediaItems.forEach(item => {
+                    const src = (typeof item === 'string') ? item : (item.url || item.data || item.path || '');
+                    if (!src) return;
+                    const finalSrc = src.startsWith('http') || src.startsWith('data:') ? src : `${window.SERVER_URL || ''}${src}`;
+                    const isVideo = (item.type === 'video') || (typeof src === 'string' && src.match(/\.(mp4|webm|mov|3gp|mkv|avi)$/i));
+                    if (isVideo) {
+                        attachmentsHtml += `<video src="${finalSrc}" class="feedback-media-img" style="width: 70px; height: 70px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border-color); cursor: pointer;" title="Click to view full video"></video>`;
+                    } else {
+                        attachmentsHtml += `<img src="${finalSrc}" class="feedback-media-img" style="width: 70px; height: 70px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border-color); cursor: pointer;" alt="Attachment" title="Click to view full image" />`;
+                    }
+                });
+                attachmentsHtml += '</div>';
+            } else {
+                attachmentsHtml = '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No attachments</span>';
+            }
+
+            const statusClass = (inc.status || 'pending').toLowerCase();
+            const isPending = statusClass === 'pending' || statusClass === 'new';
+
+            detailsContainer.innerHTML = `
+                <div class="incident-summary-card" style="padding: 12px; font-size: 13px;">
+                    <div class="summary-row" style="margin-bottom: 6px;">
+                        <span class="summary-label" style="font-weight: 600;">Incident ID:</span>
+                        <span class="summary-val font-mono" style="font-weight: 700; color: var(--primary);">${inc.id}</span>
+                    </div>
+                    <div class="summary-row" style="margin-bottom: 6px;">
+                        <span class="summary-label" style="font-weight: 600;">Category:</span>
+                        <span class="badge" style="background: #059669; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;">BARANGAY</span>
+                    </div>
+                    <div class="summary-row" style="margin-bottom: 6px;">
+                        <span class="summary-label" style="font-weight: 600;">Status:</span>
+                        <span class="pills-badge badge-${statusClass}" style="font-weight: 700; text-transform: uppercase;">${inc.status || 'pending'}</span>
+                    </div>
+                    <div class="summary-row" style="margin-bottom: 6px;">
+                        <span class="summary-label" style="font-weight: 600;">Resident / User:</span>
+                        <span class="summary-val" style="font-weight: 600;">${inc.reporter || 'Unknown'} ${inc.reporterPhone ? `<span style="color:var(--text-muted); font-weight: 400; font-size: 12px;">(${inc.reporterPhone})</span>` : ''}</span>
+                    </div>
+                    <div class="summary-row" style="margin-bottom: 6px;">
+                        <span class="summary-label" style="font-weight: 600;">Date & Time:</span>
+                        <span class="summary-val" style="color: var(--text-secondary);">${dateFormatted}</span>
+                    </div>
+                    <div class="summary-row" style="margin-bottom: 6px; align-items: flex-start;">
+                        <span class="summary-label" style="font-weight: 600;">Location:</span>
+                        <span class="summary-val" style="text-align: right; line-height: 1.3;">
+                            <span style="font-weight: 600; color: var(--text-primary);">${locationDisplay}</span><br>
+                            <span class="font-mono" style="font-size: 11px; color: var(--text-muted);"><i class="fa-solid fa-map-pin"></i> ${coordsFormatted}</span>
+                        </span>
+                    </div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <span class="summary-label" style="font-weight: 600; display: block; margin-bottom: 4px;">Emergency Description:</span>
+                        <div style="background: var(--bg-tertiary); padding: 8px 10px; border-radius: 6px; color: var(--text-primary); font-size: 12px; line-height: 1.4; max-height: 85px; overflow-y: auto;">
+                            ${descriptionText}
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <span class="summary-label" style="font-weight: 600; display: block; margin-bottom: 4px;">Attachments:</span>
+                        ${attachmentsHtml}
+                    </div>
+                    ${isPending ? `
+                    <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <button id="btn-brgy-ack-action" class="btn btn-warning btn-block" style="padding: 7px 12px; font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; cursor: pointer;" onclick="window.commandDashboard.acknowledgeIncident('${inc.id}')">
+                            <i class="fa-solid fa-check-double"></i> Acknowledge Report
+                        </button>
+                    </div>
+                    ` : (statusClass === 'acknowledged' ? `
+                    <div style="margin-top: 8px; padding: 5px 8px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; color: #065f46; font-size: 11px; font-weight: 600; text-align: center;">
+                        <i class="fa-solid fa-circle-check"></i> Report Acknowledged by Barangay
+                    </div>
+                    ` : '')}
                 </div>
-                <div class="summary-row">
-                    <span class="summary-label">Category:</span>
-                    <span class="summary-val uppercase">${inc.category || 'Draft'}</span>
+            `;
+            detailsContainer.style.maxHeight = "380px";
+        } else {
+            detailsContainer.innerHTML = `
+                <div class="incident-summary-card">
+                    <div class="summary-row">
+                        <span class="summary-label">Incident ID:</span>
+                        <span class="summary-val font-mono">${inc.id}</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Category:</span>
+                        <span class="summary-val uppercase">${inc.category || 'Draft'}</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Status:</span>
+                        <span class="pills-badge badge-${inc.status}">${inc.status}</span>
+                    </div>
+                    ${inc.status === 'dispatching' && inc.responseProgress ? `
+                    <div class="summary-row">
+                        <span class="summary-label">Progress:</span>
+                        <span class="summary-val text-primary uppercase font-bold">${inc.responseProgress.replace(/_/g, ' ')}</span>
+                    </div>
+                    ` : ''}
+                    <div class="summary-row">
+                        <span class="summary-label">Reporter:</span>
+                        <span class="summary-val">${inc.reporter}</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Time Logged:</span>
+                        <span class="summary-val">${time}</span>
+                    </div>
                 </div>
-                <div class="summary-row">
-                    <span class="summary-label">Status:</span>
-                    <span class="pills-badge badge-${inc.status}">${inc.status}</span>
-                </div>
-                ${inc.status === 'dispatching' && inc.responseProgress ? `
-                <div class="summary-row">
-                    <span class="summary-label">Progress:</span>
-                    <span class="summary-val text-primary uppercase font-bold">${inc.responseProgress.replace(/_/g, ' ')}</span>
-                </div>
-                ` : ''}
-                <div class="summary-row">
-                    <span class="summary-label">Reporter:</span>
-                    <span class="summary-val">${inc.reporter}</span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Time Logged:</span>
-                    <span class="summary-val">${time}</span>
-                </div>
-            </div>
-        `;
+            `;
+        }
 
         this.renderDispatcherChat(inc);
 
@@ -1266,12 +1411,33 @@ class CommandDashboard {
     updateUnitDropdown() {
         if (!this.selectedIncident) return;
         
-        this.statusSelector.value = this.selectedIncident.status || 'Draft';
+        if (this.user && this.user.type === 'barangay_admin') {
+            const statusOptions = [
+                { value: 'pending', label: 'Pending' },
+                { value: 'acknowledged', label: 'Acknowledged' },
+                { value: 'dispatching', label: 'Responding / Dispatching' },
+                { value: 'resolved', label: 'Resolved' },
+                { value: 'closed', label: 'Closed' },
+                { value: 'cancelled', label: 'Cancelled' }
+            ];
+            this.statusSelector.innerHTML = statusOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+            const curStatus = (this.selectedIncident.status || 'pending').toLowerCase();
+            this.statusSelector.value = statusOptions.some(o => o.value === curStatus) ? curStatus : 'pending';
+        } else {
+            this.statusSelector.value = this.selectedIncident.status || 'Draft';
+        }
         this.statusSelector.disabled = false;
         
         this.unitSelector.innerHTML = '<option value="">-- Select Available Personnel/Unit --</option>';
         this.vehicleSelector.innerHTML = '<option value="">-- Select Available Vehicle --</option>';
         
+        if (this.user && this.user.type === 'barangay_admin') {
+            const brgyOpt = document.createElement("option");
+            brgyOpt.value = "barangay_patrol";
+            brgyOpt.textContent = `Barangay ${this.user.barangay} Tanod / Quick Response Team`;
+            this.unitSelector.appendChild(brgyOpt);
+        }
+
         const availableUnits = this.responders.filter(r => r.status === 'available');
         
         // Simple Haversine helper
@@ -1304,7 +1470,7 @@ class CommandDashboard {
             else if (cat === "medical" && r.type === "medical") isRecommended = true;
             else if (cat === "crime" && r.type === "police") isRecommended = true;
             else if (cat === "accident" && (r.type === "medical" || r.type === "police")) isRecommended = true;
-            else if (cat === "flood" || cat === "rescue" || cat === "hardware emergency" || cat === "other") isRecommended = true;
+            else if (cat === "flood" || cat === "rescue" || cat === "hardware emergency" || cat === "other" || cat === "barangay") isRecommended = true;
             
             const opt = document.createElement("option");
             opt.value = r.id;
@@ -1358,12 +1524,13 @@ class CommandDashboard {
             const payload = {
                 status: status,
                 assignedUnit: unitId,
-                assignedVehicle: vehicleId
+                assignedVehicle: vehicleId,
+                updatedBy: this.user ? (this.user.name || (this.user.type === 'barangay_admin' ? `Barangay ${this.user.barangay} Official` : 'Command Center')) : 'Command Center'
             };
             
             if (status === 'dispatching' && unitId) {
                 payload.responseProgress = 'en_route';
-            } else if (status === 'resolved') {
+            } else if (status === 'resolved' || status === 'closed') {
                 payload.responseProgress = null; // Clear on resolve
                 if (this.gpsStreams && this.gpsStreams[this.selectedIncident.id]) {
                     clearInterval(this.gpsStreams[this.selectedIncident.id]);
@@ -1371,11 +1538,34 @@ class CommandDashboard {
                 }
             }
             
-            await fetch(`/api/incidents/${this.selectedIncident.id}`, {
+            const res = await fetch(`/api/incidents/${this.selectedIncident.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+
+            if (this.user && this.user.type === 'barangay_admin' && res.ok) {
+                this.selectedIncident.status = status;
+                if (unitId) this.selectedIncident.assignedUnit = unitId;
+                if (vehicleId) this.selectedIncident.assignedVehicle = vehicleId;
+
+                const statusLabelMap = {
+                    pending: 'Pending',
+                    acknowledged: 'Acknowledged',
+                    dispatching: 'Responding / Dispatching',
+                    resolved: 'Resolved',
+                    closed: 'Closed',
+                    cancelled: 'Cancelled'
+                };
+                const statusLabel = statusLabelMap[(status || '').toLowerCase()] || status;
+                await this.postAutomatedOfficialMessage(`[Status Update] Emergency report status updated to "${statusLabel}" by Barangay ${this.user.barangay} Officials.`);
+
+                this.selectIncidentForDispatch(this.selectedIncident.id);
+                this.renderLogsTable();
+                this.renderHistoryRecords();
+                this.updateAnalytics();
+            }
+
             alert('Incident updated successfully.');
             
             if (unitId && status === 'dispatching') {
@@ -1385,6 +1575,69 @@ class CommandDashboard {
         } catch(e) {
             console.error(e);
             alert('Failed to update incident.');
+        } finally {
+            if (this.selectedIncident) {
+                this.unitSelector.disabled = false;
+                this.vehicleSelector.disabled = false;
+                this.statusSelector.disabled = false;
+                this.dispatchBtn.disabled = false;
+            }
+        }
+    }
+
+    async acknowledgeIncident(id) {
+        const inc = this.incidents.find(i => i.id === id) || this.selectedIncident;
+        if (!inc) return;
+        this.selectedIncident = inc;
+
+        try {
+            const officialName = this.user ? (this.user.name || `Barangay ${this.user.barangay} Official`) : 'Barangay Official';
+            const res = await fetch(`/api/incidents/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'acknowledged',
+                    updatedBy: officialName
+                })
+            });
+            if (res.ok) {
+                inc.status = 'acknowledged';
+                await this.postAutomatedOfficialMessage(`[Official Acknowledgment] Emergency report has been acknowledged by Barangay ${this.user ? this.user.barangay : ''} Officials. Assistance is being coordinated.`);
+                this.selectIncidentForDispatch(id);
+                this.renderLogsTable();
+                this.renderHistoryRecords();
+                this.updateAnalytics();
+            }
+        } catch (err) {
+            console.error("Failed to acknowledge incident:", err);
+            alert("Failed to acknowledge report.");
+        }
+    }
+
+    async postAutomatedOfficialMessage(messageText) {
+        if (!this.selectedIncident || !messageText) return;
+        const senderId = this.user ? (this.user.username || this.user.id || 'ADMIN') : 'ADMIN';
+        const senderRole = this.user && this.user.type === 'barangay_admin'
+            ? `Barangay ${this.user.barangay || 'Official'}`
+            : 'Command Center';
+        const clientMessageId = 'admin-status-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+        try {
+            const token = localStorage.getItem("alerto_admin_token");
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            await fetch(`/api/incidents/${this.selectedIncident.id}/messages`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    senderId,
+                    senderRole,
+                    messageType: 'text',
+                    messageContent: messageText,
+                    clientMessageId
+                })
+            });
+        } catch (e) {
+            console.error("Failed to post automated official message:", e);
         }
     }
 
@@ -1479,35 +1732,45 @@ class CommandDashboard {
                 latencyHTML = `<span class="latency-label-high"><i class="fa-solid fa-cloud-arrow-up"></i> ${Math.round(latencyMs/1000)}s (Synced)</span>`;
             }
 
-            const badgeColor = inc.status === 'resolved' ? 'var(--success)' : 
-                               inc.status === 'cancelled' ? 'var(--text-muted)' : 
-                               inc.status === 'draft' ? 'var(--warning)' : 'var(--info)';
+            const stLower = (inc.status || 'pending').toLowerCase();
+            const badgeColor = (stLower === 'resolved' || stLower === 'closed') ? 'var(--success)' : 
+                               stLower === 'acknowledged' ? '#059669' :
+                               stLower === 'cancelled' ? 'var(--text-muted)' : 
+                               stLower === 'draft' ? 'var(--warning)' : 'var(--info)';
+
+            const isBrgyAdmin = this.user && this.user.type === 'barangay_admin';
+            const canAck = isBrgyAdmin && (stLower === 'pending' || stLower === 'new');
 
             html += `
                 <tr class="${inc.status === 'new' ? 'new-incident-row' : ''}">
                     <td style="font-size: 13px;">${inc.id}</td>
-                    <td style="font-size: 13px;">${time}</td>
+                    <td style="font-size: 13px;">${isBrgyAdmin ? new Date(inc.createdAt || inc.created_at || inc.timestamp || Date.now()).toLocaleString() : time}</td>
                     <td>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             ${inc.category === 'Hardware Emergency' ? `<div style="width: 24px; height: 24px; border-radius: 50%; background: var(--danger); display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;"><i class="fa-solid fa-microchip"></i></div>` : this.getAvatarHtml(inc.profile_image, inc.gender, 24)}
                             <div>
-                                <b style="color: var(--text-primary); font-size: 13px;">${inc.reporter || 'Unknown'}</b><br>
-                                <span style="font-size:11px; color:var(--text-muted);">${inc.category === 'Hardware Emergency' ? 'SYSTEM TRIGGER' : (inc.reporterPhone || 'Unknown')}</span>
+                                <b style="color: var(--text-primary); font-size: 13px;">${inc.reporter || inc.name || 'Unknown'}</b><br>
+                                <span style="font-size:11px; color:var(--text-muted);">${inc.category === 'Hardware Emergency' ? 'SYSTEM TRIGGER' : (inc.reporterPhone || inc.phone || 'Unknown')}</span>
                             </div>
                         </div>
                     </td>
                     <td class="capitalize" style="font-size: 13px;">${inc.type || inc.category || 'Unknown'}</td>
-                    <td class="font-mono" style="font-size: 13px; color: var(--text-secondary);">${inc.lat.toFixed(4)}, ${inc.lng.toFixed(4)}</td>
+                    <td class="font-mono" style="font-size: 13px; color: var(--text-secondary);">${Number(inc.lat || 0).toFixed(4)}, ${Number(inc.lng || 0).toFixed(4)}</td>
                     <td style="font-size: 13px;">${latencyHTML}</td>
                     <td>${inc.category === 'Hardware Emergency' ? `<span style="color: var(--danger); font-size: 12px; font-weight: bold; text-transform: uppercase;"><i class="fa-solid fa-triangle-exclamation"></i> Alert!</span>` : `<span class="badge" style="background: ${badgeColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;">${inc.status}</span>`}</td>
                     <td style="font-size: 13px;">
                         ${inc.status === 'draft' ? 
                             `<i class="fa-regular fa-clock text-warning"></i> Drafting` : 
                             (inc.category === 'Hardware Emergency' ? `<span style="color: var(--text-muted); font-size: 11px;"><i class="fa-solid fa-microchip"></i> Hardware Log</span>` : 
-                            (inc.status !== 'resolved' && inc.status !== 'cancelled' ? 
+                            (isBrgyAdmin ? `
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; background-color: white; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;" onclick="window.dashSelectIncident('${inc.id}')">Manage</button>
+                                    ${canAck ? `<button class="btn btn-primary" style="padding: 4px 8px; font-size: 11px; background-color: #059669; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="event.stopPropagation(); window.dashAcknowledgeIncident('${inc.id}')">Ack</button>` : ''}
+                                </div>
+                            ` : (inc.status !== 'resolved' && inc.status !== 'cancelled' ? 
                                 `<button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px; background-color: white; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;" onclick="window.dashSelectIncident('${inc.id}')">Manage</button>` : 
                                 (inc.status === 'resolved' ? `<span style="color: var(--success); font-weight: 500;"><i class="fa-solid fa-check"></i> Resolved</span>` : `<span style="color: var(--danger); font-weight: 500;"><i class="fa-solid fa-ban"></i> Cancelled</span>`)
-                            ))
+                            )))
                         }
                     </td>
                 </tr>
@@ -1680,9 +1943,24 @@ class CommandDashboard {
         const reporterPhone = inc.reporterPhone || inc.phone || 'No Phone';
         document.getElementById("hist-det-reporter").textContent = `${reporterName} (${reporterPhone})`;
         
-        document.getElementById("hist-det-location").textContent = inc.address || 'Unknown Location';
+        if (this.user && this.user.type === 'barangay_admin') {
+            const coordsStr = (inc.lat && inc.lng) ? ` (${Number(inc.lat).toFixed(6)}, ${Number(inc.lng).toFixed(6)})` : '';
+            const brgyPrefix = inc.barangay ? `Brgy. ${inc.barangay} — ` : '';
+            document.getElementById("hist-det-location").textContent = `${brgyPrefix}${inc.address || 'Reported Location'}${coordsStr}`;
+        } else {
+            document.getElementById("hist-det-location").textContent = inc.address || 'Unknown Location';
+        }
         
         let formattedDetails = (inc.description || inc.details || "No notes available").replace(/ \| /g, "<br><br>");
+        if (this.user && this.user.type === 'barangay_admin' && inc.media && Array.isArray(inc.media) && inc.media.length > 0) {
+            const mediaItemsHtml = inc.media.map(m => {
+                if (typeof m === 'string' && (m.startsWith('data:video/') || m.endsWith('.mp4') || m.endsWith('.webm'))) {
+                    return `<video src="${m}" controls style="width:100px; height:80px; object-fit:cover; border-radius:6px; border:1px solid var(--border-color);"></video>`;
+                }
+                return `<img src="${m}" class="feedback-media-img" style="width:100px; height:80px; object-fit:cover; border-radius:6px; cursor:pointer; border:1px solid var(--border-color);" alt="Attachment">`;
+            }).join('');
+            formattedDetails += `<div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border-color);"><strong>Attachments (${inc.media.length}):</strong><div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">${mediaItemsHtml}</div></div>`;
+        }
         document.getElementById("hist-det-desc").innerHTML = formattedDetails;
         
         // Responder details
@@ -2986,6 +3264,16 @@ function initAuthGateway() {
                     // Show Barangay Assist button
                     const brgyBtn = document.getElementById("nav-btn-brgy-assist");
                     if (brgyBtn) brgyBtn.classList.remove("hidden");
+
+                    // Rename Incident Logs tab to Emergency Reports for Barangay Account
+                    const logsTab = document.querySelector(".nav-btn[data-tab='logs']");
+                    if (logsTab) {
+                        logsTab.innerHTML = `<i class="fa-solid fa-file-shield"></i> Emergency Reports`;
+                    }
+                    const logsHeading = document.querySelector("#pane-logs .pane-header h3");
+                    if (logsHeading) {
+                        logsHeading.textContent = `Barangay ${data.user.barangay} Emergency Reports`;
+                    }
                 } else if (data.user.type === 'mdrrmo_admin') {
                     // Show Barangay Requests button for MDRRMO
                     const reqsBtn = document.getElementById("nav-btn-assistance-reqs");
