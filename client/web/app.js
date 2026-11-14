@@ -1493,7 +1493,35 @@ class CitizenMobileClient {
         if (iconBox && !iconBox.innerHTML.trim()) iconBox.innerHTML = defaultSvg;
         if (miniIconBox && !miniIconBox.innerHTML.trim()) miniIconBox.innerHTML = defaultSvg;
 
+        window.addEventListener("resize", () => this.syncWeatherBannerPosition());
+        const homeState = document.getElementById("state-homepage");
+        if (typeof ResizeObserver !== "undefined") {
+            this._weatherPosObserver = new ResizeObserver(() => this.syncWeatherBannerPosition());
+            if (homeState) this._weatherPosObserver.observe(homeState);
+            if (headerBtn) this._weatherPosObserver.observe(headerBtn);
+        }
         this.applyWeatherMinimizedState();
+        requestAnimationFrame(() => this.syncWeatherBannerPosition());
+    }
+
+    syncWeatherBannerPosition() {
+        const banner = document.getElementById("persistent-weather-banner");
+        const headerBtn = document.getElementById("header-weather-widget-btn");
+        const homeState = document.getElementById("state-homepage");
+        if (!banner || !headerBtn || !homeState) return;
+
+        const parentRect = homeState.getBoundingClientRect();
+        const btnRect = headerBtn.getBoundingClientRect();
+        if (!parentRect.width || !btnRect.width) return;
+
+        const bannerMaxWidth = Math.min(420, parentRect.width - 28);
+        // Align the expanded weather card directly with the header weather icon ("katapat ng icon")
+        const iconLeft = btnRect.left - parentRect.left;
+        const clampedLeft = Math.max(14, Math.min(iconLeft, parentRect.width - bannerMaxWidth - 14));
+        const topPos = Math.max(52, (btnRect.bottom - parentRect.top) + 6);
+
+        banner.style.setProperty("--weather-anchor-left", `${Math.round(clampedLeft)}px`);
+        banner.style.setProperty("--weather-anchor-top", `${Math.round(topPos)}px`);
     }
 
     setWeatherMinimized(minimized) {
@@ -1507,6 +1535,7 @@ class CitizenMobileClient {
     applyWeatherMinimizedState() {
         const banner = document.getElementById("persistent-weather-banner");
         const headerBtn = document.getElementById("header-weather-widget-btn");
+        this.syncWeatherBannerPosition();
         if (this.isWeatherMinimized) {
             if (banner) {
                 banner.classList.remove("is-expanded");
@@ -1701,6 +1730,7 @@ class CitizenMobileClient {
             if (badgeEl) badgeEl.textContent = "CRITICAL ADVISORY";
             if (miniBadgeEl) miniBadgeEl.textContent = "EXTREME";
         }
+        this.syncWeatherBannerPosition();
     }
 
     initSocket() {

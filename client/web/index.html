@@ -33,7 +33,7 @@
     />
 
     <!-- Custom Mobile Layout CSS -->
-    <link rel="stylesheet" href="styles.css?v=9" />
+    <link rel="stylesheet" href="styles.css?v=10" />
   </head>
 
   <body class="light-theme">
@@ -785,39 +785,21 @@
 
             <!-- EXPANDED VIEW CONTAINER (visible when .is-expanded) -->
             <div class="weather-expanded-body" id="weather-expanded-body">
-              <div class="weather-card-top-row">
-                <div class="weather-badge-group">
-                  <span class="weather-banner-badge" id="weather-banner-badge">POZORRUBIO WEATHER</span>
-                  <span class="weather-banner-live-indicator"><span class="weather-pulse-dot"></span> LIVE</span>
-                </div>
-                <div class="weather-card-header-actions">
-                  <div class="weather-card-brand-tag" title="ALERTO-POZ MDRRMO Official Advisory">
-                    <i class="fa-solid fa-tower-broadcast"></i>
-                    <span>ALERTO-POZ</span>
-                  </div>
-                  <button class="weather-toggle-btn weather-minimize-btn" id="weather-minimize-btn" type="button" title="Minimize Weather Alert" aria-label="Minimize Weather Alert">
-                    <span class="btn-toggle-label">Minimize</span>
-                    <i class="fa-solid fa-chevron-up"></i>
-                  </button>
-                </div>
-              </div>
-
               <div class="weather-card-main-row">
                 <div class="weather-banner-icon-box" id="weather-banner-icon-box" aria-hidden="true">
                   <i class="fa-solid fa-sun" id="weather-banner-icon"></i>
                 </div>
                 <div class="weather-banner-content">
-                  <h4 class="weather-banner-title" id="weather-banner-title">NORMAL WEATHER</h4>
+                  <div class="weather-card-title-row">
+                    <h4 class="weather-banner-title" id="weather-banner-title">NORMAL WEATHER</h4>
+                    <button class="weather-toggle-btn weather-minimize-btn" id="weather-minimize-btn" type="button" title="Minimize Weather Alert" aria-label="Minimize Weather Alert">
+                      <span class="btn-toggle-label">Minimize</span>
+                      <i class="fa-solid fa-chevron-up"></i>
+                    </button>
+                  </div>
                   <p class="weather-banner-message" id="weather-banner-message">
                     Current weather conditions are normal. Continue monitoring official announcements.
                   </p>
-                </div>
-              </div>
-
-              <div class="weather-card-bottom-row">
-                <div class="weather-timestamp-box">
-                  <i class="fa-regular fa-clock"></i>
-                  <span id="weather-banner-timestamp">Updated: Today • MDRRMO Command Center</span>
                 </div>
               </div>
             </div>
@@ -2132,7 +2114,7 @@
     <!-- Authoritative Barangay Service -->
     <script src="barangay_service.js"></script>
     <!-- Main JS Application -->
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
     <!-- Media Lightbox Viewer -->
     <div id="media-lightbox" class="hidden">
       <span id="lightbox-close">&times;</span>

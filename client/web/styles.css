@@ -495,14 +495,16 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 /* Persistent Global Weather Status Card (Non-Dismissible 24/7 Display, Expand/Collapse) */
 .persistent-weather-banner {
     position: absolute;
-    top: 60px;
-    left: 14px;
-    right: 14px;
-    max-width: 620px;
-    margin: 0 auto;
+    top: var(--weather-anchor-top, 54px);
+    left: var(--weather-anchor-left, 142px);
+    right: auto;
+    width: calc(100% - 28px);
+    max-width: 420px;
+    margin: 0;
     z-index: 101;
     pointer-events: auto;
-    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: 18px top;
+    transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
     overflow: hidden;
     backdrop-filter: blur(10px);
@@ -631,6 +633,12 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     flex: 1;
     min-width: 0;
 }
+.weather-card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
 .weather-banner-title {
     margin: 0;
     font-size: 14.5px;
@@ -639,7 +647,7 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     line-height: 1.2;
 }
 .weather-banner-message {
-    margin: 3px 0 0 0;
+    margin: 4px 0 0 0;
     font-size: 11.5px;
     line-height: 1.35;
     color: inherit;
@@ -837,11 +845,11 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 
 /* Sibling Layout Adjustments for Search Bar & Filter Pills */
 .persistent-weather-banner.is-expanded ~ .floating-search-bar {
-    top: 216px;
+    top: 144px;
     transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .persistent-weather-banner.is-expanded ~ .floating-filter-pills {
-    top: 274px;
+    top: 202px;
     transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
