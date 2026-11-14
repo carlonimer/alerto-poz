@@ -510,18 +510,21 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* EXPANDED STATE: Animated icon on left, status title + description + minimize control horizontally beside it */
+/* EXPANDED STATE: Animated icon on left, status title + description + minimize control horizontally beside it (no outline) */
 .persistent-weather-banner.is-expanded {
     display: inline-flex;
     flex-direction: row;
     align-items: center;
     gap: 10px;
-    border-radius: 14px;
-    padding: 6px 12px 6px 8px;
+    border-radius: 12px;
+    padding: 2px 6px 2px 2px;
     max-width: min(560px, 100%);
     min-width: 0;
     opacity: 1;
     pointer-events: auto;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 .persistent-weather-banner.is-expanded .weather-expanded-body {
     display: flex;
@@ -540,6 +543,7 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     margin: 0 !important;
     background: transparent !important;
     border: none !important;
+    outline: none !important;
     box-shadow: none !important;
 }
 .persistent-weather-banner.is-minimized .weather-expanded-body {
@@ -548,15 +552,9 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 
 @media (max-width: 680px) {
     .persistent-weather-banner.is-expanded {
-        position: absolute;
-        left: var(--weather-anchor-left, 134px);
-        right: 10px;
-        top: 50%;
-        transform: translateY(-50%);
-        max-width: none;
-        width: auto;
-        z-index: 105;
-        padding: 5px 8px 5px 6px;
+        flex: 1;
+        max-width: 100%;
+        padding: 2px 4px 2px 2px;
         gap: 8px;
     }
     .persistent-weather-banner.is-expanded .weather-minimize-btn .btn-toggle-label {
@@ -564,6 +562,11 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     }
     .persistent-weather-banner.is-expanded .weather-minimize-btn {
         padding: 5px 7px;
+    }
+}
+@media (max-width: 520px) {
+    .app-header-home:has(.persistent-weather-banner.is-expanded) .header-action-group {
+        display: none;
     }
 }
 
@@ -624,12 +627,12 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
     transform: scale(0.96);
 }
 
-/* 1. NORMAL WEATHER: White/light background, dark text, sun icon */
+/* 1. NORMAL WEATHER: Transparent inline background, dark text, sun icon */
 .persistent-weather-banner.status-normal {
-    background: #ffffff;
-    border: 1.5px solid #fed7aa;
+    background: transparent;
+    border: none;
     color: #0f172a;
-    box-shadow: 0 6px 22px rgba(245, 158, 11, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: none;
 }
 .persistent-weather-banner.status-normal .weather-banner-icon-box,
 .persistent-weather-banner.status-normal .weather-mini-icon-box {
@@ -678,9 +681,9 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 /* 2. WEATHER WARNING: Royal blue gradient, white text, cloud/warning icon */
 .persistent-weather-banner.status-warning {
     background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
-    border: 1.5px solid #60a5fa;
+    border: none;
     color: #ffffff;
-    box-shadow: 0 8px 26px rgba(29, 78, 216, 0.35);
+    box-shadow: none;
 }
 .persistent-weather-banner.status-warning .weather-banner-icon-box,
 .persistent-weather-banner.status-warning .weather-mini-icon-box {
@@ -728,9 +731,9 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 /* 3. EXTREME WEATHER WARNING: Urgent crimson red gradient, alert triangle icon */
 .persistent-weather-banner.status-extreme {
     background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
-    border: 1.5px solid #f87171;
+    border: none;
     color: #ffffff;
-    box-shadow: 0 8px 30px rgba(220, 38, 38, 0.45);
+    box-shadow: none;
 }
 .persistent-weather-banner.status-extreme .weather-banner-icon-box,
 .persistent-weather-banner.status-extreme .weather-mini-icon-box {
@@ -777,12 +780,16 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 
 /* Sibling Layout Adjustments for Search Bar & Filter Pills */
 .app-header-home ~ .floating-search-bar {
-    top: 72px;
-    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    top: calc(var(--header-home-height, 62px) + 12px);
+    transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .app-header-home ~ .floating-filter-pills {
-    top: 130px;
-    transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    top: calc(var(--header-home-height, 62px) + 70px);
+    transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.app-header-home ~ .map-floating-actions-right {
+    top: calc(var(--header-home-height, 62px) + 70px);
+    transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* High-Quality Animated SVG Icons */

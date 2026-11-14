@@ -1495,11 +1495,14 @@ class CitizenMobileClient {
 
         window.addEventListener("resize", () => this.syncWeatherBannerPosition());
         const homeState = document.getElementById("state-homepage");
+        const headerEl = document.querySelector(".app-header-home");
         const logoArea = document.querySelector(".brand-logo-area");
         if (typeof ResizeObserver !== "undefined") {
             this._weatherPosObserver = new ResizeObserver(() => this.syncWeatherBannerPosition());
             if (homeState) this._weatherPosObserver.observe(homeState);
+            if (headerEl) this._weatherPosObserver.observe(headerEl);
             if (logoArea) this._weatherPosObserver.observe(logoArea);
+            if (banner) this._weatherPosObserver.observe(banner);
         }
         this.applyWeatherMinimizedState();
         requestAnimationFrame(() => this.syncWeatherBannerPosition());
@@ -1509,6 +1512,7 @@ class CitizenMobileClient {
         const banner = document.getElementById("persistent-weather-banner");
         const headerEl = document.querySelector(".app-header-home");
         const logoArea = document.querySelector(".brand-logo-area");
+        const homeState = document.getElementById("state-homepage");
         if (!banner || !headerEl || !logoArea) return;
 
         const headerRect = headerEl.getBoundingClientRect();
@@ -1517,6 +1521,9 @@ class CitizenMobileClient {
 
         const anchorLeft = Math.max(120, Math.round((logoRect.right - headerRect.left) + 10));
         banner.style.setProperty("--weather-anchor-left", `${anchorLeft}px`);
+        if (homeState && headerRect.height > 0) {
+            homeState.style.setProperty("--header-home-height", `${Math.ceil(headerRect.height)}px`);
+        }
     }
 
     setWeatherMinimized(minimized) {
@@ -1552,6 +1559,7 @@ class CitizenMobileClient {
                 headerBtn.setAttribute("title", "Pozorrubio Weather Advisory • Click to collapse");
             }
         }
+        requestAnimationFrame(() => this.syncWeatherBannerPosition());
     }
 
     getWeatherAnimatedSvg(status) {
